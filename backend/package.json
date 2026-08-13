@@ -1,0 +1,14 @@
+{
+  "name": "kf-approval",
+  "version": "1.0.0",
+  "description": "Client-facing task approval UI backed live by Mattermost Boards — no local database.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  }
+}

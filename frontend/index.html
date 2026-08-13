@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>КФ — Согласование задач</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="page">
+  <div id="app">
+    <header class="head">
+      <div class="head-top">
+        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+        <div class="client-brand">
+          <div id="clientLogo" class="client-logo-demo">К</div>
+          <strong id="clientName">Загрузка…</strong>
+        </div>
+      </div>
+      <div id="weeks" class="week-row"></div>
+      <div class="progress-line">
+        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+        <div id="progressText" class="progress-text"></div>
+      </div>
+    </header>
+
+    <div class="filters">
+      <button class="filter active" data-filter="">Все</button>
+      <button class="filter" data-filter="waiting">Ожидают</button>
+      <button class="filter" data-filter="changes">Правки</button>
+      <button class="filter" data-filter="approved">Согласовано</button>
+    </div>
+    <div id="loading" class="loading">Загружаем задачи из Mattermost…</div>
+    <main id="stack" class="stack"></main>
+  </div>
+</div>
+
+<div id="feedbackModal" class="modal-wrap">
+  <div class="sheet">
+    <h3>Что нужно поправить?</h3>
+    <p id="feedbackTitle"></p>
+    <textarea id="feedbackText" placeholder="Напишите правки одним сообщением…"></textarea>
+    <div class="sheet-actions">
+      <button class="btn changes" data-action="close-feedback">Отмена</button>
+      <button class="btn approve" data-action="send-feedback">Отправить правки</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
