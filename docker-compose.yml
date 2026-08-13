@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    ports:
-      - "${HOST_PORT:-3000}:${PORT:-3000}"
+    expose:
+      - "${PORT:-3000}"
     env_file:
       - .env
     restart: unless-stopped
