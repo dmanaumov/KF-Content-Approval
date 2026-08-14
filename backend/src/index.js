@@ -17,7 +17,7 @@ async function loadBoard(boardId, { fresh = false } = {}) {
   if (!fresh && config.cacheTtlMs > 0 && cached && cached.expires > Date.now()) {
     return cached;
   }
-  const [board, blocks] = await Promise.all([mm.getBoard(boardId), mm.listBlocks(boardId)]);
+  const [board, blocks] = await Promise.all([mm.getBoard(boardId, config.teamId), mm.listBlocks(boardId)]);
   const entry = { board, blocks, expires: Date.now() + config.cacheTtlMs };
   cache.set(boardId, entry);
   return entry;
@@ -31,11 +31,22 @@ function invalidate(boardId) {
 // API
 // ---------------------------------------------------------------------------
 
-// GET /api/boards/:boardId/tasks — everything the client cabinet needs.
+// GET /api/boards/:boardId/tasks?project=... — everything the client cabinet
+// needs. `project` is REQUIRED whenever the board has a project property
+// (this board is shared across every client — see docs/MATTERMOST_INTEGRATION.md)
+// since it's the only thing separating one client's cards from another's.
 app.get('/api/boards/:boardId/tasks', async (req, res) => {
   try {
     const { board, blocks } = await loadBoard(req.params.boardId);
-    const { tasks, meta } = buildTasks(board, blocks);
+    const { tasks, meta } = buildTasks(board, blocks, { projectFilter: req.query.project });
+    if (meta.projectPropertyFound && !meta.projectFilterMatched) {
+      return res.status(400).json({
+        error: 'project_filter_required',
+        message:
+          'This board has a project property, and the link is missing a valid ?project= value — ' +
+          'refusing to show tasks to avoid leaking other clients\' cards. Pass the project option id or exact label.',
+      });
+    }
     res.json({
       board: { id: req.params.boardId, title: board.title || '' },
       tasks,
@@ -92,7 +103,11 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   await mm.patchCardProperty(boardId, taskId, approvalProp.id, optionId);
   invalidate(boardId);
   const { board: freshBoard, blocks } = await loadBoard(boardId, { fresh: true });
-  const { tasks } = buildTasks(freshBoard, blocks);
+  // skipProjectFilter: we already know the exact card id (client only ever
+  // learns it from their own, already-filtered task list) — no need to
+  // re-apply the project filter here, and doing so would break this lookup
+  // on shared boards since we don't carry the client's `project` through.
+  const { tasks } = buildTasks(freshBoard, blocks, { skipProjectFilter: true });
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   return updated;

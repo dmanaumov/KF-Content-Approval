@@ -25,9 +25,26 @@ function optionIdByLabel(propDef, label) {
   return opt ? opt.id : null;
 }
 
+// Returns null (not a default) when the label doesn't match any configured
+// state — callers must treat that as "not a client-facing task" and drop
+// the card, not silently show it as "waiting". This matters here because
+// the approval property is shared with an internal production pipeline
+// that has many other stages ("Не начато", "В процессе", "ТЗ РАЙТЕРУ", ...).
 function statusEnumFromLabel(label) {
   const entry = Object.entries(config.statusOptionLabels).find(([, v]) => v === label);
-  return entry ? entry[0] : 'waiting';
+  return entry ? entry[0] : null;
+}
+
+// Matches a `project` link parameter against a select property's options,
+// by option id (preferred — stable) or by label text (case/whitespace
+// insensitive, for convenience when someone hand-builds a link).
+function resolveProjectOptionId(projectProp, filterValue) {
+  if (!projectProp || !filterValue) return null;
+  const needle = String(filterValue).trim().toLowerCase();
+  const opt = (projectProp.options || []).find(
+    (o) => o.id === filterValue || String(o.value).trim().toLowerCase() === needle
+  );
+  return opt ? opt.id : null;
 }
 
 // Focalboard date-property values have shown up in the wild as a JSON string
@@ -72,13 +89,31 @@ function guessMediaKind(block) {
 
 // board: result of mattermostClient.getBoard(boardId)
 // blocks: result of mattermostClient.listBlocks(boardId)
-// Returns { tasks: [...] , meta: { approvalPropertyFound, publishDatePropertyFound } }
-function buildTasks(board, blocks) {
+// opts.projectFilter: value of the `project` link parameter — REQUIRED
+// whenever the board has a project property, since this board is shared
+// across all clients (see docs/MATTERMOST_INTEGRATION.md). Without it we'd
+// leak every other client's cards.
+// Returns { tasks, meta: { approvalPropertyFound, projectPropertyFound, projectFilterMatched } }
+function buildTasks(board, blocks, opts = {}) {
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
   const formatProp = findPropertyDef(board, config.formatPropertyName);
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
 
-  const cards = blocks.filter((b) => b.type === 'card' && !b.deleteAt);
+  const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
+  const projectFilterMatched = !projectProp || !!projectOptionId;
+
+  let cards = blocks.filter((b) => b.type === 'card' && !b.deleteAt);
+  if (projectProp && !opts.skipProjectFilter) {
+    // Board has a project property → filtering is mandatory for the client
+    // list view. If the filter didn't resolve to a real option, show
+    // nothing rather than everything. (skipProjectFilter is for internal
+    // single-card lookups right after a write, where the caller already
+    // knows the exact card id — see index.js setApprovalStatus.)
+    cards = projectOptionId
+      ? cards.filter((c) => (c.fields && c.fields.properties && c.fields.properties[projectProp.id]) === projectOptionId)
+      : [];
+  }
 
   const tasks = cards.map((card) => {
     const children = blocks.filter((b) => b.parentId === card.id && !b.deleteAt);
@@ -108,7 +143,10 @@ function buildTasks(board, blocks) {
 
     const properties = (card.fields && card.fields.properties) || {};
     const statusOptionId = approvalProp ? properties[approvalProp.id] : null;
-    const statusLabel = optionLabelById(approvalProp, statusOptionId) || config.statusOptionLabels.waiting;
+    const statusLabel = optionLabelById(approvalProp, statusOptionId);
+    // null status = card's current "Статус" isn't one of our configured
+    // client-facing values (e.g. still "Не начато"/"В процессе") → excluded
+    // below, not shown to the client at all.
     const status = statusEnumFromLabel(statusLabel);
 
     const rawPublishDate = publishDateProp ? properties[publishDateProp.id] : null;
@@ -144,10 +182,14 @@ function buildTasks(board, blocks) {
   });
 
   return {
-    tasks: tasks.filter((t) => t.status !== 'archived'),
+    // status === null → "Статус" value isn't a client-facing one (internal
+    // production stage) → hidden. status === 'archived' → explicitly hidden.
+    tasks: tasks.filter((t) => t.status && t.status !== 'archived'),
     meta: {
       approvalPropertyFound: !!approvalProp,
       publishDatePropertyFound: !!publishDateProp,
+      projectPropertyFound: !!projectProp,
+      projectFilterMatched,
     },
   };
 }

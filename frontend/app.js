@@ -3,6 +3,7 @@
 
 const params = new URLSearchParams(location.search);
 const boardId = (location.pathname.match(/^\/p\/([^/]+)/) || [])[1];
+const projectFilter = params.get('project'); // which client this link is for, on a shared board
 const deepLinkTaskId = params.get('task');
 
 let state = { tasks: [], board: null };
@@ -124,7 +125,8 @@ async function loadTasks() {
   const loading = document.getElementById('loading');
   loading.hidden = false;
   try {
-    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/tasks`);
+    const qs = projectFilter ? `?project=${encodeURIComponent(projectFilter)}` : '';
+    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/tasks${qs}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
     state.tasks = data.tasks;

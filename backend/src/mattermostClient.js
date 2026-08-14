@@ -51,12 +51,25 @@ async function asJsonOrThrow(res, context) {
   }
 }
 
-// GET /boards/{boardId} — board metadata including cardProperties (property
-// definitions: id, name, type, options: [{id, value, color}]).
-async function getBoard(boardId) {
+// GET /teams/{teamId}/boards — all boards for a team, INCLUDING cardProperties
+// (property definitions: id, name, type, options: [{id, value, color}]).
+// Confirmed working shape against a real server (unlike the single-board
+// GET /boards/{boardId}, which is unverified — see docs/MATTERMOST_INTEGRATION.md).
+async function listTeamBoards(teamId) {
   assertConfigured();
-  const res = await fetch(boardsUrl(`/boards/${boardId}`), { headers: authHeaders() });
-  return asJsonOrThrow(res, `getBoard(${boardId})`);
+  const res = await fetch(boardsUrl(`/teams/${teamId}/boards`), { headers: authHeaders() });
+  const data = await asJsonOrThrow(res, `listTeamBoards(${teamId})`);
+  return Array.isArray(data) ? data : (data && data.boards) || [];
+}
+
+// Board metadata for one board, resolved by listing the team's boards and
+// picking the matching one (see listTeamBoards above for why).
+async function getBoard(boardId, teamId) {
+  if (!teamId) throw new Error('MATTERMOST_TEAM_ID is not configured');
+  const boards = await listTeamBoards(teamId);
+  const board = boards.find((b) => b.id === boardId);
+  if (!board) throw new Error(`Board ${boardId} not found in team ${teamId} (checked ${boards.length} boards)`);
+  return board;
 }
 
 // GET /boards/{boardId}/blocks — every block on the board (cards, comments,
@@ -128,6 +141,7 @@ async function fetchFileStream(fileId, rangeHeader) {
 }
 
 module.exports = {
+  listTeamBoards,
   getBoard,
   listBlocks,
   patchCardProperty,
