@@ -117,6 +117,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
   const formatProp = findPropertyDef(board, config.formatPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
+  const postTextProp = findPropertyDef(board, config.postTextPropertyName);
 
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
   const projectFilterMatched = !projectProp || !!projectOptionId;
@@ -135,13 +136,6 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
 
   const tasks = visibleCards.map((card) => {
     const children = childBlocks.filter((b) => b.parentId === card.id && !b.deleteAt);
-    const textBlocks = children
-      .filter((b) => b.type === 'text')
-      .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
-    const caption = textBlocks
-      .map((b) => b.title || (b.fields && b.fields.text) || '')
-      .filter(Boolean)
-      .join('\n\n');
 
     const mediaBlocks = children.filter((b) => b.fields && b.fields.fileId);
     const media = mediaBlocks
@@ -171,6 +165,22 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     const publishDate = parsePropertyDate(rawPublishDate);
     const weekStart = mondayOf(publishDate);
 
+    // Post text: prefer the CONFIRMED direct card property ("Текст поста" —
+    // found on a real card's properties), fall back to text-type child
+    // blocks (the old best-effort approach via the unconfirmed /blocks
+    // endpoint) only if that property is empty/missing on this card.
+    const directPostText = postTextProp ? String(properties[postTextProp.id] || '').trim() : '';
+    let caption = directPostText;
+    if (!caption) {
+      const textBlocks = children
+        .filter((b) => b.type === 'text')
+        .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
+      caption = textBlocks
+        .map((b) => b.title || (b.fields && b.fields.text) || '')
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
     let format = null;
     if (formatProp) {
       const rawFormat = properties[formatProp.id];
@@ -193,10 +203,11 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     };
   });
 
+  // Sort strictly by planned publish date, descending (agency's request) —
+  // cards with no date at all sort last.
   tasks.sort((a, b) => {
-    if (a.weekStart !== b.weekStart) return (b.weekStart || '').localeCompare(a.weekStart || ''); // newest week first
-    if (a.publishDate !== b.publishDate) return (a.publishDate || '').localeCompare(b.publishDate || '');
-    return a.createAt - b.createAt;
+    if (a.publishDate !== b.publishDate) return (b.publishDate || '').localeCompare(a.publishDate || '');
+    return b.createAt - a.createAt;
   });
 
   return {
@@ -206,6 +217,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     meta: {
       approvalPropertyFound: !!approvalProp,
       publishDatePropertyFound: !!publishDateProp,
+      postTextPropertyFound: !!postTextProp,
       projectPropertyFound: !!projectProp,
       projectFilterMatched,
     },

@@ -43,9 +43,16 @@ module.exports = {
   // without it every client link would see every other client's cards.
   projectPropertyName: process.env.MM_PROJECT_PROPERTY_NAME || 'Проект',
   // Optional — leave blank ('') to omit publish date / format from the UI
-  // if your board doesn't have a matching property.
-  publishDatePropertyName: process.env.MM_PUBLISH_DATE_PROPERTY_NAME || '',
+  // if your board doesn't have a matching property. Default matches the
+  // real "Задачи SMM-Team" board's date property (confirmed via debug dump).
+  publishDatePropertyName: process.env.MM_PUBLISH_DATE_PROPERTY_NAME || 'Дедлайн (публикация)',
   formatPropertyName: process.env.MM_FORMAT_PROPERTY_NAME || '',
+  // Name of the text-type card property holding the actual post copy.
+  // CONFIRMED via a real card's raw properties — this is a reliable, direct
+  // source, unlike the old best-effort approach of pulling caption text from
+  // child "text" blocks via the unconfirmed /blocks endpoint (still used as
+  // a fallback in taskMapper.js if this property is empty on a given card).
+  postTextPropertyName: process.env.MM_POST_TEXT_PROPERTY_NAME || 'Текст поста',
 
   // Cards whose "Статус" value isn't one of these four labels are excluded
   // from the client cabinet entirely (rather than lumped into "waiting") —

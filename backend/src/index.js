@@ -110,7 +110,10 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
       `Option "${targetLabel}" not found on property "${config.approvalPropertyName}" (board ${boardId}).`
     );
   }
-  await mm.patchCardProperty(boardId, taskId, approvalProp.id, optionId);
+  const patchResult = await mm.patchCardProperty(boardId, taskId, approvalProp.id, optionId);
+  if (config.debug) {
+    console.log(`[mattermost:debug] patchCardProperty(${boardId},${taskId}) response →`, JSON.stringify(patchResult).slice(0, 1000));
+  }
   invalidate(boardId);
   const { board: freshBoard, cards, blocks } = await loadBoard(boardId, { fresh: true });
   // skipProjectFilter: we already know the exact card id (client only ever
@@ -120,6 +123,20 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   const { tasks } = buildTasks(freshBoard, cards, blocks, { skipProjectFilter: true });
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
+  // IMPORTANT: a 200 from PATCH does not prove Mattermost actually changed
+  // anything — this was silently failing in production (UI said "Согласовано",
+  // Boards itself stayed unchanged). Verify by re-reading the card and
+  // comparing its actual status, and fail loudly if it didn't take, instead
+  // of reporting false success back to the client.
+  if (updated.status !== statusKey) {
+    throw new Error(
+      `Mattermost принял запрос на изменение статуса (PATCH вернул успех), но после повторного чтения ` +
+        `карточки ${taskId} статус остался "${updated.statusLabel || '(нет)'}", а не "${targetLabel}". ` +
+        `Похоже, PATCH на этом сервере не применяется по факту — либо аккаунт, от имени которого идёт ` +
+        `запрос (см. MATTERMOST_LOGIN_ID/MATTERMOST_TOKEN), не имеет прав редактировать эту карточку/борд, ` +
+        `либо формат запроса отличается от ожидаемого (см. docs/MATTERMOST_INTEGRATION.md §4).`
+    );
+  }
   return updated;
 }
 

@@ -44,6 +44,14 @@ function statusInfo(status) {
   return { cls: 'waiting', text: 'На согласовании' };
 }
 
+const MONTHS_RU_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+function formatDatePill(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return `${d.getUTCDate()} ${MONTHS_RU_SHORT[d.getUTCMonth()]}`;
+}
+
 function mediaHtml(task) {
   if (!task.media.length) {
     return '<div class="media"><div class="carousel"><div class="slide file-link"><div><b>Без вложений</b></div></div></div></div>';
@@ -73,16 +81,22 @@ function cardHtml(task) {
            <button class="btn approve" ${busy ? 'disabled' : ''} data-action="approve" data-id="${task.id}">Согласовать</button>
            <button class="btn changes" ${busy ? 'disabled' : ''} data-action="open-feedback" data-id="${task.id}">Есть правки</button>
          </div>`;
+  const dateBadge = task.publishDate
+    ? `<span class="status date" title="Плановая дата публикации">${esc(formatDatePill(task.publishDate))}</span>`
+    : '';
   return `<article class="card${busy ? ' pending-action' : ''}" id="task-${esc(task.id)}">
     <div class="meta">
       <div class="meta-left">
-        <div class="eyebrow">${esc(task.publishDate || '')}${task.format ? ' · ' + esc(task.format) : ''}</div>
+        ${task.format ? `<div class="eyebrow">${esc(task.format)}</div>` : ''}
         <h2>${esc(task.title)}</h2>
       </div>
-      <span class="status ${st.cls}">${st.text}</span>
+      <div class="badges">
+        ${dateBadge}
+        <span class="status ${st.cls}">${st.text}</span>
+      </div>
     </div>
     ${mediaHtml(task)}
-    ${task.caption ? `<div class="caption-wrap"><div class="caption open">${esc(task.caption)}</div></div>` : ''}
+    ${task.caption && task.status !== 'changes' ? `<div class="caption-wrap"><div class="caption open">${esc(task.caption)}</div></div>` : ''}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
     ${actions}
   </article>`;
