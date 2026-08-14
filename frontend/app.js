@@ -292,8 +292,10 @@ function scrollToTask(id) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-// Top info strip: draws attention to posts that are burning (waiting + due
-// within 3 days) or just counts how many posts are waiting for approval.
+// Top info strip. Three calm states instead of a loud banner:
+//   urgent — some posts are burning (waiting + due within 3 days): accent color.
+//   waiting — posts waiting for approval, none burning: soft green.
+//   clear  — nothing waiting: gray, showing the nearest upcoming publication.
 // Computed across ALL the client's tasks (not the active week), since urgency
 // follows the publish date, not the selected week.
 function updateAttention() {
@@ -301,30 +303,40 @@ function updateAttention() {
   const all = state.tasks || [];
   const waiting = all.filter((t) => t.status === 'waiting');
   const urgent = waiting.filter(isUrgent);
-  const changes = all.filter((t) => t.status === 'changes').length;
-  const approved = all.filter((t) => t.status === 'approved').length;
-  const published = all.filter((t) => t.status === 'published').length;
   if (!all.length) { el.hidden = true; return; }
 
   let title;
+  let state;
   if (urgent.length) {
+    state = 'urgent';
     const soon = urgent.map((t) => t.publishDate).filter(Boolean).sort()[0];
-    const w = waiting.length;
     const g = urgent.length;
-    title = `🔥 ${w} ${plural(w, 'пост', 'поста', 'постов')} ждут согласования — ${g} ${plural(g, 'горящий', 'горящих', 'горящих')}${soon ? `, ближайший до ${formatDatePill(soon)}` : ''}`;
+    title = `${g} ${plural(g, 'горящий пост', 'горящих поста', 'горящих постов')} ждут согласования${soon ? ` — ближайший до ${formatDatePill(soon)}` : ''}`;
   } else if (waiting.length) {
+    state = 'waiting';
     const w = waiting.length;
     title = `${w} ${plural(w, 'пост', 'поста', 'постов')} на согласовании`;
   } else {
-    title = 'Все посты согласованы 🎉';
+    state = 'clear';
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const next = all
+      .filter((t) => t.publishDate && t.publishDate >= today)
+      .sort((a, b) => a.publishDate.localeCompare(b.publishDate))[0];
+    title = next
+      ? `Ближайшая публикация: ${formatDatePill(next.publishDate)} — «${next.title}»`
+      : 'Все посты согласованы';
   }
 
   const chips = [];
+  const changes = all.filter((t) => t.status === 'changes').length;
+  const approved = all.filter((t) => t.status === 'approved').length;
+  const published = all.filter((t) => t.status === 'published').length;
   if (changes) chips.push(`Правки в работе: ${changes}`);
   if (approved) chips.push(`Согласовано: ${approved}`);
   if (published) chips.push(`Опубликовано: ${published}`);
 
-  el.classList.toggle('urgent', urgent.length > 0);
+  el.className = `attention ${state}`;
   el.innerHTML = `<div class="attention-title">${title}</div>${chips.length ? `<div class="attention-sub">${chips.join(' · ')}</div>` : ''}`;
   el.hidden = false;
 }

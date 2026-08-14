@@ -45,9 +45,13 @@ button{cursor:pointer}
 .filter{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 11px;font-size:12px;font-weight:750;color:#687270;white-space:nowrap}
 .filter.active{background:var(--accent);border-color:var(--accent);color:#fff}
 .attention{background:#fff;border:1px solid var(--line);border-radius:18px;padding:13px 16px;margin:0 0 12px;display:grid;gap:4px}
-.attention.urgent{background:#FFF4F3;border-color:var(--urgent);box-shadow:0 0 0 1px var(--urgent) inset}
+.attention.urgent{background:#F4F8F7;border-color:var(--accent)}
+.attention.urgent .attention-title{color:var(--accent)}
+.attention.waiting{background:#E8F4EA;border-color:#BFDFC5}
+.attention.waiting .attention-title{color:#2E7D4F}
+.attention.clear{background:#F6F7F7;border-color:var(--line)}
+.attention.clear .attention-title{color:var(--muted)}
 .attention-title{font-size:14px;font-weight:800;line-height:1.4}
-.attention.urgent .attention-title{color:#B03A3A}
 .attention-sub{font-size:12px;color:var(--muted);font-weight:650}
 .stack{display:grid;gap:16px;position:relative}
 .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(16,45,42,.035)}
