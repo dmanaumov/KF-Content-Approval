@@ -555,9 +555,34 @@ app.post('/api/staff/forgot-password', async (req, res) => {
   return genericOk();
 });
 
+// On a brand-new deploy, the "db" container and this "app" container start
+// at roughly the same time — docker-compose's plain `depends_on: [db]`
+// (see docker-compose.yml) only orders CONTAINER START, not "Postgres is
+// actually accepting connections yet" (that's what the healthcheck +
+// `condition: service_healthy` there is for, but not every Compose runner
+// necessarily honors it the same way). Without a retry here, a single
+// unlucky first query during Postgres's own startup/initdb window would
+// throw, initSchema() would never run again for the lifetime of this
+// container, and every /api/projects* call would fail with "relation ...
+// does not exist" until the next restart — this is exactly what happened
+// once already. Retrying a few times with a short delay makes this
+// self-healing instead of needing a manual restart every time.
+async function waitForDb(maxAttempts = 15, delayMs = 2000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await db.initSchema();
+      return;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      console.warn(`[startup] database not ready yet (attempt ${attempt}/${maxAttempts}): ${err.message} — retrying in ${delayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 (async () => {
   try {
-    await db.initSchema();
+    await waitForDb();
     await projectSettings.importLegacyFileTokens();
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
