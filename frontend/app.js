@@ -238,7 +238,8 @@ function cardHtml(task) {
   const socialBadge = social
     ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
     : '';
-  const captionBlock = task.caption
+  const captionText = task.caption || '';
+  const captionBlock = (captionText || editingText || canEditText)
     ? editingText
       ? `<div class="caption-wrap editing">
           <div class="caption-head">
@@ -248,15 +249,16 @@ function cardHtml(task) {
               <button type="button" class="caption-btn save" ${busy ? 'disabled' : ''} data-action="save-text" data-id="${task.id}">Сохранить</button>
             </div>
           </div>
-          <textarea class="caption-editor" data-caption-editor="${task.id}" spellcheck="true" ${busy ? 'readonly' : ''}>${esc(task.caption)}</textarea>
+          <textarea class="caption-editor" data-caption-editor="${task.id}" spellcheck="true" ${busy ? 'readonly' : ''}>${esc(captionText)}</textarea>
         </div>`
-      : `<div class="caption-wrap">
+      : `<div class="caption-wrap${captionText ? '' : ' empty'}">
           <div class="caption-head">
+            <div class="caption-tip">${captionText ? '' : 'Текст ещё не задан. Можно добавить сразу здесь.'}</div>
             ${canEditText ? `<button type="button" class="caption-edit" ${busy ? 'disabled' : ''} data-action="edit-text" data-id="${task.id}" aria-label="Правка текста" title="Правка текста">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             </button>` : ''}
           </div>
-          <div class="caption open">${formatTelegram(task.caption)}</div>
+          ${captionText ? `<div class="caption open">${formatTelegram(captionText)}</div>` : ''}
         </div>`
     : '';
   return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}" id="task-${esc(task.id)}">
@@ -542,8 +544,8 @@ async function sendFeedback(taskId, comment) {
 async function saveTextEdit(taskId) {
   const textarea = document.querySelector(`[data-caption-editor="${taskId}"]`);
   if (!textarea) return;
-  const text = textarea.value.replace(/\r\n/g, '\n').trim();
-  if (!text) {
+  const text = textarea.value.replace(/\r\n/g, '\n');
+  if (!text.trim()) {
     toast('Текст не может быть пустым');
     return;
   }

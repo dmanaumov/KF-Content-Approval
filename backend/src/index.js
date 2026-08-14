@@ -414,7 +414,8 @@ async function updateTaskText(boardId, taskId, text) {
     ], 'addDescriptionBlock');
   }
 
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} КОРРЕКТИРОВКА ТЕКСТА КЛИЕНТОМ`);
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ЗАКАЗЧИК СКОРРЕКТИРОВАЛ ТЕКСТ. ОБНОВЛЕНА ВЕРСИЯ`);
+  await setApprovalStatus(boardId, taskId, 'changes');
 
   invalidate(boardId);
   const { board: freshBoard, cards: freshCards, blocks: freshBlocks } = await loadBoard(boardId, { fresh: true });

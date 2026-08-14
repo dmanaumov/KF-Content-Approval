@@ -84,6 +84,7 @@ button{cursor:pointer}
 .dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(15,25,24,.62);color:#fff;border-radius:999px;padding:5px 9px;font-size:11px;pointer-events:none}
 .caption-wrap{padding:15px 17px 4px}
 .caption-wrap.editing{padding-bottom:12px}
+.caption-wrap.empty{padding-bottom:12px}
 .caption{font-size:14px;line-height:1.52;max-height:126px;overflow:hidden;position:relative}
 .caption.open{max-height:none}
 .caption-head{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0 0 6px}
