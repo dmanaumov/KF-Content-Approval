@@ -306,18 +306,18 @@ function updateAttention() {
   if (!all.length) { el.hidden = true; return; }
 
   let title;
-  let state;
+  let stateClass;
   if (urgent.length) {
-    state = 'urgent';
+    stateClass = 'urgent';
     const soon = urgent.map((t) => t.publishDate).filter(Boolean).sort()[0];
     const g = urgent.length;
     title = `${g} ${plural(g, 'горящий пост', 'горящих поста', 'горящих постов')} ждут согласования${soon ? ` — ближайший до ${formatDatePill(soon)}` : ''}`;
   } else if (waiting.length) {
-    state = 'waiting';
+    stateClass = 'waiting';
     const w = waiting.length;
     title = `${w} ${plural(w, 'пост', 'поста', 'постов')} на согласовании`;
   } else {
-    state = 'clear';
+    stateClass = 'clear';
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const next = all
@@ -336,7 +336,7 @@ function updateAttention() {
   if (approved) chips.push(`Согласовано: ${approved}`);
   if (published) chips.push(`Опубликовано: ${published}`);
 
-  el.className = `attention ${state}`;
+  el.className = `attention ${stateClass}`;
   el.innerHTML = `<div class="attention-title">${title}</div>${chips.length ? `<div class="attention-sub">${chips.join(' · ')}</div>` : ''}`;
   el.hidden = false;
 }
