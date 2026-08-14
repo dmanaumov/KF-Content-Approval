@@ -6,20 +6,22 @@
 .proj-list{display:grid;gap:12px}
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
-.proj-logo{flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#FAFBFB;border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+.proj-logo{flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
 .proj-logo img{width:100%;height:100%;object-fit:contain}
-.proj-logo-fallback{font-weight:800;font-size:18px;color:var(--muted)}
+.proj-logo-fallback{font-weight:800;font-size:18px;color:#fff}
 .proj-info{flex:1;min-width:0;display:grid;gap:9px;align-content:center}
 .proj-name{font-weight:800;font-size:15px}
 .proj-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .proj-row-label{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;min-width:74px}
 .proj-link{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted);background:#FAFBFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.proj-link-row{flex-direction:column;align-items:stretch;gap:6px}
 
 /* Vertical column of action icons (copy / edit / regenerate), one above the
    other in the accent color. Hover shows a hint built from data-tip — the
    action's name + what it actually does. */
-.proj-actions-col{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:8px}
-.icon-btn{position:relative;width:36px;height:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid rgba(255,95,96,.35);background:#ff5f60;color:#fff;cursor:pointer}
+.proj-actions-col{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:6px}
+.icon-btn{position:relative;width:18px;height:18px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid rgba(255,95,96,.35);background:#ff5f60;color:#fff;cursor:pointer}
+.icon-btn svg{width:12px;height:12px}
 .icon-btn:active{transform:scale(.94)}
 .icon-btn:disabled{opacity:.55;cursor:default}
 .icon-btn.busy svg{animation:icon-spin .9s linear infinite}
@@ -45,6 +47,18 @@
 }
 .icon-btn:hover::after,
 .icon-btn:focus-visible::after{opacity:1}
+/* Touch devices have no hover — a tap both focuses and activates the button,
+   so show the same hint then (and let the text wrap instead of overflowing
+   the narrow screen). */
+@media (hover:none){
+  .icon-btn::after{
+    white-space:normal;
+    max-width:200px;
+  }
+  .icon-btn:hover::after,
+  .icon-btn:focus::after,
+  .icon-btn:active::after{opacity:1}
+}
 @media(max-width:430px){
   .proj-row-label{min-width:100%}
   .proj-logo{width:44px}

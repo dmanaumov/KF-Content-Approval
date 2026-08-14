@@ -198,21 +198,22 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     const publishDate = parsePropertyDate(rawPublishDate);
     const weekStart = mondayOf(publishDate);
 
-    // Post text: prefer the CONFIRMED direct card property ("Текст поста" —
-    // found on a real card's properties), fall back to text-type child
-    // blocks (the old best-effort approach via the unconfirmed /blocks
-    // endpoint) only if that property is empty/missing on this card.
+    // Post text: prefer the card's description (text-type child blocks) — it's
+    // a multi-line input, so paragraph breaks survive it. The "Текст поста"
+    // card property is a SINGLE-LINE field in Boards: pasting multi-line text
+    // into it collapses every newline to a space — that's exactly how the
+    // author's intent loses its line breaks before it ever reaches the
+    // cabinet or n8n. The property stays only as a fallback for cards that
+    // still fill it (used when the description is empty).
+    const textBlocks = children
+      .filter((b) => b.type === 'text')
+      .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
+    const descriptionText = textBlocks
+      .map((b) => b.title || (b.fields && b.fields.text) || '')
+      .filter(Boolean)
+      .join('\n\n');
     const directPostText = postTextProp ? String(properties[postTextProp.id] || '').trim() : '';
-    let caption = directPostText;
-    if (!caption) {
-      const textBlocks = children
-        .filter((b) => b.type === 'text')
-        .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
-      caption = textBlocks
-        .map((b) => b.title || (b.fields && b.fields.text) || '')
-        .filter(Boolean)
-        .join('\n\n');
-    }
+    let caption = descriptionText || directPostText;
 
     // "Материал уже на диске" links (https://disk.kontentferma.<tld>/s/<token>)
     // pasted into the post text: strip the raw link out of the visible text

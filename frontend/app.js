@@ -30,6 +30,42 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
 }
 
+// The post text is written in Telegram's markdown (staff compose in Telegram,
+// then paste into "Текст поста"): **bold**, *italic*, __underline__,
+// ~/~~strikethrough~~, `code`, ```pre``` and [text](url). Without rendering
+// the client sees the raw asterisks. Order matters for safety: escape ALL
+// HTML first, only then apply the formatting tokens — so nothing unescaped
+// can ever reach innerHTML.
+function formatTelegram(text) {
+  if (!text) return '';
+  let s = esc(text);
+  // Code/pre blocks are stashed away so their content is never re-processed
+  // by the inline rules below (a pre block contains its own backticks).
+  const stash = [];
+  const hide = (html) => {
+    const ph = `\u0000T${stash.length}\u0000`;
+    stash.push(html);
+    return ph;
+  };
+  s = s.replace(/```([\s\S]*?)```/g, (m, body) => hide(`<pre>${body.replace(/\n/g, '<br>')}</pre>`));
+  s = s.replace(/`([^`\n]+)`/g, (m, code) => hide(`<code>${code}</code>`));
+
+  // Inline styling — flat token pairs, the way Telegram's own parser handles
+  // them. Each is replaced in turn so `**bold**` never trips the *italic* rule.
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  s = s.replace(/__([^_\n]+)__/g, '<u>$1</u>');
+  s = s.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>');
+  s = s.replace(/(^|[^~])~([^~\n]+)~/g, '$1<s>$2</s>');
+
+  // Links — only http(s) targets are accepted, never a javascript: URL.
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  s = s.replace(/\n/g, '<br>');
+  for (let i = 0; i < stash.length; i++) s = s.split(`\u0000T${i}\u0000`).join(stash[i]);
+  return s;
+}
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -203,7 +239,7 @@ function cardHtml(task) {
       </div>
     </div>
     ${mediaHtml(task)}
-    ${task.caption && task.status !== 'changes' ? `<div class="caption-wrap"><div class="caption open">${esc(task.caption)}</div></div>` : ''}
+    ${task.caption && task.status !== 'changes' ? `<div class="caption-wrap"><div class="caption open">${formatTelegram(task.caption)}</div></div>` : ''}
     ${urlLink}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
     ${actions}

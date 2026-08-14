@@ -74,8 +74,14 @@ button{cursor:pointer}
 .file-link a{color:var(--accent);font-weight:800;text-decoration:none}
 .dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(15,25,24,.62);color:#fff;border-radius:999px;padding:5px 9px;font-size:11px;pointer-events:none}
 .caption-wrap{padding:15px 17px 4px}
-.caption{font-size:14px;line-height:1.52;white-space:pre-wrap;max-height:126px;overflow:hidden;position:relative}
+.caption{font-size:14px;line-height:1.52;max-height:126px;overflow:hidden;position:relative}
 .caption.open{max-height:none}
+.caption b,.caption strong{font-weight:800}
+.caption u{text-decoration:underline}
+.caption s{text-decoration:line-through}
+.caption a{color:var(--accent);font-weight:700;word-break:break-all}
+.caption code{background:#F1F4F3;border-radius:5px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.caption pre{background:#F1F4F3;border-radius:10px;padding:10px 12px;margin:8px 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;overflow-x:auto}
 .more{border:0;background:transparent;color:var(--accent);font-weight:800;padding:8px 0 0;font-size:12px}
 .post-link{margin:12px 17px 0}
 .post-link a{display:inline-block;color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;border-bottom:1px solid currentColor}
