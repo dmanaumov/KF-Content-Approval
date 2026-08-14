@@ -41,6 +41,7 @@ function applyBranding() {
 function statusInfo(status) {
   if (status === 'approved') return { cls: 'approved', text: 'Согласовано' };
   if (status === 'changes') return { cls: 'changes', text: 'Правки' };
+  if (status === 'published') return { cls: 'published', text: 'Опубликовано' };
   return { cls: 'waiting', text: 'На согласовании' };
 }
 
@@ -74,15 +75,23 @@ function mediaHtml(task) {
 function cardHtml(task) {
   const st = statusInfo(task.status);
   const busy = busyTaskId === task.id;
-  const actions =
-    task.status === 'approved'
-      ? '<div class="actions"><div class="approved-box">✓ Согласовано</div></div>'
-      : `<div class="actions">
+  let actions;
+  if (task.status === 'approved') {
+    actions = '<div class="actions"><div class="approved-box">✓ Согласовано</div></div>';
+  } else if (task.status === 'published') {
+    // Terminal state — nothing left for the client to do here.
+    actions = '<div class="actions"><div class="approved-box published-box">🔗 Опубликовано</div></div>';
+  } else {
+    actions = `<div class="actions">
            <button class="btn approve" ${busy ? 'disabled' : ''} data-action="approve" data-id="${task.id}">Согласовать</button>
            <button class="btn changes" ${busy ? 'disabled' : ''} data-action="open-feedback" data-id="${task.id}">Есть правки</button>
          </div>`;
+  }
   const dateBadge = task.publishDate
     ? `<span class="status date" title="Плановая дата публикации">${esc(formatDatePill(task.publishDate))}</span>`
+    : '';
+  const urlLink = task.url
+    ? `<div class="post-link"><a href="${esc(task.url)}" target="_blank" rel="noopener">Открыть опубликованный пост →</a></div>`
     : '';
   return `<article class="card${busy ? ' pending-action' : ''}" id="task-${esc(task.id)}">
     <div class="meta">
@@ -97,6 +106,7 @@ function cardHtml(task) {
     </div>
     ${mediaHtml(task)}
     ${task.caption && task.status !== 'changes' ? `<div class="caption-wrap"><div class="caption open">${esc(task.caption)}</div></div>` : ''}
+    ${urlLink}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
     ${actions}
   </article>`;

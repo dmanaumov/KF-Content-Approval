@@ -95,7 +95,7 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback', async (req, res) => {
 });
 
 async function setApprovalStatus(boardId, taskId, statusKey) {
-  const { board } = await loadBoard(boardId);
+  const { board, cards } = await loadBoard(boardId);
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   if (!approvalProp) {
     throw new Error(
@@ -110,17 +110,25 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
       `Option "${targetLabel}" not found on property "${config.approvalPropertyName}" (board ${boardId}).`
     );
   }
-  const patchResult = await mm.patchCardProperty(boardId, taskId, approvalProp.id, optionId);
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before update.`);
+  // Merge the one changed property into the card's FULL current properties —
+  // see the big comment on mattermostClient.patchCardProperty for why: the
+  // real PATCH body (`updatedFields.properties`) replaces the whole
+  // properties object, so sending just the changed property would silently
+  // wipe out project/date/post-text/etc. on the card.
+  const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: optionId };
+  const patchResult = await mm.patchCardProperty(boardId, taskId, mergedProperties);
   if (config.debug) {
     console.log(`[mattermost:debug] patchCardProperty(${boardId},${taskId}) response →`, JSON.stringify(patchResult).slice(0, 1000));
   }
   invalidate(boardId);
-  const { board: freshBoard, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const { board: freshBoard, cards: freshCards, blocks } = await loadBoard(boardId, { fresh: true });
   // skipProjectFilter: we already know the exact card id (client only ever
   // learns it from their own, already-filtered task list) — no need to
   // re-apply the project filter here, and doing so would break this lookup
   // on shared boards since we don't carry the client's `project` through.
-  const { tasks } = buildTasks(freshBoard, cards, blocks, { skipProjectFilter: true });
+  const { tasks } = buildTasks(freshBoard, freshCards, blocks, { skipProjectFilter: true });
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   // IMPORTANT: a 200 from PATCH does not prove Mattermost actually changed

@@ -118,6 +118,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const formatProp = findPropertyDef(board, config.formatPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   const postTextProp = findPropertyDef(board, config.postTextPropertyName);
+  const urlProp = findPropertyDef(board, config.urlPropertyName);
 
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
   const projectFilterMatched = !projectProp || !!projectOptionId;
@@ -187,6 +188,8 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       format = formatProp.type === 'select' ? optionLabelById(formatProp, rawFormat) : rawFormat;
     }
 
+    const url = urlProp ? String(properties[urlProp.id] || '').trim() : '';
+
     return {
       id: card.id,
       title: card.title || '(без названия)',
@@ -199,6 +202,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       caption,
       media,
       feedback,
+      url,
       createAt: card.createAt || 0,
     };
   });
@@ -218,6 +222,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       approvalPropertyFound: !!approvalProp,
       publishDatePropertyFound: !!publishDateProp,
       postTextPropertyFound: !!postTextProp,
+      urlPropertyFound: !!urlProp,
       projectPropertyFound: !!projectProp,
       projectFilterMatched,
     },

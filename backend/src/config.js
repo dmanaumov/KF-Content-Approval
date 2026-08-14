@@ -53,9 +53,13 @@ module.exports = {
   // child "text" blocks via the unconfirmed /blocks endpoint (still used as
   // a fallback in taskMapper.js if this property is empty on a given card).
   postTextPropertyName: process.env.MM_POST_TEXT_PROPERTY_NAME || 'Текст поста',
+  // URL of the live published post, shown as a link under the post text.
+  // Only meaningful once a card reaches the "published" status below, but
+  // rendered whenever it's non-empty regardless of status.
+  urlPropertyName: process.env.MM_URL_PROPERTY_NAME || 'URL',
 
-  // Cards whose "Статус" value isn't one of these four labels are excluded
-  // from the client cabinet entirely (rather than lumped into "waiting") —
+  // Cards whose "Статус" value isn't one of these labels are excluded from
+  // the client cabinet entirely (rather than lumped into "waiting") —
   // internal production stages like "Не начато"/"В процессе"/"ТЗ РАЙТЕРУ"
   // should stay invisible to the client until they reach client review.
   statusOptionLabels: {
@@ -64,6 +68,10 @@ module.exports = {
     // Reuses the existing "Корректировка" option — no dedicated "client
     // requested changes" option was added, see README/docs for the caveat.
     changes: process.env.MM_STATUS_CHANGES_LABEL || 'Корректировка',
+    // A 5th client-facing state (added on request): once a post actually
+    // goes live, show it under its own "Опубликовано" tab with a link to
+    // the live post (see urlPropertyName above) instead of hiding it.
+    published: process.env.MM_STATUS_PUBLISHED_LABEL || 'ОПУБЛИКОВАНО',
     archived: process.env.MM_STATUS_ARCHIVED_LABEL || 'АРХИВ',
   },
 

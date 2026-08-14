@@ -210,16 +210,28 @@ async function listBlocks(boardId) {
 }
 
 // PATCH /boards/{boardId}/blocks/{blockId}
-// Body mirrors Focalboard's model.BlockPatch: updatedProperties is a
-// propertyId -> value map. VERIFY against your server.
-async function patchCardProperty(boardId, cardId, propertyId, value) {
-  const body = { updatedProperties: { [propertyId]: value } };
+//
+// ROOT CAUSE of "PATCH returns 200 but nothing changes in Mattermost" (real
+// bug hit in production): the body shape was wrong. `model.BlockPatch` (the
+// actual Go struct behind this endpoint, confirmed via the mattermost-plugin-
+// boards source) has NO `updatedProperties` field at all — that key was a
+// mistaken guess and the server just silently ignored it. The real field is
+// `updatedFields`, a generic map merged into the block's top-level `fields`
+// object — and `properties` is itself one key of `fields`, replaced WHOLESALE
+// (not deep-merged) by whatever you put there. So this function takes the
+// card's FULL, already-merged properties object (not a single propertyId/
+// value pair) — the caller is responsible for merging the one changed
+// property into the card's existing properties first (see setApprovalStatus
+// in index.js), or every other property (project, date, post text, ...)
+// would be silently wiped from the card.
+async function patchCardProperty(boardId, cardId, mergedProperties) {
+  const body = { updatedFields: { properties: mergedProperties } };
   const res = await mmFetch(
     boardsUrl(`/boards/${boardId}/blocks/${cardId}`),
     { method: 'PATCH', body: JSON.stringify(body) },
-    `patchCardProperty(${boardId},${cardId},${propertyId})`
+    `patchCardProperty(${boardId},${cardId})`
   );
-  return asJsonOrThrow(res, `patchCardProperty(${boardId},${cardId},${propertyId})`);
+  return asJsonOrThrow(res, `patchCardProperty(${boardId},${cardId})`);
 }
 
 // POST /boards/{boardId}/blocks — bulk block creation, used to attach a
