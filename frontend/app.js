@@ -84,13 +84,16 @@ function mediaHtml(task) {
   }
   const slides = task.media
     .map((m) => {
+      // Board attachments live in the Boards plugin's own file storage,
+      // keyed by team+board — the proxy route needs the board id too.
+      const fileUrl = `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
       if (m.kind === 'image') {
-        return `<div class="slide"><img src="/api/files/${encodeURIComponent(m.fileId)}" alt="" loading="lazy"></div>`;
+        return `<div class="slide"><img src="${fileUrl}" alt="" loading="lazy"></div>`;
       }
       if (m.kind === 'video') {
-        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" src="/api/files/${encodeURIComponent(m.fileId)}"></video></div></div>`;
+        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" src="${fileUrl}"></video></div></div>`;
       }
-      return `<div class="slide file-link"><div><b>${esc(m.name || 'Файл')}</b><br><a href="/api/files/${encodeURIComponent(m.fileId)}" target="_blank" rel="noopener">Открыть</a></div></div>`;
+      return `<div class="slide file-link"><div><b>${esc(m.name || 'Файл')}</b><br><a href="${fileUrl}" target="_blank" rel="noopener">Открыть</a></div></div>`;
     })
     .join('');
   const counter = task.media.length > 1 ? `<div class="dots">1 / ${task.media.length}</div>` : '';

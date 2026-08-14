@@ -261,26 +261,37 @@ async function addCardComment(boardId, cardId, text) {
   return asJsonOrThrow(res, `addCardComment(${boardId},${cardId})`);
 }
 
-// Files attached to Boards cards live in core Mattermost file storage and
-// are served via the stable, documented core file API. This requires the
-// same auth, so it is NOT directly reachable by a client's browser —
-// mediaRoutes proxies bytes through our backend instead (with Range support
-// for video, since iPhone Safari needs it).
-function fileDownloadUrl(fileId) {
-  return `${config.mattermostUrl}/api/v4/files/${fileId}`;
+// Files attached DIRECTLY TO A CARD (drag-and-drop / attach in Boards) do
+// NOT live in core Mattermost file storage — they live in the Boards
+// plugin's own file storage, keyed by team+board, and the fileId itself is
+// literally the stored filename (confirmed against a real card's raw
+// blocks: fields.fileId was "76ttr5js5efdzbrjy7a5qkqrgbw.png", an id+
+// extension, not a core Mattermost FileInfo id). The CONFIRMED route
+// (mattermost-plugin-boards source, server/api/files.go,
+// registerFilesRoutes: GET "/files/teams/{teamID}/{boardID}/{filename}")
+// lives under the same apiv2 router as every other Boards call in this
+// file — NOT under /api/v4/files/{fileId} (that's for chat-post
+// attachments, a different storage entirely, and was the actual reason
+// images/video weren't loading before this fix). Requires teamId + the
+// owning boardId, both already known by every caller in this app.
+// This is NOT directly reachable by a client's browser (needs Boards
+// auth) — mediaRoutes proxies bytes through our backend instead (with
+// Range support for video, since iPhone Safari needs it).
+function fileDownloadUrl(boardId, fileId) {
+  return boardsUrl(`/files/teams/${config.teamId}/${boardId}/${fileId}`);
 }
 
-async function fetchFileStream(fileId, rangeHeader) {
+async function fetchFileStream(boardId, fileId, rangeHeader) {
   assertConfigured();
   const headers = await authHeaders();
   delete headers['Content-Type'];
   if (rangeHeader) headers.Range = rangeHeader;
-  let res = await fetch(fileDownloadUrl(fileId), { headers });
+  let res = await fetch(fileDownloadUrl(boardId, fileId), { headers });
   if (res.status === 401 && usingSessionLogin()) {
     const retryHeaders = await authHeaders(undefined, { forceRelogin: true });
     delete retryHeaders['Content-Type'];
     if (rangeHeader) retryHeaders.Range = rangeHeader;
-    res = await fetch(fileDownloadUrl(fileId), { headers: retryHeaders });
+    res = await fetch(fileDownloadUrl(boardId, fileId), { headers: retryHeaders });
   }
   return res;
 }

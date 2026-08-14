@@ -92,11 +92,26 @@ function weekLabel(weekStart) {
   return `${start.getUTCDate()} ${MONTHS_RU[start.getUTCMonth()]} — ${end.getUTCDate()} ${MONTHS_RU[end.getUTCMonth()]}`;
 }
 
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'];
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', '3gp'];
+
+// Real card blocks confirmed against a live board never carry fields.mimeType
+// at all — the ONLY signal available is the file's extension, which (also
+// confirmed live) IS embedded in fields.fileId itself (Boards' own file
+// storage names files "<randomId>.<ext>", e.g. "76ttr5js5efdzbrjy7a5qkqrgbw.png"
+// — unlike core Mattermost FileInfo ids, which have no extension). Extension
+// is checked first and is authoritative when present; mimeType/block.type
+// are kept only as a fallback for whatever server behavior we haven't seen yet.
 function guessMediaKind(block) {
+  const fileId = (block.fields && block.fields.fileId) || '';
+  const ext = (fileId.split('.').pop() || '').toLowerCase();
+  if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
   const mime = (block.fields && block.fields.mimeType) || '';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
   if (block.type === 'image') return 'image';
+  if (block.type === 'video') return 'video';
   return 'file';
 }
 

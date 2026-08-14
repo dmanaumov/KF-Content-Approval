@@ -188,11 +188,14 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   return updated;
 }
 
-// GET /api/files/:fileId — proxies media bytes from Mattermost with Range
-// support (needed for video playback, notably iPhone Safari).
-app.get('/api/files/:fileId', async (req, res) => {
+// GET /api/files/:boardId/:fileId — proxies media bytes from Mattermost with
+// Range support (needed for video playback, notably iPhone Safari). Board
+// attachments live in the Boards plugin's own file storage (keyed by
+// team+board), not core Mattermost file storage — see fetchFileStream in
+// mattermostClient.js — so boardId is required to build the right URL.
+app.get('/api/files/:boardId/:fileId', async (req, res) => {
   try {
-    const mmRes = await mm.fetchFileStream(req.params.fileId, req.headers.range);
+    const mmRes = await mm.fetchFileStream(req.params.boardId, req.params.fileId, req.headers.range);
     res.status(mmRes.status);
     for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control']) {
       const v = mmRes.headers.get(h);
