@@ -38,14 +38,14 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
-// resolvedName: passed explicitly by a /l/{token} link (the name came back
-// from GET /api/links/:token, never from the URL) — falls back to the
-// legacy ?name= query param for a direct /p/{boardId} link. Single place
-// that sets the client name/logo letter so a /l/ link's resolved name can
-// never get clobbered by an (absent) ?name= param afterwards.
-function applyBranding(resolvedName) {
+// resolvedName/resolvedLogoUrl: passed explicitly by a /l/{token} link (both
+// came back from GET /api/links/:token, never from the URL) — fall back to
+// the legacy ?name=/?logo= query params for a direct /p/{boardId} link.
+// Single place that sets the client name/logo so a /l/ link's resolved
+// values can never get clobbered by an (absent) query param afterwards.
+function applyBranding(resolvedName, resolvedLogoUrl) {
   const color = params.get('color');
-  const logo = params.get('logo');
+  const logo = resolvedLogoUrl || params.get('logo');
   const name = resolvedName || params.get('name');
   if (color && /^#[0-9a-fA-F]{6}$/.test(color)) {
     document.documentElement.style.setProperty('--accent', color);
@@ -63,8 +63,8 @@ function applyBranding(resolvedName) {
   }
 }
 
-// Resolves a /l/{token} link into the {boardId, projectId, name} it
-// currently points to, and fills in the module-level boardId/projectFilter
+// Resolves a /l/{token} link into the {boardId, projectId, name, logoUrl}
+// it currently points to, and fills in the module-level boardId/projectFilter
 // used by everything else below. Throws with a user-facing message on an
 // unknown/revoked token (404) or any other failure.
 async function resolveLinkToken() {
@@ -73,7 +73,7 @@ async function resolveLinkToken() {
   if (!res.ok) throw new Error(data.message || data.error || 'Не удалось открыть кабинет.');
   boardId = data.boardId;
   projectFilter = data.projectId;
-  return data.name || '';
+  return { name: data.name || '', logoUrl: data.logoUrl || '' };
 }
 
 // A post's "Название" often starts with a shorthand for which social network
@@ -475,14 +475,15 @@ async function init() {
   if (linkToken) {
     document.getElementById('loading').hidden = false;
     let name = '';
+    let logoUrl = '';
     try {
-      name = await resolveLinkToken();
+      ({ name, logoUrl } = await resolveLinkToken());
     } catch (err) {
       document.getElementById('loading').hidden = true;
       document.getElementById('stack').innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
       return;
     }
-    applyBranding(name);
+    applyBranding(name, logoUrl);
     loadTasks();
     return;
   }

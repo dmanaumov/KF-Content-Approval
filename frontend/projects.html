@@ -26,6 +26,53 @@
   </div>
 </div>
 
+<div id="editModal" class="modal-wrap">
+  <div class="sheet edit-sheet">
+    <h3>Настройки проекта</h3>
+    <p id="editProjectName"></p>
+
+    <label class="field-label" for="editLogoUrl">Ссылка на лого клиента (для кабинета)</label>
+    <input id="editLogoUrl" class="field-input" type="text" placeholder="https://disk.kontentferma.../s/.../download или другая прямая ссылка на картинку">
+    <div id="editLogoPreview" class="logo-preview" hidden>
+      <img id="editLogoPreviewImg" alt="">
+      <span>Так будет выглядеть лого в кабинете клиента</span>
+    </div>
+
+    <div class="cred-intro">
+      Данные ниже нужны только будущей автоматизации публикаций (n8n) — само приложение их не использует. Формат — на ваше усмотрение (JSON-объект), главное чтобы совпадал с тем, что настроит разработчик n8n.
+    </div>
+    <div class="cred-networks">
+      <div class="cred-net" data-net="ig">
+        <label><i class="net-dot" style="background:#C13584"></i>Instagram (IG)</label>
+        <textarea data-net-field="ig" rows="3" placeholder="{}"></textarea>
+      </div>
+      <div class="cred-net" data-net="tg">
+        <label><i class="net-dot" style="background:#229ED9"></i>Telegram (TG)</label>
+        <textarea data-net-field="tg" rows="3" placeholder='{"botToken": "...", "chatId": "..."}'></textarea>
+      </div>
+      <div class="cred-net" data-net="vk">
+        <label><i class="net-dot" style="background:#0077FF"></i>ВКонтакте (VK)</label>
+        <textarea data-net-field="vk" rows="3" placeholder="{}"></textarea>
+      </div>
+      <div class="cred-net" data-net="ok">
+        <label><i class="net-dot" style="background:#EE8208"></i>Одноклассники (OK)</label>
+        <textarea data-net-field="ok" rows="3" placeholder="{}"></textarea>
+      </div>
+      <div class="cred-net" data-net="max">
+        <label><i class="net-dot" style="background:#7C3AED"></i>MAX</label>
+        <textarea data-net-field="max" rows="3" placeholder="{}"></textarea>
+      </div>
+    </div>
+
+    <div id="editError" class="error-box" hidden></div>
+
+    <div class="sheet-actions">
+      <button class="btn changes" data-action="close-edit">Отмена</button>
+      <button class="btn approve" data-action="save-edit">Сохранить</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script src="/projects.js"></script>

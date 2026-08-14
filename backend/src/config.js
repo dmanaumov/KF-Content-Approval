@@ -1,4 +1,4 @@
-// All configuration comes from the environment. No database, no secrets in code.
+// All configuration comes from the environment. No secrets in code.
 // See .env.example / README.md for what to set.
 
 module.exports = {
@@ -93,12 +93,29 @@ module.exports = {
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',
 
-  // Where rotatable client-link tokens are persisted (see linkTokens.js).
-  // Deliberately a plain JSON file, not a database — but it MUST sit on a
-  // volume that survives a Dokploy redeploy (docker-compose.yml mounts one
-  // at /app/data by default), or "revoking" a link only lasts until the
-  // next deploy, which defeats the point.
+  // Postgres connection string. Required for: the rotatable client link
+  // store, the internal staff page's per-project logo/social-credentials
+  // editor, and the n8n publishing automation (reads project_settings
+  // directly via its own Postgres connection — see docs/N8N_AUTOMATION.md).
+  // docker-compose.yml builds this automatically from POSTGRES_DB/USER/
+  // PASSWORD — normally you only set those three, not this directly (see
+  // .env.example).
+  databaseUrl: process.env.DATABASE_URL || '',
+
+  // LEGACY — the old on-disk JSON link-token store, from before Postgres.
+  // Nothing writes to it anymore; kept only so
+  // projectSettings.importLegacyFileTokens() can migrate an already-issued,
+  // already-tested client link into Postgres once on first boot after
+  // upgrading. Safe to leave as-is indefinitely.
   projectLinksFile: process.env.PROJECT_LINKS_FILE || '/app/data/project-links.json',
+
+  // Optional HTTP Basic Auth in front of the internal staff page and its
+  // /api/projects* API. Both blank (default) = exactly as open as before
+  // (unguessable path only — see README). Now that this page also stores
+  // real social-network publishing credentials rather than just non-secret
+  // share links, setting these is STRONGLY recommended.
+  staffAuthUser: process.env.STAFF_AUTH_USER || '',
+  staffAuthPassword: process.env.STAFF_AUTH_PASSWORD || '',
 
   // Static link to the Mattermost web app itself, shown on the internal
   // staff page next to each project (same URL for every project — Boards

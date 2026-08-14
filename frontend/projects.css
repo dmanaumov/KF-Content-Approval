@@ -11,12 +11,30 @@
 .proj-mm-link{font-size:12px;color:var(--accent);text-decoration:none;word-break:break-all}
 .proj-mm-link:hover{text-decoration:underline}
 .proj-link{flex:1;min-width:180px;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted);background:#FAFBFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.proj-copy,.proj-regen{padding:9px 12px;font-size:12px;border-radius:10px;white-space:nowrap}
+.proj-copy,.proj-regen,.proj-edit{padding:9px 12px;font-size:12px;border-radius:10px;white-space:nowrap}
 .proj-actions-row{justify-content:flex-end}
-.proj-regen{width:auto}
+.proj-regen,.proj-edit{width:auto}
 @media(max-width:430px){
   .proj-link{min-width:100%}
   .proj-row-label{min-width:100%}
-  .proj-actions-row{justify-content:stretch}
-  .proj-regen{width:100%}
+  .proj-actions-row{justify-content:stretch;flex-wrap:nowrap}
+  .proj-regen,.proj-edit{width:100%}
 }
+
+/* "Редактировать" popup — logo URL + per-network credentials. Reuses
+   .modal-wrap/.sheet/.sheet-actions from app.css (same bottom-sheet pattern
+   as the client cabinet's feedback popup) so it matches visually. */
+.edit-sheet{max-height:85vh;overflow-y:auto}
+.field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
+.field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink)}
+.field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(7,96,92,.08)}
+.logo-preview{display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 10px;background:#FAFBFB;border:1px solid var(--line);border-radius:12px}
+.logo-preview img{width:40px;height:40px;object-fit:contain;border-radius:9px;background:#fff;border:1px solid var(--line)}
+.logo-preview span{font-size:11px;color:var(--muted)}
+.cred-intro{font-size:12px;color:var(--muted);line-height:1.5;margin:16px 0 10px;padding:10px 12px;background:#FAFBFB;border-radius:12px}
+.cred-networks{display:grid;gap:10px}
+.cred-net label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:var(--ink);margin-bottom:5px}
+.net-dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+.cred-net textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:9px 10px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;outline:none;color:var(--ink)}
+.cred-net textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(7,96,92,.08)}
+#editError{margin-top:14px}

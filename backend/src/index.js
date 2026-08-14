@@ -4,7 +4,8 @@ const config = require('./config');
 const mm = require('./mattermostClient');
 const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./diskEmbeds');
-const linkTokens = require('./linkTokens');
+const db = require('./db');
+const projectSettings = require('./projectSettings');
 
 const app = express();
 app.use(express.json());
@@ -126,6 +127,26 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
   }
 });
 
+// Optional HTTP Basic Auth gate for the internal staff page + its
+// /api/projects* API (see config.staffAuthUser/staffAuthPassword). A no-op
+// middleware when unset, so behavior is unchanged unless you opt in — see
+// .env.example for why this is now recommended (real publishing credentials
+// live behind this page, not just non-secret share links).
+function staffAuth(req, res, next) {
+  if (!config.staffAuthUser || !config.staffAuthPassword) return next();
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+    const sep = decoded.indexOf(':');
+    const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
+    const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
+    if (user === config.staffAuthUser && pass === config.staffAuthPassword) return next();
+  }
+  res.set('WWW-Authenticate', 'Basic realm="KF staff"');
+  res.status(401).send('Authentication required.');
+}
+
 function requireStaffBoardId(res) {
   if (!config.mattermostBoardId) {
     res.status(500).json({
@@ -146,7 +167,7 @@ function requireStaffBoardId(res) {
 // Reads live from the board's property definition (same source of truth as
 // everything else in this app) — a new client project shows up here
 // automatically as soon as it's added as an option in Mattermost.
-app.get('/api/projects', async (req, res) => {
+app.get('/api/projects', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
@@ -155,17 +176,17 @@ app.get('/api/projects', async (req, res) => {
     if (!projectProp) {
       return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
     }
-    res.json({
-      mattermostWebUrl: config.mattermostWebUrl,
-      options: (projectProp.options || []).map((o) => ({
+    const options = await Promise.all(
+      (projectProp.options || []).map(async (o) => ({
         id: o.id,
         label: o.value,
-        // Rotatable short link — see linkTokens.js. Created lazily on first
-        // read, so every project already has a working link the first time
-        // this list loads.
-        token: linkTokens.getToken(boardId, o.id),
-      })),
-    });
+        // Rotatable short link — see projectSettings.js. Created lazily on
+        // first read, so every project already has a working link the
+        // first time this list loads.
+        token: await projectSettings.getToken(boardId, o.id),
+      }))
+    );
+    res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
   } catch (err) {
     console.error('[api] GET projects failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
@@ -175,17 +196,51 @@ app.get('/api/projects', async (req, res) => {
 // POST /api/projects/:projectId/regenerate-link — issues a brand new short
 // link for this project and immediately invalidates the old one. Internal
 // staff action (not reachable from anywhere in the client-facing cabinet) —
-// used when a link may have leaked/been misused; see linkTokens.js for how
-// revocation is made to actually survive a redeploy.
-app.post('/api/projects/:projectId/regenerate-link', async (req, res) => {
+// used when a link may have leaked/been misused; see projectSettings.js for
+// how revocation is made to actually survive a redeploy.
+app.post('/api/projects/:projectId/regenerate-link', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
-    const token = linkTokens.regenerateToken(boardId, req.params.projectId);
+    const token = await projectSettings.regenerateToken(boardId, req.params.projectId);
     res.json({ token });
   } catch (err) {
     console.error('[api] regenerate-link failed:', err.message);
     res.status(500).json({ error: 'regenerate_failed', message: err.message });
+  }
+});
+
+// GET /api/projects/:projectId/settings — logo URL + per-network publishing
+// credentials, for the staff "Редактировать" popup (frontend/projects.js).
+// Returned as-is (not masked) — this is already the staff-only page (see
+// staffAuth above); the popup needs to show existing values to edit them.
+app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const settings = await projectSettings.getSettings(boardId, req.params.projectId);
+    res.json(settings);
+  } catch (err) {
+    console.error('[api] GET project settings failed:', err.message);
+    res.status(500).json({ error: 'settings_failed', message: err.message });
+  }
+});
+
+// PUT /api/projects/:projectId/settings — saves logo URL + social
+// credentials from the edit popup. Body: { logoUrl: string, socialCredentials:
+// { ig?, tg?, vk?, ok?, max? } } — each network's value is a free-form JSON
+// object; this app never reads it, it's stored purely so the n8n publishing
+// automation can read it directly from Postgres (see docs/N8N_AUTOMATION.md).
+app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    await projectSettings.updateSettings(boardId, req.params.projectId, req.body || {});
+    const settings = await projectSettings.getSettings(boardId, req.params.projectId);
+    res.json(settings);
+  } catch (err) {
+    console.error('[api] PUT project settings failed:', err.message);
+    res.status(400).json({ error: 'invalid_settings', message: err.message });
   }
 });
 
@@ -386,7 +441,7 @@ app.use(express.static(frontendDir));
 app.get('/p/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
 
 // GET /l/:token — the short, rotatable link actually handed out to clients
-// now (see linkTokens.js). Serves the SAME cabinet page as /p/{boardId} —
+// now (see projectSettings.js). Serves the SAME cabinet page as /p/{boardId} —
 // but crucially does NOT redirect. The page resolves the token into
 // {boardId, projectId, name} itself via GET /api/links/:token right after
 // load (see resolveLinkToken() in app.js) and keeps using it entirely in
@@ -399,11 +454,11 @@ app.get('/p/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'index.
 app.get('/l/:token', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
-// the {boardId, projectId, name} it currently points to. Returns 404 (JSON,
-// not a redirect) when the token is unknown/revoked, so the frontend can
-// show a clean "ссылка недействительна" message.
+// the {boardId, projectId, name, logoUrl} it currently points to. Returns
+// 404 (JSON, not a redirect) when the token is unknown/revoked, so the
+// frontend can show a clean "ссылка недействительна" message.
 app.get('/api/links/:token', async (req, res) => {
-  const resolved = linkTokens.resolveToken(req.params.token);
+  const resolved = await projectSettings.resolveToken(req.params.token);
   if (!resolved) {
     return res.status(404).json({
       error: 'link_not_found',
@@ -411,10 +466,13 @@ app.get('/api/links/:token', async (req, res) => {
     });
   }
   try {
-    const { board } = await loadBoard(resolved.boardId);
+    const [{ board }, settings] = await Promise.all([
+      loadBoard(resolved.boardId),
+      projectSettings.getSettings(resolved.boardId, resolved.projectId).catch(() => ({ logoUrl: '' })),
+    ]);
     const projectProp = findPropertyDef(board, config.projectPropertyName);
     const name = optionLabelById(projectProp, resolved.projectId) || '';
-    res.json({ boardId: resolved.boardId, projectId: resolved.projectId, name });
+    res.json({ boardId: resolved.boardId, projectId: resolved.projectId, name, logoUrl: settings.logoUrl || '' });
   } catch (err) {
     console.error('[api] /api/links/:token failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
@@ -428,11 +486,22 @@ app.get('/api/links/:token', async (req, res) => {
 // guessable URL. NOT for clients: no board/task data, just the list of
 // ready-made links (same info a staffer would otherwise hand-assemble from
 // the "Проект" property options).
-app.get(config.staffProjectsPath, (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
+app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
 
-app.listen(config.port, () => {
-  console.log(`KF Approval listening on :${config.port}`);
-  if (!config.mattermostUrl || !config.mattermostToken) {
-    console.warn('[startup] MATTERMOST_URL/MATTERMOST_TOKEN not set — API calls will fail until configured.');
+(async () => {
+  try {
+    await db.initSchema();
+    await projectSettings.importLegacyFileTokens();
+  } catch (err) {
+    console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }
-});
+  app.listen(config.port, () => {
+    console.log(`KF Approval listening on :${config.port}`);
+    if (!config.mattermostUrl || !config.mattermostToken) {
+      console.warn('[startup] MATTERMOST_URL/MATTERMOST_TOKEN not set — API calls will fail until configured.');
+    }
+    if (!config.databaseUrl) {
+      console.warn('[startup] DATABASE_URL not set — client links/logo/social-credentials will not work until Postgres is configured.');
+    }
+  });
+})();

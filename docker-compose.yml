@@ -1,4 +1,29 @@
 services:
+  # Stores project_settings (rotatable client link, logo URL, per-network
+  # publishing credentials) and publication_log (written by the n8n
+  # automation — see docs/N8N_AUTOMATION.md). The one deliberate database in
+  # this otherwise-stateless app — see backend/src/db.js for why.
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kfapproval}
+      POSTGRES_USER: ${POSTGRES_USER:-kfapproval}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - kf-db-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    # Uncomment ONLY if n8n runs OUTSIDE this Dokploy project/Docker network
+    # and needs to reach Postgres directly. Leave commented (internal-only)
+    # if n8n runs alongside this app — Docker's internal DNS already lets
+    # the "app" service (and n8n, if it's on this same network) reach this
+    # one at host "db", no public port needed. If you do uncomment this,
+    # make sure POSTGRES_PASSWORD is strong: this becomes a public port with
+    # real social-network API credentials behind it.
+    # ports:
+    #   - "5432:5432"
+
   app:
     build:
       context: .
@@ -7,15 +32,22 @@ services:
       - "${PORT:-3000}"
     env_file:
       - .env
+    environment:
+      # Built from the POSTGRES_* vars above so there's one password to set
+      # (see .env.example). "db" resolves via Docker's internal DNS to the
+      # service above.
+      DATABASE_URL: postgres://${POSTGRES_USER:-kfapproval}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kfapproval}
     restart: unless-stopped
+    depends_on:
+      - db
     volumes:
-      # Persists rotatable client-link tokens (see backend/src/linkTokens.js)
-      # across redeploys/restarts — a named volume survives `docker compose
-      # up -d --build` (only the container is recreated, not the volume), so
-      # Dokploy rebuilding/redeploying this service does NOT wipe it. It
-      # would be lost if the volume itself is explicitly removed (e.g.
-      # `docker compose down -v`) — avoid that for this service.
+      # LEGACY — only still needed so the one-time migration in
+      # backend/src/projectSettings.js (importLegacyFileTokens) can read the
+      # link token that was already issued/tested before this app moved to
+      # Postgres. Safe to remove once you've confirmed the staff page still
+      # shows the same client link after the first deploy of this version.
       - project-links-data:/app/data
 
 volumes:
   project-links-data:
+  kf-db-data:

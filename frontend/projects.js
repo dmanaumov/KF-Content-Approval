@@ -1,7 +1,10 @@
 // Internal staff page — lists every client project on the shared board with
-// its rotatable client cabinet link (see backend/src/linkTokens.js), a link
-// to open the project directly in Mattermost, and a "regenerate" button for
-// when a link may have leaked. No build step, same approach as app.js.
+// its rotatable client cabinet link (see backend/src/projectSettings.js), a
+// link to open the project directly in Mattermost, a "regenerate" button for
+// when a link may have leaked, and a "Редактировать" popup for the client's
+// logo URL + per-network publishing credentials (also in projectSettings.js
+// — Postgres-backed, meant to be read directly by the future n8n publishing
+// automation). No build step, same approach as app.js.
 //
 // Deliberately does NOT take a board id from this page's own URL (unlike
 // app.js's /p/{boardId} handling) — the backend already knows the one board
@@ -49,6 +52,7 @@ function render(filterText) {
             <button class="btn approve proj-copy" data-link="${esc(link)}">Копировать</button>
           </div>
           <div class="proj-row proj-actions-row">
+            <button class="btn changes proj-edit" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">Редактировать</button>
             <button class="btn changes proj-regen" ${busy ? 'disabled' : ''} data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">
               ${busy ? 'Обновляем…' : 'Сгенерировать новую ссылку'}
             </button>
@@ -113,7 +117,109 @@ document.getElementById('list').addEventListener('click', async (e) => {
   const regenBtn = e.target.closest('.proj-regen');
   if (regenBtn) {
     regenerateLink(regenBtn.dataset.projectId, regenBtn.dataset.label);
+    return;
+  }
+  const editBtn = e.target.closest('.proj-edit');
+  if (editBtn) {
+    openEdit(editBtn.dataset.projectId, editBtn.dataset.label);
   }
 });
+
+// --- "Редактировать" popup: logo URL + per-network publishing credentials
+// (backend/src/projectSettings.js) --------------------------------------
+const NET_KEYS = ['ig', 'tg', 'vk', 'ok', 'max'];
+let editingProjectId = null;
+
+function credTextareas() {
+  return NET_KEYS.map((k) => document.querySelector(`[data-net-field="${k}"]`));
+}
+
+function updateLogoPreview() {
+  const url = document.getElementById('editLogoUrl').value.trim();
+  const wrap = document.getElementById('editLogoPreview');
+  const img = document.getElementById('editLogoPreviewImg');
+  if (!url) {
+    wrap.hidden = true;
+    return;
+  }
+  img.src = url;
+  wrap.hidden = false;
+}
+
+async function openEdit(projectId, label) {
+  editingProjectId = projectId;
+  document.getElementById('editProjectName').textContent = label;
+  document.getElementById('editError').hidden = true;
+  document.getElementById('editLogoUrl').value = '';
+  document.getElementById('editLogoPreview').hidden = true;
+  credTextareas().forEach((ta) => { ta.value = ''; });
+  document.getElementById('editModal').classList.add('show');
+
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/settings`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    document.getElementById('editLogoUrl').value = data.logoUrl || '';
+    updateLogoPreview();
+    const creds = data.socialCredentials || {};
+    credTextareas().forEach((ta) => {
+      const net = ta.dataset.netField;
+      const value = creds[net];
+      ta.value = value && Object.keys(value).length ? JSON.stringify(value, null, 2) : '';
+    });
+  } catch (err) {
+    toast('Не удалось загрузить настройки: ' + err.message);
+  }
+}
+
+function closeEdit() {
+  document.getElementById('editModal').classList.remove('show');
+  editingProjectId = null;
+}
+
+async function saveEdit() {
+  const errBox = document.getElementById('editError');
+  errBox.hidden = true;
+
+  // Parse every credentials textarea client-side first — an empty box means
+  // "no creds set for this network yet" (omitted entirely, not stored as
+  // {}); anything non-empty must be valid JSON or we stop before saving
+  // anything, with a clear pointer to which network's box is broken.
+  const socialCredentials = {};
+  for (const ta of credTextareas()) {
+    const net = ta.dataset.netField;
+    const raw = ta.value.trim();
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('должен быть JSON-объектом, например {"key": "value"}');
+      socialCredentials[net] = parsed;
+    } catch (err) {
+      errBox.textContent = `Поле "${net.toUpperCase()}": ${err.message}`;
+      errBox.hidden = false;
+      return;
+    }
+  }
+
+  const logoUrl = document.getElementById('editLogoUrl').value.trim();
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logoUrl, socialCredentials }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    toast('Настройки сохранены');
+    closeEdit();
+  } catch (err) {
+    errBox.textContent = 'Не удалось сохранить: ' + err.message;
+    errBox.hidden = false;
+  }
+}
+
+document.getElementById('editLogoUrl').addEventListener('input', updateLogoPreview);
+document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
+document.querySelector('[data-action="save-edit"]').addEventListener('click', saveEdit);
 
 load();
