@@ -46,3 +46,11 @@
 .cred-net textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:9px 10px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;outline:none;color:var(--ink)}
 .cred-net textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(7,96,92,.08)}
 #editError{margin-top:14px}
+
+/* "Забыли пароль" recovery page (frontend/forgot-password.html) — reuses
+   .field-label/.field-input from the edit-popup styles above. */
+.fp-box{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;display:grid;gap:4px}
+.fp-intro{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 8px}
+.fp-intro code{background:#FAFBFB;border:1px solid var(--line);border-radius:6px;padding:1px 5px;font-size:11px}
+.fp-submit{width:100%;margin-top:12px}
+.fp-result{margin-top:12px;font-size:13px;color:var(--ink);background:#FAFBFB;border:1px solid var(--line);border-radius:12px;padding:10px 12px;line-height:1.5}

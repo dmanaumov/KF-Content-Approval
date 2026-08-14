@@ -68,6 +68,53 @@ async function initSchema() {
       published_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  await ensureN8nRole();
+}
+
+// SQL string literal escaping for values that can't be passed as query
+// parameters (Postgres doesn't support parameter placeholders inside DDL
+// like CREATE ROLE/ALTER ROLE) — doubles embedded single quotes, the
+// standard SQL escape.
+function pgLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+// Creates (or, on every later boot, just re-syncs the password of) a
+// dedicated, least-privilege Postgres role for the n8n publishing
+// automation (see docs/N8N_AUTOMATION.md) — SELECT-only on project_settings
+// (it needs to read social_credentials to publish), read+write on
+// publication_log (it needs to record what it did). Deliberately NOT the
+// app's own POSTGRES_USER — that user is the Postgres instance's bootstrap
+// superuser (that's how the official postgres:16-alpine image sets up
+// POSTGRES_USER), so handing it to a second system would give n8n far more
+// access than it needs. Only runs if N8N_DB_PASSWORD is set — leave it
+// blank to skip provisioning this role entirely.
+async function ensureN8nRole() {
+  if (!pool || !config.n8nDbPassword) return;
+  const role = config.n8nDbUser;
+  // Role names can't be parameterized either — validate against a strict
+  // allowlist instead of trusting env content directly before interpolating
+  // it into SQL.
+  if (!/^[a-z_][a-z0-9_]*$/.test(role)) {
+    console.warn(`[db] N8N_DB_USER "${role}" is not a valid Postgres role name (lowercase letters/digits/underscore, starting with a letter or underscore) — skipping n8n role setup.`);
+    return;
+  }
+  const passwordLiteral = pgLiteral(config.n8nDbPassword);
+  await pool.query(`
+    DO $do$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${role}') THEN
+        CREATE ROLE ${role} LOGIN PASSWORD ${passwordLiteral};
+      ELSE
+        ALTER ROLE ${role} WITH LOGIN PASSWORD ${passwordLiteral};
+      END IF;
+    END
+    $do$;
+  `);
+  await pool.query(`GRANT SELECT ON project_settings TO ${role};`);
+  await pool.query(`GRANT SELECT, INSERT, UPDATE ON publication_log TO ${role};`);
+  await pool.query(`GRANT USAGE, SELECT ON SEQUENCE publication_log_id_seq TO ${role};`);
+  console.log(`[db] Postgres role "${role}" for n8n is ready (password kept in sync with N8N_DB_PASSWORD on every boot).`);
 }
 
 module.exports = { pool, requirePool, initSchema };

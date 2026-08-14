@@ -6,6 +6,7 @@ const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = requir
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./diskEmbeds');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
+const mailer = require('./mailer');
 
 const app = express();
 app.use(express.json());
@@ -144,7 +145,30 @@ function staffAuth(req, res, next) {
     if (user === config.staffAuthUser && pass === config.staffAuthPassword) return next();
   }
   res.set('WWW-Authenticate', 'Basic realm="KF staff"');
-  res.status(401).send('Authentication required.');
+  // The browser's native Basic Auth prompt covers this body until the user
+  // cancels it — at that point this is what they see, so it's worth a link
+  // rather than a bare "Authentication required."
+  res.status(401).type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Нужен вход</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto 0;padding:0 20px;text-align:center;color:#222">
+<h3>Нужны логин и пароль</h3>
+<p>Если вы их не помните — <a href="/forgot-password">восстановите доступ по почте</a>.</p>
+</body></html>`);
+}
+
+// Simple in-memory per-IP rate limit for the forgot-password endpoint below
+// (it's deliberately unauthenticated, so it needs its own brake against
+// being hammered/used to spam an inbox). Not persisted — resets on
+// redeploy/restart, which is fine for this purpose.
+const forgotPasswordAttempts = new Map(); // ip -> timestamps[]
+function tooManyForgotPasswordAttempts(ip) {
+  const now = Date.now();
+  const windowMs = 60 * 60 * 1000;
+  const limit = 5;
+  const recent = (forgotPasswordAttempts.get(ip) || []).filter((t) => now - t < windowMs);
+  recent.push(now);
+  forgotPasswordAttempts.set(ip, recent);
+  return recent.length > limit;
 }
 
 function requireStaffBoardId(res) {
@@ -487,6 +511,49 @@ app.get('/api/links/:token', async (req, res) => {
 // ready-made links (same info a staffer would otherwise hand-assemble from
 // the "Проект" property options).
 app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
+
+// "Забыли пароль" recovery for the staff Basic Auth above. Deliberately
+// public (no staffAuth — that would be circular) but gated by a
+// pre-approved email allowlist (STAFF_RECOVERY_EMAILS): only an address
+// already on that list ever gets an email, and the response is IDENTICAL
+// either way (generic "if this address is trusted, we sent it"), so the
+// endpoint can't be used to probe which addresses are trusted. This app
+// only has one shared staff password (not per-person accounts), so
+// "recovery" here means emailing a reminder of the current password, not a
+// reset flow — see mailer.js and frontend/forgot-password.html.
+app.get('/forgot-password', (req, res) => res.sendFile(path.join(frontendDir, 'forgot-password.html')));
+
+app.post('/api/staff/forgot-password', async (req, res) => {
+  const genericOk = () =>
+    res.json({ ok: true, message: 'Если этот адрес есть в списке доверенных — письмо с логином и паролем отправлено.' });
+
+  if (!config.staffAuthUser || !config.staffAuthPassword) {
+    return res.status(400).json({
+      error: 'not_configured',
+      message: 'HTTP Basic Auth для внутренней страницы сейчас не включён (STAFF_AUTH_USER/PASSWORD) — восстанавливать нечего.',
+    });
+  }
+  if (tooManyForgotPasswordAttempts(req.ip)) {
+    return res.status(429).json({ error: 'too_many_requests', message: 'Слишком много попыток, попробуйте позже.' });
+  }
+  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+  if (!email || !config.staffRecoveryEmails.includes(email)) {
+    return genericOk(); // no such address on the list — same response as success, on purpose
+  }
+  try {
+    await mailer.sendMail({
+      to: email,
+      subject: 'Напоминание пароля — внутренняя страница проектов (КФ)',
+      text: `Логин: ${config.staffAuthUser}\nПароль: ${config.staffAuthPassword}\n\nЭто письмо отправлено автоматически по запросу восстановления пароля.`,
+    });
+  } catch (err) {
+    // Still return the generic success message to the caller — the failure
+    // (e.g. SMTP not configured) is visible in the server log for staff to
+    // fix, but shouldn't leak details to whoever submitted the form.
+    console.error('[api] forgot-password mail send failed:', err.message);
+  }
+  return genericOk();
+});
 
 (async () => {
   try {

@@ -19,8 +19,11 @@ services:
     # if n8n runs alongside this app — Docker's internal DNS already lets
     # the "app" service (and n8n, if it's on this same network) reach this
     # one at host "db", no public port needed. If you do uncomment this,
-    # make sure POSTGRES_PASSWORD is strong: this becomes a public port with
-    # real social-network API credentials behind it.
+    # n8n should connect using the dedicated "n8n" role (N8N_DB_USER/
+    # N8N_DB_PASSWORD in .env.example — created automatically by the app,
+    # read-only on project_settings), NOT POSTGRES_USER above (that one is a
+    # full superuser on this database) — this becomes a public port either
+    # way, so keep whichever password you hand out strong.
     # ports:
     #   - "5432:5432"
 

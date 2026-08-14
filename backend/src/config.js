@@ -136,4 +136,36 @@ module.exports = {
   // still only obscurity (same security model as the rest of this app — see
   // README), not real access control; pick something not easily guessed.
   staffProjectsPath: process.env.STAFF_PROJECTS_PATH || '/projects',
+
+  // Dedicated, least-privilege Postgres role created (and kept up to date)
+  // for the n8n publishing automation — see db.js's ensureN8nRole(). n8n
+  // should connect as THIS role, not as the app's own POSTGRES_USER (which
+  // is effectively a superuser on this database). Only created if
+  // N8N_DB_PASSWORD is set; leave blank to skip provisioning it entirely.
+  n8nDbUser: process.env.N8N_DB_USER || 'n8n',
+  n8nDbPassword: process.env.N8N_DB_PASSWORD || '',
+
+  // Comma-separated allowlist of email addresses allowed to request a
+  // reminder of the STAFF_AUTH_USER/PASSWORD above (see POST
+  // /api/staff/forgot-password in index.js and frontend/forgot-password.html).
+  // Only an address already on this list ever receives anything — the
+  // endpoint gives the same generic response either way, so it can't be
+  // used to find out which addresses are trusted.
+  staffRecoveryEmails: (process.env.STAFF_RECOVERY_EMAILS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
+  // Plain SMTP for sending the forgot-password reminder above. Any provider
+  // that supports SMTP + a password/app-password works (Yandex, Mail.ru,
+  // Gmail, agency's own mail server, ...) — see .env.example for per-provider
+  // notes. If any of these three are blank, the reminder email silently
+  // can't be sent (the API still responds, it just won't deliver anything —
+  // see mailer.js).
+  smtpHost: process.env.SMTP_HOST || '',
+  smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
+  smtpSecure: (process.env.SMTP_SECURE || 'false').toLowerCase() === 'true',
+  smtpUser: process.env.SMTP_USER || '',
+  smtpPassword: process.env.SMTP_PASSWORD || '',
+  smtpFrom: process.env.SMTP_FROM || '',
 };
