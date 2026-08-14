@@ -62,7 +62,6 @@ async function copyToClipboard(text) {
 }
 
 let options = [];
-let mattermostWebUrl = '';
 let busyProjectId = null;
 
 function render(filterText) {
@@ -82,22 +81,22 @@ function render(filterText) {
             <div class="proj-logo">${logo}</div>
             <div class="proj-info">
               <div class="proj-name">${esc(o.label)}</div>
-              <div class="proj-row">
-                <span class="proj-row-label">Mattermost:</span>
-                <a class="proj-mm-link" href="${esc(mattermostWebUrl)}" target="_blank" rel="noopener">${esc(mattermostWebUrl)}</a>
-              </div>
               <div class="proj-row proj-link-row">
                 <span class="proj-row-label">Клиенту:</span>
                 <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
-                <button class="proj-copy" title="Скопировать ссылку с приглашением" aria-label="Скопировать ссылку с приглашением" data-link="${esc(link)}" data-label="${esc(o.label)}">📋</button>
               </div>
             </div>
-          </div>
-          <div class="proj-row proj-actions-row">
-            <button class="btn approve proj-edit" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">Редактировать</button>
-            <button class="btn changes proj-regen" ${busy ? 'disabled' : ''} data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">
-              ${busy ? 'Обновляем…' : 'Сгенерировать новую ссылку'}
-            </button>
+            <div class="proj-actions-col">
+              <button class="icon-btn proj-copy" type="button" data-tip="Скопировать — ссылка для клиента с приглашением" data-link="${esc(link)}" data-label="${esc(o.label)}" aria-label="Скопировать ссылку с приглашением">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <button class="icon-btn proj-edit" type="button" data-tip="Редактировать — лого и креды соцсетей" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}" aria-label="Редактировать">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              </button>
+              <button class="icon-btn proj-regen${busy ? ' busy' : ''}" type="button" data-tip="Новая ссылка — старая сразу перестанет работать" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}" ${busy ? 'disabled' : ''} aria-label="Сгенерировать новую ссылку">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+              </button>
+            </div>
           </div>
         </div>`;
       })
@@ -111,7 +110,6 @@ async function load() {
     const res = await fetch('/api/projects');
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
-    mattermostWebUrl = data.mattermostWebUrl || '';
     options = data.options.slice().sort((a, b) => a.label.localeCompare(b.label, 'ru'));
     render(document.getElementById('search').value);
   } catch (err) {
