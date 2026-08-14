@@ -292,52 +292,68 @@ function scrollToTask(id) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-// Top info strip. Three calm states instead of a loud banner:
-//   urgent — some posts are burning (waiting + due within 3 days): accent color.
-//   waiting — posts waiting for approval, none burning: soft green.
-//   clear  — nothing waiting: gray, showing the nearest upcoming publication.
-// Computed across ALL the client's tasks (not the active week), since urgency
-// follows the publish date, not the selected week.
+// Jumps to a specific post: switches to its week, clears any filter so the
+// card is actually rendered, then smooth-scrolls to it. Shared by the
+// attention panel links and anything else that needs "take me to this card".
+function focusTask(id) {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return;
+  if (task.weekStart) activeWeek = task.weekStart;
+  activeFilter = '';
+  document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
+  render();
+  scrollToTask(id);
+}
+
+// Top info strip, two rows:
+//   Row 1 — approval status: burning posts (accent #ff5f60, click → jump to
+//     that card) + total posts awaiting approval (click → jump to the oldest).
+//     Burning only shown if any; if there are waiting but no burning → soft green.
+//   Row 2 — nearest upcoming publication: date — first ~20 chars of the title
+//     (click → jump to that card).
+// Computed across ALL the client's tasks (not the active week).
 function updateAttention() {
   const el = document.getElementById('attention');
   const all = state.tasks || [];
-  const waiting = all.filter((t) => t.status === 'waiting');
-  const urgent = waiting.filter(isUrgent);
   if (!all.length) { el.hidden = true; return; }
 
-  let title;
-  let stateClass;
+  const waiting = all.filter((t) => t.status === 'waiting');
+  const urgent = waiting.filter(isUrgent);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const byDate = (a, b) => (a.publishDate || '9999').localeCompare(b.publishDate || '9999');
+
+  // Row 1.
+  const row1 = [];
+  let stateClass = 'clear';
   if (urgent.length) {
     stateClass = 'urgent';
-    const soon = urgent.map((t) => t.publishDate).filter(Boolean).sort()[0];
+    const hottest = urgent.slice().sort(byDate)[0];
     const g = urgent.length;
-    title = `${g} ${plural(g, 'горящий пост', 'горящих поста', 'горящих постов')} ждут согласования${soon ? ` — ближайший до ${formatDatePill(soon)}` : ''}`;
-  } else if (waiting.length) {
-    stateClass = 'waiting';
+    row1.push(`<button class="attention-link" data-scroll="${hottest.id}">🔥 ${g} ${plural(g, 'горящий пост', 'горящих поста', 'горящих постов')} — срочно рассмотреть!</button>`);
+  }
+  if (waiting.length) {
+    if (stateClass !== 'urgent') stateClass = 'waiting';
+    const oldest = waiting.slice().sort(byDate)[0];
     const w = waiting.length;
-    title = `${w} ${plural(w, 'пост', 'поста', 'постов')} на согласовании`;
-  } else {
-    stateClass = 'clear';
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const next = all
-      .filter((t) => t.publishDate && t.publishDate >= today)
-      .sort((a, b) => a.publishDate.localeCompare(b.publishDate))[0];
-    title = next
-      ? `Ближайшая публикация: ${formatDatePill(next.publishDate)} — «${next.title}»`
-      : 'Все посты согласованы';
+    row1.push(`<button class="attention-link" data-scroll="${oldest.id}">${w} ${plural(w, 'пост', 'поста', 'постов')} на согласовании</button>`);
   }
 
-  const chips = [];
-  const changes = all.filter((t) => t.status === 'changes').length;
-  const approved = all.filter((t) => t.status === 'approved').length;
-  const published = all.filter((t) => t.status === 'published').length;
-  if (changes) chips.push(`Правки в работе: ${changes}`);
-  if (approved) chips.push(`Согласовано: ${approved}`);
-  if (published) chips.push(`Опубликовано: ${published}`);
+  // Row 2 — nearest upcoming publication.
+  const nextPub = all
+    .filter((t) => t.publishDate && t.publishDate >= today)
+    .sort(byDate)[0];
+
+  let html = '';
+  if (row1.length) html += `<div class="attention-row1">${row1.join(' · ')}</div>`;
+  if (nextPub) {
+    const short = nextPub.title.length > 20 ? `${nextPub.title.slice(0, 20)}…` : nextPub.title;
+    html += `<button class="attention-link attention-row2" data-scroll="${nextPub.id}">Ближайшая публикация: ${formatDatePill(nextPub.publishDate)} — ${esc(short)}</button>`;
+  }
+  if (!html) html = '<div class="attention-row1">Все посты согласованы</div>';
 
   el.className = `attention ${stateClass}`;
-  el.innerHTML = `<div class="attention-title">${title}</div>${chips.length ? `<div class="attention-sub">${chips.join(' · ')}</div>` : ''}`;
+  el.innerHTML = html;
   el.hidden = false;
 }
 
@@ -537,6 +553,12 @@ document.querySelector('[data-action="send-feedback"]').addEventListener('click'
   if (!text) { toast('Напишите комментарий'); return; }
   document.getElementById('feedbackModal').classList.remove('show');
   sendFeedback(feedbackTaskId, text);
+});
+
+document.getElementById('attention').addEventListener('click', (e) => {
+  const btn = e.target.closest('.attention-link');
+  if (!btn) return;
+  focusTask(btn.dataset.scroll);
 });
 
 document.getElementById('calendarToggle').addEventListener('click', openCalendar);
