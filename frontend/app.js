@@ -53,6 +53,25 @@ function formatDatePill(dateStr) {
   return `${d.getUTCDate()} ${MONTHS_RU_SHORT[d.getUTCMonth()]}`;
 }
 
+// Calendar-day difference between a task's publish date and today (local
+// device time) — positive = still in the future, negative = already past.
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const target = new Date(dateStr + 'T00:00:00');
+  if (Number.isNaN(target.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
+// "Горит" — waiting on client review with the publish date 3 days away or
+// closer (including already overdue).
+function isUrgent(task) {
+  if (task.status !== 'waiting' || !task.publishDate) return false;
+  const d = daysUntil(task.publishDate);
+  return d !== null && d < 3;
+}
+
 function mediaHtml(task) {
   if (!task.media.length) {
     return '<div class="media"><div class="carousel"><div class="slide file-link"><div><b>Без вложений</b></div></div></div></div>';
@@ -75,6 +94,7 @@ function mediaHtml(task) {
 function cardHtml(task) {
   const st = statusInfo(task.status);
   const busy = busyTaskId === task.id;
+  const urgent = isUrgent(task);
   let actions;
   if (task.status === 'approved') {
     actions = '<div class="actions"><div class="approved-box">✓ Согласовано</div></div>';
@@ -93,13 +113,15 @@ function cardHtml(task) {
   const urlLink = task.url
     ? `<div class="post-link"><a href="${esc(task.url)}" target="_blank" rel="noopener">Открыть опубликованный пост →</a></div>`
     : '';
-  return `<article class="card${busy ? ' pending-action' : ''}" id="task-${esc(task.id)}">
+  const urgentBadge = urgent ? '<span class="status urgent">🔥 ГОРИТ!</span>' : '';
+  return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}" id="task-${esc(task.id)}">
     <div class="meta">
       <div class="meta-left">
         ${task.format ? `<div class="eyebrow">${esc(task.format)}</div>` : ''}
         <h2>${esc(task.title)}</h2>
       </div>
       <div class="badges">
+        ${urgentBadge}
         ${dateBadge}
         <span class="status ${st.cls}">${st.text}</span>
       </div>

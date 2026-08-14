@@ -149,9 +149,20 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
         mimeType: (b.fields && b.fields.mimeType) || '',
       }));
 
-    const comments = children
-      .filter((b) => b.type === 'comment')
-      .sort((a, b) => (b.createAt || 0) - (a.createAt || 0));
+    // Show client feedback only from our own app's account (config.
+    // feedbackAuthorUsername, resolved to a user id in index.js) — a shared
+    // production board can have unrelated internal comments left directly
+    // on the card in Mattermost by staff, which shouldn't surface to the
+    // client as if they were "правки". Fallback (if the id wasn't resolved,
+    // or nothing matched it): a comment whose text literally names the
+    // account, in case authorship can't be determined some other way.
+    const allComments = children.filter((b) => b.type === 'comment').sort((a, b) => (b.createAt || 0) - (a.createAt || 0));
+    const authorNeedle = normLabel(config.feedbackAuthorUsername).toLowerCase();
+    const comments = allComments.filter(
+      (b) =>
+        (opts.feedbackAuthorUserId && b.createdBy === opts.feedbackAuthorUserId) ||
+        (authorNeedle && String(b.title || '').toLowerCase().includes(authorNeedle))
+    );
     const feedback = comments.length ? comments[0].title : null;
 
     const properties = card.properties || {};

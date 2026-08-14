@@ -37,6 +37,19 @@ function invalidate(boardId) {
   cache.delete(boardId);
 }
 
+// Resolved once and cached inside mattermostClient itself — cheap to call
+// repeatedly. Used so taskMapper.js can show only feedback comments posted
+// by our own app's account, not unrelated internal comments left directly
+// on the card in Mattermost.
+async function getFeedbackAuthorId() {
+  try {
+    return await mm.getUserIdByUsername(config.feedbackAuthorUsername);
+  } catch (err) {
+    console.warn(`[app] could not resolve feedbackAuthorUsername "${config.feedbackAuthorUsername}":`, err.message);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
@@ -48,7 +61,8 @@ function invalidate(boardId) {
 app.get('/api/boards/:boardId/tasks', async (req, res) => {
   try {
     const { board, cards, blocks } = await loadBoard(req.params.boardId);
-    const { tasks, meta } = buildTasks(board, cards, blocks, { projectFilter: req.query.project });
+    const feedbackAuthorUserId = await getFeedbackAuthorId();
+    const { tasks, meta } = buildTasks(board, cards, blocks, { projectFilter: req.query.project, feedbackAuthorUserId });
     if (meta.projectPropertyFound && !meta.projectFilterMatched) {
       return res.status(400).json({
         error: 'project_filter_required',
@@ -128,7 +142,8 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   // learns it from their own, already-filtered task list) — no need to
   // re-apply the project filter here, and doing so would break this lookup
   // on shared boards since we don't carry the client's `project` through.
-  const { tasks } = buildTasks(freshBoard, freshCards, blocks, { skipProjectFilter: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { tasks } = buildTasks(freshBoard, freshCards, blocks, { skipProjectFilter: true, feedbackAuthorUserId });
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   // IMPORTANT: a 200 from PATCH does not prove Mattermost actually changed

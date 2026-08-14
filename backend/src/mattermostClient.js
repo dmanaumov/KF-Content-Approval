@@ -285,6 +285,41 @@ async function fetchFileStream(fileId, rangeHeader) {
   return res;
 }
 
+// GET /api/v4/users/username/{username} — core (stable, documented) user
+// lookup, used to resolve config.feedbackAuthorUsername to a user id so
+// taskMapper.js can tell "feedback comment our app posted" apart from
+// unrelated internal comments left directly on the card in Mattermost.
+// Cached in memory (module-level, like the session token) — the mapping
+// doesn't change during the process's lifetime. Returns null (not a throw)
+// on any failure, so a lookup problem degrades to the text-match fallback
+// in taskMapper.js instead of taking down the whole board request.
+let userIdCache = new Map();
+async function getUserIdByUsername(username) {
+  if (!username) return null;
+  if (userIdCache.has(username)) return userIdCache.get(username);
+  try {
+    const headers = await authHeaders();
+    delete headers['Content-Type'];
+    let res = await fetch(`${config.mattermostUrl}/api/v4/users/username/${encodeURIComponent(username)}`, { headers });
+    if (res.status === 401 && usingSessionLogin()) {
+      const retryHeaders = await authHeaders(undefined, { forceRelogin: true });
+      delete retryHeaders['Content-Type'];
+      res = await fetch(`${config.mattermostUrl}/api/v4/users/username/${encodeURIComponent(username)}`, { headers: retryHeaders });
+    }
+    if (!res.ok) {
+      if (config.debug) console.warn(`[mattermost] getUserIdByUsername(${username}): HTTP ${res.status}`);
+      userIdCache.set(username, null);
+      return null;
+    }
+    const user = await res.json();
+    userIdCache.set(username, user.id || null);
+    return user.id || null;
+  } catch (err) {
+    if (config.debug) console.warn(`[mattermost] getUserIdByUsername(${username}) failed:`, err.message);
+    return null;
+  }
+}
+
 module.exports = {
   listTeamBoards,
   getBoard,
@@ -293,4 +328,5 @@ module.exports = {
   patchCardProperty,
   addCardComment,
   fetchFileStream,
+  getUserIdByUsername,
 };

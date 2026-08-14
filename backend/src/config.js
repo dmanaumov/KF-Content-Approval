@@ -58,6 +58,15 @@ module.exports = {
   // rendered whenever it's non-empty regardless of status.
   urlPropertyName: process.env.MM_URL_PROPERTY_NAME || 'URL',
 
+  // Only comments authored by this Mattermost username are shown to the
+  // client as "правки"/feedback (resolved to a user id once via the core
+  // API and cached — see mattermostClient.getUserIdByUsername). This is the
+  // account our own app posts client feedback comments as (MATTERMOST_LOGIN_ID),
+  // so restricting to it filters out unrelated internal team comments left
+  // directly on the card in Mattermost. Fallback if resolution fails or
+  // matches nothing: any comment whose text literally contains this name.
+  feedbackAuthorUsername: process.env.MM_FEEDBACK_AUTHOR_USERNAME || 'webuser',
+
   // Cards whose "Статус" value isn't one of these labels are excluded from
   // the client cabinet entirely (rather than lumped into "waiting") —
   // internal production stages like "Не начато"/"В процессе"/"ТЗ РАЙТЕРУ"
