@@ -246,6 +246,24 @@ async function patchCardProperty(boardId, cardId, mergedProperties) {
   return asJsonOrThrow(res, `patchCardProperty(${boardId},${cardId})`);
 }
 
+async function patchBlock(boardId, blockId, body) {
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/blocks/${blockId}?disable_notify=true`),
+    { method: 'PATCH', body: JSON.stringify(body) },
+    `patchBlock(${boardId},${blockId})`
+  );
+  return asJsonOrThrow(res, `patchBlock(${boardId},${blockId})`);
+}
+
+async function deleteBlock(boardId, blockId) {
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/blocks/${blockId}?disable_notify=true`),
+    { method: 'DELETE' },
+    `deleteBlock(${boardId},${blockId})`
+  );
+  return asJsonOrThrow(res, `deleteBlock(${boardId},${blockId})`);
+}
+
 // POST /boards/{boardId}/blocks — bulk block creation, used to attach a
 // "comment" block to the card. This is how Boards records feedback. VERIFY
 // field names against your server (this mirrors Focalboard's Block model).
@@ -271,6 +289,15 @@ async function addCardComment(boardId, cardId, text) {
     `addCardComment(${boardId},${cardId})`
   );
   return asJsonOrThrow(res, `addCardComment(${boardId},${cardId})`);
+}
+
+async function addBlocks(boardId, blocks, context = 'addBlocks') {
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/blocks?disable_notify=true`),
+    { method: 'POST', body: JSON.stringify(blocks) },
+    `${context}(${boardId})`
+  );
+  return asJsonOrThrow(res, `${context}(${boardId})`);
 }
 
 // Files attached DIRECTLY TO A CARD (drag-and-drop / attach in Boards) do
@@ -349,7 +376,10 @@ module.exports = {
   listCards,
   listBlocks,
   patchCardProperty,
+  patchBlock,
+  deleteBlock,
   addCardComment,
+  addBlocks,
   fetchFileStream,
   getUserIdByUsername,
 };

@@ -23,6 +23,7 @@ let activeWeek = null;
 let activeFilter = '';
 let feedbackTaskId = '';
 let busyTaskId = null;
+let editingTextTaskId = '';
 let calYear = null; // calendar view's current year/month (0-indexed month) —
 let calMonth = null; // set lazily to today's month the first time it opens.
 
@@ -40,7 +41,7 @@ function plural(n, one, few, many) {
 }
 
 // The post text is written in Telegram's markdown (staff compose in Telegram,
-// then paste into "Текст поста"): **bold**, *italic*, __underline__,
+// then paste into the card description under "Для клиента"): **bold**, *italic*, __underline__,
 // ~/~~strikethrough~~, `code`, ```pre``` and [text](url). Without rendering
 // the client sees the raw asterisks. Order matters for safety: escape ALL
 // HTML first, only then apply the formatting tokens — so nothing unescaped
@@ -211,6 +212,8 @@ function cardHtml(task) {
   const st = statusInfo(task.status);
   const busy = busyTaskId === task.id;
   const urgent = isUrgent(task);
+  const editingText = editingTextTaskId === task.id;
+  const canEditText = task.status !== 'approved' && task.status !== 'published';
   let actions;
   if (task.status === 'approved') {
     actions = '<div class="actions"><div class="approved-box">✓ Согласовано</div></div>';
@@ -235,6 +238,27 @@ function cardHtml(task) {
   const socialBadge = social
     ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
     : '';
+  const captionBlock = task.caption
+    ? editingText
+      ? `<div class="caption-wrap editing">
+          <div class="caption-head">
+            <div class="caption-tip">Исправьте текст для клиента</div>
+            <div class="caption-head-actions">
+              <button type="button" class="caption-btn cancel" ${busy ? 'disabled' : ''} data-action="cancel-text" data-id="${task.id}">Отмена</button>
+              <button type="button" class="caption-btn save" ${busy ? 'disabled' : ''} data-action="save-text" data-id="${task.id}">Сохранить</button>
+            </div>
+          </div>
+          <textarea class="caption-editor" data-caption-editor="${task.id}" spellcheck="true" ${busy ? 'readonly' : ''}>${esc(task.caption)}</textarea>
+        </div>`
+      : `<div class="caption-wrap">
+          <div class="caption-head">
+            ${canEditText ? `<button type="button" class="caption-edit" ${busy ? 'disabled' : ''} data-action="edit-text" data-id="${task.id}" aria-label="Правка текста" title="Правка текста">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>` : ''}
+          </div>
+          <div class="caption open">${formatTelegram(task.caption)}</div>
+        </div>`
+    : '';
   return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}" id="task-${esc(task.id)}">
     <div class="meta">
       <div class="meta-left">
@@ -248,7 +272,7 @@ function cardHtml(task) {
       </div>
     </div>
     ${mediaHtml(task)}
-    ${task.caption && task.status !== 'changes' ? `<div class="caption-wrap"><div class="caption open">${formatTelegram(task.caption)}</div></div>` : ''}
+    ${captionBlock}
     ${urlLink}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
     ${actions}
@@ -515,6 +539,35 @@ async function sendFeedback(taskId, comment) {
   }
 }
 
+async function saveTextEdit(taskId) {
+  const textarea = document.querySelector(`[data-caption-editor="${taskId}"]`);
+  if (!textarea) return;
+  const text = textarea.value.replace(/\r\n/g, '\n').trim();
+  if (!text) {
+    toast('Текст не может быть пустым');
+    return;
+  }
+  busyTaskId = taskId;
+  render();
+  try {
+    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/tasks/${encodeURIComponent(taskId)}/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    state.tasks = state.tasks.map((t) => (t.id === taskId ? data.task : t));
+    editingTextTaskId = '';
+    toast('Текст обновлён');
+  } catch (err) {
+    toast('Не удалось сохранить текст: ' + err.message);
+  } finally {
+    busyTaskId = null;
+    render();
+  }
+}
+
 document.getElementById('weeks').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-week]');
   if (!btn) return;
@@ -542,6 +595,22 @@ document.getElementById('stack').addEventListener('click', (e) => {
     document.getElementById('feedbackText').value = '';
     document.getElementById('feedbackModal').classList.add('show');
   }
+  if (btn.dataset.action === 'edit-text') {
+    editingTextTaskId = id;
+    render();
+    requestAnimationFrame(() => {
+      const ta = document.querySelector(`[data-caption-editor="${id}"]`);
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    });
+  }
+  if (btn.dataset.action === 'cancel-text') {
+    editingTextTaskId = '';
+    render();
+  }
+  if (btn.dataset.action === 'save-text') saveTextEdit(id);
 });
 
 document.querySelector('[data-action="close-feedback"]').addEventListener('click', () => {

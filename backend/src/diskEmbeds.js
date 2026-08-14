@@ -1,5 +1,5 @@
 // Handles "the material is already on disk.kontentferma.*" links pasted
-// into a card's "Текст поста" (or, occasionally, the "URL" property) —
+// into a card's description text (or, occasionally, the "URL" property) —
 // instead of leaving the client a raw link to click through to another
 // site, we detect these links, fetch the file server-side, and embed it
 // directly in the media carousel like any other attached photo/video.

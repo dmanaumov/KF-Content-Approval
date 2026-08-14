@@ -93,6 +93,40 @@ function weekLabel(weekStart) {
   return `${start.getUTCDate()} ${MONTHS_RU[start.getUTCMonth()]} — ${end.getUTCDate()} ${MONTHS_RU[end.getUTCMonth()]}`;
 }
 
+function extractDescriptionText(textBlocks) {
+  const joined = (textBlocks || [])
+    .map((b) => String(b.title || (b.fields && b.fields.text) || '').trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+  if (!joined) return '';
+
+  // Preferred convention: put the public-facing copy under a heading like
+  // "## Для клиента" (or "Клиенту" / "Клиентский пост"). If such a section
+  // exists, we take only that slice and ignore internal notes elsewhere in the
+  // description. Old cards without headings still work because we fall back to
+  // the whole description text.
+  const clientHeadingRe = /^\s*#{1,6}\s*(?:для клиента|клиенту|клиентский пост)\s*[:\-–—]*\s*$/i;
+  const headingRe = /^\s*#{1,6}\s+\S/;
+  const lines = joined.split(/\r?\n/);
+  const clientLines = [];
+  let collecting = false;
+  let foundClientSection = false;
+
+  for (const line of lines) {
+    if (clientHeadingRe.test(line)) {
+      collecting = true;
+      foundClientSection = true;
+      continue;
+    }
+    if (collecting && headingRe.test(line)) break;
+    if (collecting) clientLines.push(line);
+  }
+
+  const clientText = clientLines.join('\n').trim();
+  return foundClientSection && clientText ? clientText : joined;
+}
+
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'];
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', '3gp'];
 
@@ -133,7 +167,6 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
   const formatProp = findPropertyDef(board, config.formatPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
-  const postTextProp = findPropertyDef(board, config.postTextPropertyName);
   const urlProp = findPropertyDef(board, config.urlPropertyName);
 
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
@@ -198,22 +231,15 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     const publishDate = parsePropertyDate(rawPublishDate);
     const weekStart = mondayOf(publishDate);
 
-    // Post text: prefer the card's description (text-type child blocks) — it's
-    // a multi-line input, so paragraph breaks survive it. The "Текст поста"
-    // card property is a SINGLE-LINE field in Boards: pasting multi-line text
-    // into it collapses every newline to a space — that's exactly how the
-    // author's intent loses its line breaks before it ever reaches the
-    // cabinet or n8n. The property stays only as a fallback for cards that
-    // still fill it (used when the description is empty).
+    // Post text comes from the card description (text-type child blocks).
+    // If the team uses section headings, we only keep the public-facing part
+    // under "Для клиента" and ignore internal notes elsewhere in the same
+    // description. That keeps one board card usable for both team notes and
+    // client-facing copy, while preserving line breaks.
     const textBlocks = children
       .filter((b) => b.type === 'text')
       .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
-    const descriptionText = textBlocks
-      .map((b) => b.title || (b.fields && b.fields.text) || '')
-      .filter(Boolean)
-      .join('\n\n');
-    const directPostText = postTextProp ? String(properties[postTextProp.id] || '').trim() : '';
-    let caption = descriptionText || directPostText;
+    let caption = extractDescriptionText(textBlocks);
 
     // "Материал уже на диске" links (https://disk.kontentferma.<tld>/s/<token>)
     // pasted into the post text: strip the raw link out of the visible text
@@ -294,13 +320,12 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     // status === null → "Статус" value isn't a client-facing one (internal
     // production stage) → hidden. status === 'archived' → explicitly hidden.
     tasks: tasks.filter((t) => t.status && t.status !== 'archived'),
-    meta: {
-      approvalPropertyFound: !!approvalProp,
-      publishDatePropertyFound: !!publishDateProp,
-      postTextPropertyFound: !!postTextProp,
-      urlPropertyFound: !!urlProp,
-      projectPropertyFound: !!projectProp,
-      projectFilterMatched,
+      meta: {
+        approvalPropertyFound: !!approvalProp,
+        publishDatePropertyFound: !!publishDateProp,
+        urlPropertyFound: !!urlProp,
+        projectPropertyFound: !!projectProp,
+        projectFilterMatched,
     },
   };
 }

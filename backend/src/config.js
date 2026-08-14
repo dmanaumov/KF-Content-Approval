@@ -47,12 +47,6 @@ module.exports = {
   // real "Задачи SMM-Team" board's date property (confirmed via debug dump).
   publishDatePropertyName: process.env.MM_PUBLISH_DATE_PROPERTY_NAME || 'Дедлайн (публикация)',
   formatPropertyName: process.env.MM_FORMAT_PROPERTY_NAME || '',
-  // Name of the text-type card property holding the actual post copy.
-  // CONFIRMED via a real card's raw properties — this is a reliable, direct
-  // source, unlike the old best-effort approach of pulling caption text from
-  // child "text" blocks via the unconfirmed /blocks endpoint (still used as
-  // a fallback in taskMapper.js if this property is empty on a given card).
-  postTextPropertyName: process.env.MM_POST_TEXT_PROPERTY_NAME || 'Текст поста',
   // URL of the live published post, shown as a link under the post text.
   // Only meaningful once a card reaches the "published" status below, but
   // rendered whenever it's non-empty regardless of status.

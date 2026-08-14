@@ -83,8 +83,20 @@ button{cursor:pointer}
 .file-link a{color:var(--accent);font-weight:800;text-decoration:none}
 .dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(15,25,24,.62);color:#fff;border-radius:999px;padding:5px 9px;font-size:11px;pointer-events:none}
 .caption-wrap{padding:15px 17px 4px}
+.caption-wrap.editing{padding-bottom:12px}
 .caption{font-size:14px;line-height:1.52;max-height:126px;overflow:hidden;position:relative}
 .caption.open{max-height:none}
+.caption-head{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0 0 6px}
+.caption-tip{flex:1;min-width:0;color:var(--muted);font-size:12px;font-weight:650}
+.caption-head-actions{display:flex;gap:8px;flex:0 0 auto}
+.caption-edit{width:34px;height:34px;border:0;border-radius:999px;background:#FFF1F1;color:#ff5f60;display:grid;place-items:center;cursor:pointer;box-shadow:0 0 0 1px rgba(255,95,96,.22) inset}
+.caption-edit svg{width:16px;height:16px;display:block}
+.caption-edit:disabled{opacity:.45;cursor:default}
+.caption-btn{border:0;border-radius:12px;padding:9px 12px;font-size:13px;font-weight:850;cursor:pointer}
+.caption-btn.cancel{background:#F2F4F4;color:#33413F}
+.caption-btn.save{background:#ff5f60;color:#fff}
+.caption-editor{width:100%;min-height:140px;border:1px solid #D8DFDE;border-radius:16px;padding:12px 13px;resize:vertical;outline:none;line-height:1.52;font-size:14px}
+.caption-editor:focus{border-color:#ff5f60;box-shadow:0 0 0 3px rgba(255,95,96,.10)}
 .caption b,.caption strong{font-weight:800}
 .caption u{text-decoration:underline}
 .caption s{text-decoration:line-through}

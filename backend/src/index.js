@@ -309,6 +309,22 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback', async (req, res) => {
   }
 });
 
+// POST /api/boards/:boardId/tasks/:taskId/text — body: { text }
+// Rewrites the client-facing description text stored as text-type child blocks
+// on the card, then leaves a log comment that the client corrected the copy.
+app.post('/api/boards/:boardId/tasks/:taskId/text', async (req, res) => {
+  const text = String((req.body && req.body.text) || '').replace(/\r\n/g, '\n');
+  if (!text.trim()) return res.status(400).json({ error: 'text_required' });
+  try {
+    const { boardId, taskId } = req.params;
+    const updated = await updateTaskText(boardId, taskId, text);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] text update failed:', err.message);
+    res.status(502).json({ error: 'text_update_failed', message: err.message });
+  }
+});
+
 async function setApprovalStatus(boardId, taskId, statusKey) {
   const { board, cards } = await loadBoard(boardId);
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
@@ -365,6 +381,51 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   return updated;
 }
 
+async function updateTaskText(boardId, taskId, text) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before text update.`);
+
+  const textBlocks = (blocks || [])
+    .filter((b) => b.parentId === taskId && !b.deleteAt && b.type === 'text')
+    .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
+
+  const nowMs = Date.now();
+  if (textBlocks.length) {
+    await mm.patchBlock(boardId, textBlocks[0].id, {
+      title: text,
+    });
+    for (const extra of textBlocks.slice(1)) {
+      await mm.deleteBlock(boardId, extra.id);
+    }
+  } else {
+    await mm.addBlocks(boardId, [
+      {
+        id: `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        boardId,
+        parentId: taskId,
+        type: 'text',
+        title: text,
+        schema: 1,
+        createAt: nowMs,
+        updateAt: nowMs,
+        fields: {},
+      },
+    ], 'addDescriptionBlock');
+  }
+
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} КОРРЕКТИРОВКА ТЕКСТА КЛИЕНТОМ`);
+
+  invalidate(boardId);
+  const { board: freshBoard, cards: freshCards, blocks: freshBlocks } = await loadBoard(boardId, { fresh: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { tasks } = buildTasks(freshBoard, freshCards, freshBlocks, { skipProjectFilter: true, feedbackAuthorUserId });
+  const updated = tasks.find((t) => t.id === taskId);
+  if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after text update.`);
+  await resolveDiskMediaKinds([updated]);
+  return updated;
+}
+
 // GET /api/files/:boardId/:fileId — proxies media bytes from Mattermost with
 // Range support (needed for video playback, notably iPhone Safari). Board
 // attachments live in the Boards plugin's own file storage (keyed by
@@ -388,7 +449,7 @@ app.get('/api/files/:boardId/:fileId', async (req, res) => {
 
 // GET /api/disk-embed?u=<share url> — proxies a file from the agency's own
 // disk.kontentferma.* file server (Nextcloud-style public share links
-// pasted into "Текст поста" or "URL"), so the client sees the material
+// pasted into the card description text (or "URL"), so the client sees the material
 // inline instead of clicking through to another site. STRICTLY validates
 // the URL against the disk.kontentferma.* share-link shape before fetching
 // anything — this route is reachable by anyone holding a client link, so it
