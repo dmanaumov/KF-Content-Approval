@@ -8,9 +8,20 @@ const config = require('./config');
 
 const MONTHS_RU = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
+// Real board data has shown stray leading/trailing whitespace on option
+// labels (confirmed: the real "Согласовано НА ПУБЛИКАЦИЮ" option actually
+// has a trailing space in Mattermost) — someone editing the property in the
+// Boards UI by hand is an easy way to introduce this, and a strict `===`
+// silently drops every matching card. All label comparisons below normalize
+// whitespace on both sides so this class of mistake can't reoccur.
+function normLabel(s) {
+  return (s == null ? '' : String(s)).trim().replace(/\s+/g, ' ');
+}
+
 function findPropertyDef(board, name) {
   const props = (board && board.cardProperties) || [];
-  return props.find((p) => p.name === name) || null;
+  const needle = normLabel(name);
+  return props.find((p) => normLabel(p.name) === needle) || null;
 }
 
 function optionLabelById(propDef, optionId) {
@@ -21,7 +32,8 @@ function optionLabelById(propDef, optionId) {
 
 function optionIdByLabel(propDef, label) {
   if (!propDef) return null;
-  const opt = (propDef.options || []).find((o) => o.value === label);
+  const needle = normLabel(label);
+  const opt = (propDef.options || []).find((o) => normLabel(o.value) === needle);
   return opt ? opt.id : null;
 }
 
@@ -31,7 +43,8 @@ function optionIdByLabel(propDef, label) {
 // the approval property is shared with an internal production pipeline
 // that has many other stages ("Не начато", "В процессе", "ТЗ РАЙТЕРУ", ...).
 function statusEnumFromLabel(label) {
-  const entry = Object.entries(config.statusOptionLabels).find(([, v]) => v === label);
+  const needle = normLabel(label);
+  const entry = Object.entries(config.statusOptionLabels).find(([, v]) => normLabel(v) === needle);
   return entry ? entry[0] : null;
 }
 

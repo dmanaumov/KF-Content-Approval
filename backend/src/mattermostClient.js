@@ -165,21 +165,37 @@ async function getBoard(boardId, teamId) {
   return board;
 }
 
-// GET /boards/{boardId}/cards?page=0&per_page=200 — the dedicated cards API.
+// GET /boards/{boardId}/cards?page=N&per_page=200 — the dedicated cards API.
 // CONFIRMED against a real server (via a working n8n integration the agency
 // already had). Property values sit directly on `card.properties`, NOT
 // nested under `card.fields.properties` like the generic /blocks endpoint —
 // this is a different, card-specific representation.
-// NOTE: not paginated beyond the first 200 cards yet — fine for now, revisit
-// if a board ever has more than 200 non-archived cards.
+//
+// PAGINATES through every page: this board is shared across every client
+// (see docs/MATTERMOST_INTEGRATION.md §7), so it can easily hold well over
+// 200 cards — a single page=0 request silently missed real cards in testing
+// (a newly-created card wasn't showing up at all). Stops at the first
+// short/empty page; capped at 50 pages (10k cards) as a runaway-loop
+// backstop, not an expected real limit.
 async function listCards(boardId) {
-  const res = await mmFetch(
-    boardsUrl(`/boards/${boardId}/cards?page=0&per_page=200`),
-    {},
-    `listCards(${boardId})`
-  );
-  const data = await asJsonOrThrow(res, `listCards(${boardId})`);
-  return Array.isArray(data) ? data : (data && data.cards) || [];
+  const perPage = 200;
+  const maxPages = 50;
+  let all = [];
+  for (let page = 0; page < maxPages; page++) {
+    const res = await mmFetch(
+      boardsUrl(`/boards/${boardId}/cards?page=${page}&per_page=${perPage}`),
+      {},
+      `listCards(${boardId},page=${page})`
+    );
+    const data = await asJsonOrThrow(res, `listCards(${boardId},page=${page})`);
+    const batch = Array.isArray(data) ? data : (data && data.cards) || [];
+    all = all.concat(batch);
+    if (batch.length < perPage) break; // last page reached
+    if (page === maxPages - 1 && config.debug) {
+      console.warn(`[mattermost] listCards(${boardId}): hit the ${maxPages}-page safety cap, some cards may be missing`);
+    }
+  }
+  return all;
 }
 
 // GET /boards/{boardId}/blocks — every block on the board (cards, comments,

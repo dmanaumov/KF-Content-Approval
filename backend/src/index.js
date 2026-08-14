@@ -157,6 +157,7 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
     const q = (req.query.title || '').trim().toLowerCase();
     const matches = q ? cards.filter((c) => (c.title || '').toLowerCase().includes(q)) : cards.slice(0, 5);
     res.json({
+      totalCardsFetched: cards.length, // if this is a round 200/400/600..., listCards() pagination likely hit the cap
       approvalProp: findPropertyDef(board, config.approvalPropertyName),
       projectProp: findPropertyDef(board, config.projectPropertyName),
       matchCount: matches.length,
