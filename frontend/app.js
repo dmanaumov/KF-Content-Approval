@@ -23,6 +23,8 @@ let activeWeek = null;
 let activeFilter = '';
 let feedbackTaskId = '';
 let busyTaskId = null;
+let calYear = null; // calendar view's current year/month (0-indexed month) —
+let calMonth = null; // set lazily to today's month the first time it opens.
 
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
@@ -82,6 +84,7 @@ function statusInfo(status) {
 }
 
 const MONTHS_RU_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const MONTHS_RU_FULL = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 function formatDatePill(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00Z');
@@ -200,6 +203,86 @@ function weeksOf(tasks) {
     if (isUrgent(t)) entry.hasUrgent = true;
   }
   return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0])); // newest first
+}
+
+// Calendar view — a month grid built entirely from the already-loaded
+// state.tasks (no extra API call). Only tasks with a publishDate appear on
+// it. Marker rule (agency's spec): urgent (waiting + due soon/overdue) shows
+// 🔥 instead of a dot; otherwise a status-colored dot. Title is CSS-clamped
+// to 3 lines so one long post name can't blow out a day cell on a phone.
+const CAL_DOT_CLASS = { waiting: 'waiting', approved: 'approved', changes: 'changes', published: 'published' };
+function calMarkerHtml(task) {
+  if (isUrgent(task)) return '<span class="cal-mark fire" aria-hidden="true">🔥</span>';
+  const cls = CAL_DOT_CLASS[task.status] || 'waiting';
+  return `<span class="cal-mark dot ${cls}" aria-hidden="true"></span>`;
+}
+
+function scrollToTask(id) {
+  const el = document.getElementById(`task-${id}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderCalendar() {
+  if (calYear == null) {
+    const now = new Date();
+    calYear = now.getFullYear();
+    calMonth = now.getMonth();
+  }
+  document.getElementById('calTitle').textContent = `${MONTHS_RU_FULL[calMonth]} ${calYear}`;
+
+  const byDate = new Map();
+  for (const t of state.tasks) {
+    if (!t.publishDate) continue;
+    if (!byDate.has(t.publishDate)) byDate.set(t.publishDate, []);
+    byDate.get(t.publishDate).push(t);
+  }
+
+  // Grid math done in UTC throughout (publishDate is a plain YYYY-MM-DD with
+  // no time component, so there's no real timezone to respect here) —
+  // avoids local-time DST/offset edge cases shifting a day into the wrong
+  // cell near midnight.
+  const first = new Date(Date.UTC(calYear, calMonth, 1));
+  const leadDow = first.getUTCDay() || 7; // Mon=1..Sun=7
+  const lead = leadDow - 1;
+  const daysInMonth = new Date(Date.UTC(calYear, calMonth + 1, 0)).getUTCDate();
+  const totalCells = Math.ceil((lead + daysInMonth) / 7) * 7;
+  const gridStart = new Date(Date.UTC(calYear, calMonth, 1 - lead));
+
+  // "Today" IS a local-calendar-day concept (same convention as isUrgent's
+  // daysUntil), so computed from local date parts, not UTC/ISO.
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const cells = [];
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(gridStart);
+    d.setUTCDate(gridStart.getUTCDate() + i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const inMonth = d.getUTCMonth() === calMonth;
+    const dayTasks = byDate.get(dateStr) || [];
+    const posts = dayTasks
+      .map(
+        (t) =>
+          `<button type="button" class="cal-post" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-title">${esc(t.title)}</span></button>`
+      )
+      .join('');
+    const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
+    cells.push(`<div class="${cls}"><div class="cal-day-num">${d.getUTCDate()}</div>${posts}</div>`);
+  }
+  document.getElementById('calendarGrid').innerHTML = cells.join('');
+}
+
+function openCalendar() {
+  document.getElementById('listHead').hidden = true;
+  document.getElementById('listView').hidden = true;
+  document.getElementById('calendarView').hidden = false;
+  renderCalendar();
+}
+
+function closeCalendar() {
+  document.getElementById('listHead').hidden = false;
+  document.getElementById('listView').hidden = false;
+  document.getElementById('calendarView').hidden = true;
 }
 
 function render() {
@@ -334,6 +417,33 @@ document.querySelector('[data-action="send-feedback"]').addEventListener('click'
   if (!text) { toast('Напишите комментарий'); return; }
   document.getElementById('feedbackModal').classList.remove('show');
   sendFeedback(feedbackTaskId, text);
+});
+
+document.getElementById('calendarToggle').addEventListener('click', openCalendar);
+document.getElementById('calBack').addEventListener('click', closeCalendar);
+document.getElementById('calPrev').addEventListener('click', () => {
+  calMonth--;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  renderCalendar();
+});
+document.getElementById('calNext').addEventListener('click', () => {
+  calMonth++;
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderCalendar();
+});
+document.getElementById('calendarGrid').addEventListener('click', (e) => {
+  const btn = e.target.closest('.cal-post');
+  if (!btn) return;
+  const id = btn.dataset.taskId;
+  const task = state.tasks.find((t) => t.id === id);
+  closeCalendar();
+  if (task) {
+    activeWeek = task.weekStart;
+    activeFilter = '';
+    document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
+  }
+  render();
+  scrollToTask(id);
 });
 
 async function init() {

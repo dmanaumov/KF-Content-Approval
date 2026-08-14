@@ -11,28 +11,59 @@
   <div id="app">
     <header class="head">
       <div class="head-top">
-        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
-        <div class="client-brand">
-          <div id="clientLogo" class="client-logo-demo">К</div>
-          <strong id="clientName">Загрузка…</strong>
+        <div class="head-left">
+          <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+          <div class="client-brand">
+            <div id="clientLogo" class="client-logo-demo">К</div>
+            <strong id="clientName">Загрузка…</strong>
+          </div>
         </div>
+        <button id="calendarToggle" class="cal-toggle" type="button" title="Календарь публикаций" aria-label="Календарь публикаций">
+          <span aria-hidden="true">🗓️</span>
+        </button>
       </div>
-      <div id="weeks" class="week-row"></div>
-      <div class="progress-line">
-        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
-        <div id="progressText" class="progress-text"></div>
+      <div id="listHead">
+        <div id="weeks" class="week-row"></div>
+        <div class="progress-line">
+          <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+          <div id="progressText" class="progress-text"></div>
+        </div>
       </div>
     </header>
 
-    <div class="filters">
-      <button class="filter active" data-filter="">Все</button>
-      <button class="filter" data-filter="waiting">Ожидают</button>
-      <button class="filter" data-filter="changes">Правки</button>
-      <button class="filter" data-filter="approved">Согласовано</button>
-      <button class="filter" data-filter="published">Опубликовано</button>
+    <div id="listView">
+      <div class="filters">
+        <button class="filter active" data-filter="">Все</button>
+        <button class="filter" data-filter="waiting">Ожидают</button>
+        <button class="filter" data-filter="changes">Правки</button>
+        <button class="filter" data-filter="approved">Согласовано</button>
+        <button class="filter" data-filter="published">Опубликовано</button>
+      </div>
+      <div id="loading" class="loading">Загружаем задачи из Mattermost…</div>
+      <main id="stack" class="stack"></main>
     </div>
-    <div id="loading" class="loading">Загружаем задачи из Mattermost…</div>
-    <main id="stack" class="stack"></main>
+
+    <div id="calendarView" class="calendar-view" hidden>
+      <div class="cal-header">
+        <button id="calBack" class="cal-back" type="button">← Назад</button>
+        <div class="cal-nav">
+          <button id="calPrev" class="cal-nav-btn" type="button" aria-label="Предыдущий месяц">‹</button>
+          <span id="calTitle" class="cal-title"></span>
+          <button id="calNext" class="cal-nav-btn" type="button" aria-label="Следующий месяц">›</button>
+        </div>
+      </div>
+      <div class="cal-legend">
+        <span><i class="cal-dot published"></i>Опубликовано</span>
+        <span><i class="cal-dot approved"></i>Согласовано</span>
+        <span><i class="cal-dot waiting"></i>Нужна оценка</span>
+        <span><i class="cal-dot-fire" aria-hidden="true">🔥</i>Горит</span>
+        <span><i class="cal-dot changes"></i>Правки</span>
+      </div>
+      <div class="cal-weekdays">
+        <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+      </div>
+      <div id="calendarGrid" class="cal-grid"></div>
+    </div>
   </div>
 </div>
 

@@ -18,7 +18,9 @@ button,textarea{font:inherit}
 button{cursor:pointer}
 .page{max-width:660px;margin:0 auto;padding:18px 14px 70px}
 .head{background:#fff;border:1px solid var(--line);border-radius:25px;padding:18px;margin-bottom:24px;position:relative;box-shadow:none}
-.head-top{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.head-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.head-left{display:flex;align-items:center;gap:14px;min-width:0;flex:1}
+.cal-toggle{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:12px;width:40px;height:40px;font-size:17px;display:grid;place-items:center}
 .kf img{width:70px;height:auto;display:block}
 .client-brand{display:flex;align-items:center;gap:9px;min-width:0}
 .client-brand img{width:42px;height:42px;object-fit:contain;border-radius:10px;background:#fff}
@@ -97,8 +99,48 @@ button{cursor:pointer}
 .toast{position:fixed;left:50%;bottom:18px;transform:translate(-50%,10px);background:#17201f;color:#fff;border-radius:14px;padding:12px 15px;font-size:13px;font-weight:750;opacity:0;pointer-events:none;transition:.2s;z-index:80;max-width:calc(100vw - 30px)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .error-box{background:#FBE0E0;color:#7F2E2E;border-radius:18px;padding:16px;text-align:center;font-size:13px;line-height:1.5}
+
+/* Calendar view — month grid of publish dates, toggled from the header
+   button instead of a separate page (state.tasks is already loaded, so it
+   builds instantly with no extra request). */
+.calendar-view{background:#fff;border:1px solid var(--line);border-radius:22px;padding:14px}
+.cal-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.cal-back{border:0;background:transparent;color:var(--accent);font-weight:800;font-size:13px;padding:6px 2px}
+.cal-nav{display:flex;align-items:center;gap:9px}
+.cal-nav-btn{border:1px solid var(--line);background:#fff;border-radius:10px;width:30px;height:30px;font-size:16px;font-weight:800;color:var(--ink);line-height:1}
+.cal-title{font-weight:850;font-size:13px;min-width:110px;text-align:center}
+.cal-legend{display:flex;flex-wrap:wrap;gap:8px 13px;margin-bottom:13px;font-size:10.5px;color:var(--muted);font-weight:750}
+.cal-legend span{display:inline-flex;align-items:center;gap:5px}
+.cal-legend i{font-style:normal}
+.cal-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.cal-dot.published{background:#3FA9F5}
+.cal-dot.approved{background:#79C94A}
+.cal-dot.waiting{background:#F5C518}
+.cal-dot.changes{background:#E64545}
+.cal-dot-fire{font-size:10px;line-height:1}
+.cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:6px;font-size:10.5px;font-weight:800;color:var(--muted);text-align:center}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.cal-day{background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 3px 5px;min-height:50px;display:flex;flex-direction:column;gap:3px}
+.cal-day.other-month{background:#F7F8F8;border-color:#EEF0EF}
+.cal-day.other-month .cal-day-num{color:#C9CFCD}
+.cal-day.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.cal-day-num{font-size:10px;font-weight:800;color:var(--muted);text-align:right;padding-right:1px}
+.cal-post{display:flex;align-items:flex-start;gap:3px;border:0;background:transparent;padding:0;margin:0;text-align:left;cursor:pointer;width:100%}
+.cal-mark{flex:0 0 auto}
+.cal-mark.dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-top:3px}
+.cal-mark.dot.published{background:#3FA9F5}
+.cal-mark.dot.approved{background:#79C94A}
+.cal-mark.dot.waiting{background:#F5C518}
+.cal-mark.dot.changes{background:#E64545}
+.cal-mark.fire{font-size:8px;line-height:1.3}
+.cal-post-title{font-size:9px;line-height:1.25;font-weight:750;color:var(--ink);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+
 @media(min-width:700px){.page{padding-top:28px}.card{border-radius:28px}.media{margin-left:16px;margin-right:16px}}
 @media(max-width:430px){
   .page{padding-left:9px;padding-right:9px}.head{border-radius:21px;padding:14px;margin-bottom:22px}.kf img{width:60px}
   .client-brand strong{max-width:150px}.meta h2{font-size:18px}.actions{grid-template-columns:1fr}
+  .cal-toggle{width:36px;height:36px;font-size:15px}
+  .cal-day{min-height:44px;padding:3px 2px 4px}
+  .cal-post-title{font-size:8.3px}
+  .cal-legend{font-size:10px;gap:6px 10px}
 }
