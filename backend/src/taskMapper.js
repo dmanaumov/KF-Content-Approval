@@ -88,13 +88,18 @@ function guessMediaKind(block) {
 }
 
 // board: result of mattermostClient.getBoard(boardId)
-// blocks: result of mattermostClient.listBlocks(boardId)
+// cards: result of mattermostClient.listCards(boardId) — CONFIRMED endpoint,
+//   property values sit directly on card.properties.
+// childBlocks: result of mattermostClient.listBlocks(boardId) — UNCONFIRMED
+//   on this server, best-effort only, may be []. Used solely for
+//   caption/media/comment children; a card with no matching children just
+//   shows without them, nothing breaks.
 // opts.projectFilter: value of the `project` link parameter — REQUIRED
 // whenever the board has a project property, since this board is shared
 // across all clients (see docs/MATTERMOST_INTEGRATION.md). Without it we'd
 // leak every other client's cards.
 // Returns { tasks, meta: { approvalPropertyFound, projectPropertyFound, projectFilterMatched } }
-function buildTasks(board, blocks, opts = {}) {
+function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
   const formatProp = findPropertyDef(board, config.formatPropertyName);
@@ -103,20 +108,20 @@ function buildTasks(board, blocks, opts = {}) {
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
   const projectFilterMatched = !projectProp || !!projectOptionId;
 
-  let cards = blocks.filter((b) => b.type === 'card' && !b.deleteAt);
+  let visibleCards = cards.filter((c) => !c.deleteAt);
   if (projectProp && !opts.skipProjectFilter) {
     // Board has a project property → filtering is mandatory for the client
     // list view. If the filter didn't resolve to a real option, show
     // nothing rather than everything. (skipProjectFilter is for internal
     // single-card lookups right after a write, where the caller already
     // knows the exact card id — see index.js setApprovalStatus.)
-    cards = projectOptionId
-      ? cards.filter((c) => (c.fields && c.fields.properties && c.fields.properties[projectProp.id]) === projectOptionId)
+    visibleCards = projectOptionId
+      ? visibleCards.filter((c) => (c.properties || {})[projectProp.id] === projectOptionId)
       : [];
   }
 
-  const tasks = cards.map((card) => {
-    const children = blocks.filter((b) => b.parentId === card.id && !b.deleteAt);
+  const tasks = visibleCards.map((card) => {
+    const children = childBlocks.filter((b) => b.parentId === card.id && !b.deleteAt);
     const textBlocks = children
       .filter((b) => b.type === 'text')
       .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
@@ -141,7 +146,7 @@ function buildTasks(board, blocks, opts = {}) {
       .sort((a, b) => (b.createAt || 0) - (a.createAt || 0));
     const feedback = comments.length ? comments[0].title : null;
 
-    const properties = (card.fields && card.fields.properties) || {};
+    const properties = card.properties || {};
     const statusOptionId = approvalProp ? properties[approvalProp.id] : null;
     const statusLabel = optionLabelById(approvalProp, statusOptionId);
     // null status = card's current "Статус" isn't one of our configured

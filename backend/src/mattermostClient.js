@@ -72,8 +72,25 @@ async function getBoard(boardId, teamId) {
   return board;
 }
 
+// GET /boards/{boardId}/cards?page=0&per_page=200 — the dedicated cards API.
+// CONFIRMED against a real server (via a working n8n integration the agency
+// already had). Property values sit directly on `card.properties`, NOT
+// nested under `card.fields.properties` like the generic /blocks endpoint —
+// this is a different, card-specific representation.
+// NOTE: not paginated beyond the first 200 cards yet — fine for now, revisit
+// if a board ever has more than 200 non-archived cards.
+async function listCards(boardId) {
+  assertConfigured();
+  const res = await fetch(boardsUrl(`/boards/${boardId}/cards?page=0&per_page=200`), { headers: authHeaders() });
+  const data = await asJsonOrThrow(res, `listCards(${boardId})`);
+  return Array.isArray(data) ? data : (data && data.cards) || [];
+}
+
 // GET /boards/{boardId}/blocks — every block on the board (cards, comments,
-// text/image content blocks, all mixed together, flat list).
+// text/image content blocks). UNCONFIRMED on this server (the /cards
+// endpoint above is what's proven to work) — used only to enrich cards with
+// caption/media/comment children. Callers must tolerate this failing/being
+// empty and still show cards using listCards() alone.
 async function listBlocks(boardId) {
   assertConfigured();
   const res = await fetch(boardsUrl(`/boards/${boardId}/blocks`), { headers: authHeaders() });
@@ -143,6 +160,7 @@ async function fetchFileStream(fileId, rangeHeader) {
 module.exports = {
   listTeamBoards,
   getBoard,
+  listCards,
   listBlocks,
   patchCardProperty,
   addCardComment,

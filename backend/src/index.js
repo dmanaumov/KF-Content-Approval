@@ -10,15 +10,25 @@ app.use(express.json());
 // ---------------------------------------------------------------------------
 // In-memory cache only (no database). Keyed by boardId. Cleared on write.
 // ---------------------------------------------------------------------------
-const cache = new Map(); // boardId -> { expires, board, blocks }
+const cache = new Map(); // boardId -> { expires, board, cards, blocks }
 
 async function loadBoard(boardId, { fresh = false } = {}) {
   const cached = cache.get(boardId);
   if (!fresh && config.cacheTtlMs > 0 && cached && cached.expires > Date.now()) {
     return cached;
   }
-  const [board, blocks] = await Promise.all([mm.getBoard(boardId, config.teamId), mm.listBlocks(boardId)]);
-  const entry = { board, blocks, expires: Date.now() + config.cacheTtlMs };
+  const [board, cards] = await Promise.all([mm.getBoard(boardId, config.teamId), mm.listCards(boardId)]);
+  // Child blocks (captions/media/comments) are best-effort — this endpoint
+  // is unconfirmed on this server (see mattermostClient.js). If it fails,
+  // cards still show with title/status/dates, just without those extras,
+  // rather than taking down the whole cabinet.
+  let blocks = [];
+  try {
+    blocks = await mm.listBlocks(boardId);
+  } catch (err) {
+    console.warn(`[mattermost] listBlocks(${boardId}) unavailable, continuing without captions/media:`, err.message);
+  }
+  const entry = { board, cards, blocks, expires: Date.now() + config.cacheTtlMs };
   cache.set(boardId, entry);
   return entry;
 }
@@ -37,8 +47,8 @@ function invalidate(boardId) {
 // since it's the only thing separating one client's cards from another's.
 app.get('/api/boards/:boardId/tasks', async (req, res) => {
   try {
-    const { board, blocks } = await loadBoard(req.params.boardId);
-    const { tasks, meta } = buildTasks(board, blocks, { projectFilter: req.query.project });
+    const { board, cards, blocks } = await loadBoard(req.params.boardId);
+    const { tasks, meta } = buildTasks(board, cards, blocks, { projectFilter: req.query.project });
     if (meta.projectPropertyFound && !meta.projectFilterMatched) {
       return res.status(400).json({
         error: 'project_filter_required',
@@ -102,12 +112,12 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   }
   await mm.patchCardProperty(boardId, taskId, approvalProp.id, optionId);
   invalidate(boardId);
-  const { board: freshBoard, blocks } = await loadBoard(boardId, { fresh: true });
+  const { board: freshBoard, cards, blocks } = await loadBoard(boardId, { fresh: true });
   // skipProjectFilter: we already know the exact card id (client only ever
   // learns it from their own, already-filtered task list) — no need to
   // re-apply the project filter here, and doing so would break this lookup
   // on shared boards since we don't carry the client's `project` through.
-  const { tasks } = buildTasks(freshBoard, blocks, { skipProjectFilter: true });
+  const { tasks } = buildTasks(freshBoard, cards, blocks, { skipProjectFilter: true });
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   return updated;

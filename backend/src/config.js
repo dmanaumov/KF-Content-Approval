@@ -11,12 +11,11 @@ module.exports = {
   // read + write access to the boards this app will serve.
   mattermostToken: process.env.MATTERMOST_TOKEN || '',
 
-  // Path prefix for the Boards REST API. This differs by how Boards is
-  // deployed on your server — see docs/MATTERMOST_INTEGRATION.md.
-  //   Mattermost 9+ (Boards bundled, plugin id "boards"):    /plugins/boards/api/v2
-  //   Older Mattermost (plugin id "focalboard"):              /plugins/focalboard/api/v2
-  //   Standalone Focalboard personal server:                   /api/v2
-  boardsApiPrefix: process.env.MATTERMOST_BOARDS_API_PREFIX || '/plugins/boards/api/v2',
+  // Path prefix for the Boards REST API. CONFIRMED against the agency's real
+  // server (via an existing working n8n integration) to be the focalboard
+  // plugin id, not "boards" — see docs/MATTERMOST_INTEGRATION.md if this
+  // ever needs to change for a different server.
+  boardsApiPrefix: process.env.MATTERMOST_BOARDS_API_PREFIX || '/plugins/focalboard/api/v2',
 
   // Required: the Mattermost team that owns the board(s) this app serves.
   // Board metadata is fetched via GET /teams/{teamId}/boards (see
