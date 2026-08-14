@@ -78,20 +78,28 @@ async function getFeedbackAuthorId() {
 // afterwards, in parallel, using diskEmbeds' in-memory cache so repeat
 // requests for the same link are free.
 async function resolveDiskMediaKinds(tasks) {
-  const jobs = [];
+  const thunks = [];
   for (const t of tasks) {
     for (const m of t.media) {
       if (m.source === 'disk' && m.kind === null) {
-        jobs.push(
-          resolveKind(m.shareUrl).then((info) => {
-            m.kind = info.kind;
-            if (info.name) m.name = info.name;
-          })
-        );
+        thunks.push(async () => {
+          const info = await resolveKind(m.shareUrl);
+          m.kind = info.kind;
+          if (info.name) m.name = info.name;
+        });
       }
     }
   }
-  if (jobs.length) await Promise.all(jobs);
+  // Limit parallel probes: firing dozens of simultaneous requests at the disk
+  // server at once is how a slow page load becomes a hang (and how we stall
+  // the disk server for everyone else). resolveKind never rejects (timeout →
+  // kind 'file'), so each probe is bounded by config.diskProbeTimeoutMs.
+  const limit = 4;
+  let i = 0;
+  const runNext = async () => {
+    while (i < thunks.length) await thunks[i++]();
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, thunks.length) }, runNext));
   return tasks;
 }
 

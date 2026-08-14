@@ -43,6 +43,18 @@ function boardsUrl(path) {
   return `${config.mattermostUrl}${config.boardsApiPrefix}${path}`;
 }
 
+// node-fetch has no default timeout — a slow or unreachable upstream would
+// leave the request hanging forever and the cabinet spinner running for
+// minutes instead of failing fast. Every fetch in this file goes through
+// this: it aborts once config.requestTimeoutMs has passed without headers
+// (the timeout is cleared as soon as the response resolves, so streaming a
+// long video body is unaffected — only time-to-headers is bounded).
+function fetchWithTimeout(url, opts = {}, ms = config.requestTimeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 // --- Session login --------------------------------------------------------
 // Cached in memory only (no database, matches the rest of the app). A fresh
 // container restart re-logs in from scratch, which is fine since login is
@@ -65,7 +77,7 @@ function extractAuthTokenFromCookies(res) {
 }
 
 async function login() {
-  const res = await fetch(`${config.mattermostUrl}/api/v4/users/login`, {
+  const res = await fetchWithTimeout(`${config.mattermostUrl}/api/v4/users/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ login_id: config.mattermostLoginId, password: config.mattermostPassword }),
@@ -136,11 +148,11 @@ async function asJsonOrThrow(res, context) {
 async function mmFetch(url, { headers: extraHeaders, ...opts } = {}, context) {
   assertConfigured();
   let headers = await authHeaders(extraHeaders);
-  let res = await fetch(url, { ...opts, headers });
+  let res = await fetchWithTimeout(url, { ...opts, headers });
   if (res.status === 401 && usingSessionLogin()) {
     if (config.debug) console.log(`[mattermost:debug] ${context}: got 401, re-logging in and retrying once`);
     headers = await authHeaders(extraHeaders, { forceRelogin: true });
-    res = await fetch(url, { ...opts, headers });
+    res = await fetchWithTimeout(url, { ...opts, headers });
   }
   return res;
 }
@@ -286,12 +298,12 @@ async function fetchFileStream(boardId, fileId, rangeHeader) {
   const headers = await authHeaders();
   delete headers['Content-Type'];
   if (rangeHeader) headers.Range = rangeHeader;
-  let res = await fetch(fileDownloadUrl(boardId, fileId), { headers });
+  let res = await fetchWithTimeout(fileDownloadUrl(boardId, fileId), { headers });
   if (res.status === 401 && usingSessionLogin()) {
     const retryHeaders = await authHeaders(undefined, { forceRelogin: true });
     delete retryHeaders['Content-Type'];
     if (rangeHeader) retryHeaders.Range = rangeHeader;
-    res = await fetch(fileDownloadUrl(boardId, fileId), { headers: retryHeaders });
+    res = await fetchWithTimeout(fileDownloadUrl(boardId, fileId), { headers: retryHeaders });
   }
   return res;
 }
@@ -311,11 +323,11 @@ async function getUserIdByUsername(username) {
   try {
     const headers = await authHeaders();
     delete headers['Content-Type'];
-    let res = await fetch(`${config.mattermostUrl}/api/v4/users/username/${encodeURIComponent(username)}`, { headers });
+    let res = await fetchWithTimeout(`${config.mattermostUrl}/api/v4/users/username/${encodeURIComponent(username)}`, { headers });
     if (res.status === 401 && usingSessionLogin()) {
       const retryHeaders = await authHeaders(undefined, { forceRelogin: true });
       delete retryHeaders['Content-Type'];
-      res = await fetch(`${config.mattermostUrl}/api/v4/users/username/${encodeURIComponent(username)}`, { headers: retryHeaders });
+      res = await fetchWithTimeout(`${config.mattermostUrl}/api/v4/users/username/${encodeURIComponent(username)}`, { headers: retryHeaders });
     }
     if (!res.ok) {
       if (config.debug) console.warn(`[mattermost] getUserIdByUsername(${username}): HTTP ${res.status}`);

@@ -12,6 +12,17 @@
 // the raw file directly, and the share is fully public (no login needed).
 
 const fetch = require('node-fetch');
+const config = require('./config');
+
+// Bound time-to-headers on upstream disk-server requests (node-fetch has no
+// default timeout — a hanging disk server would otherwise stall the whole
+// cabinet). The timer clears once headers arrive, so streaming a large file's
+// body afterwards is unaffected.
+function fetchWithTimeout(url, opts = {}, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
 
 // Several TLDs are in use for this one server (com, ru, tech, ...) — this
 // pattern accepts any short alphabetic TLD rather than an exact list, so a
@@ -77,7 +88,7 @@ const kindCache = new Map(); // shareUrl -> { kind, name }
 async function resolveKind(shareUrl) {
   if (kindCache.has(shareUrl)) return kindCache.get(shareUrl);
   try {
-    const res = await fetch(downloadUrlFor(shareUrl), { headers: { Range: 'bytes=0-1' } });
+    const res = await fetchWithTimeout(downloadUrlFor(shareUrl), { headers: { Range: 'bytes=0-1' } }, config.diskProbeTimeoutMs);
     const contentType = (res.headers.get('content-type') || '').split(';')[0].trim();
     const disposition = res.headers.get('content-disposition') || '';
     const nameMatch = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
@@ -100,7 +111,7 @@ async function resolveKind(shareUrl) {
 async function streamDiskFile(shareUrl, rangeHeader) {
   const headers = {};
   if (rangeHeader) headers.Range = rangeHeader;
-  return fetch(downloadUrlFor(shareUrl), { headers });
+  return fetchWithTimeout(downloadUrlFor(shareUrl), { headers }, config.requestTimeoutMs);
 }
 
 module.exports = {

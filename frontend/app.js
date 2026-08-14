@@ -30,6 +30,15 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
 }
 
+// Russian plural: plural(1,'пост','поста','постов') → "пост" etc.
+function plural(n, one, few, many) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+  return many;
+}
+
 // The post text is written in Telegram's markdown (staff compose in Telegram,
 // then paste into "Текст поста"): **bold**, *italic*, __underline__,
 // ~/~~strikethrough~~, `code`, ```pre``` and [text](url). Without rendering
@@ -283,6 +292,43 @@ function scrollToTask(id) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+// Top info strip: draws attention to posts that are burning (waiting + due
+// within 3 days) or just counts how many posts are waiting for approval.
+// Computed across ALL the client's tasks (not the active week), since urgency
+// follows the publish date, not the selected week.
+function updateAttention() {
+  const el = document.getElementById('attention');
+  const all = state.tasks || [];
+  const waiting = all.filter((t) => t.status === 'waiting');
+  const urgent = waiting.filter(isUrgent);
+  const changes = all.filter((t) => t.status === 'changes').length;
+  const approved = all.filter((t) => t.status === 'approved').length;
+  const published = all.filter((t) => t.status === 'published').length;
+  if (!all.length) { el.hidden = true; return; }
+
+  let title;
+  if (urgent.length) {
+    const soon = urgent.map((t) => t.publishDate).filter(Boolean).sort()[0];
+    const w = waiting.length;
+    const g = urgent.length;
+    title = `🔥 ${w} ${plural(w, 'пост', 'поста', 'постов')} ждут согласования — ${g} ${plural(g, 'горящий', 'горящих', 'горящих')}${soon ? `, ближайший до ${formatDatePill(soon)}` : ''}`;
+  } else if (waiting.length) {
+    const w = waiting.length;
+    title = `${w} ${plural(w, 'пост', 'поста', 'постов')} на согласовании`;
+  } else {
+    title = 'Все посты согласованы 🎉';
+  }
+
+  const chips = [];
+  if (changes) chips.push(`Правки в работе: ${changes}`);
+  if (approved) chips.push(`Согласовано: ${approved}`);
+  if (published) chips.push(`Опубликовано: ${published}`);
+
+  el.classList.toggle('urgent', urgent.length > 0);
+  el.innerHTML = `<div class="attention-title">${title}</div>${chips.length ? `<div class="attention-sub">${chips.join(' · ')}</div>` : ''}`;
+  el.hidden = false;
+}
+
 function renderCalendar() {
   if (calYear == null) {
     const now = new Date();
@@ -376,6 +422,7 @@ function render() {
     const el = document.getElementById(`task-${deepLinkTaskId}`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+  updateAttention();
 }
 
 async function loadTasks() {

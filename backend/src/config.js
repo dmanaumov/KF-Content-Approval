@@ -89,6 +89,20 @@ module.exports = {
   // client poll/re-render. Set to 0 to disable caching entirely.
   cacheTtlMs: parseInt(process.env.CACHE_TTL_MS || '10000', 10),
 
+  // Max ms to wait for headers of any single upstream request (Mattermost or
+  // the disk server) before aborting it. node-fetch has no default timeout,
+  // so without this a slow/hanging upstream leaves the cabinet spinner
+  // running for minutes instead of failing fast with a readable error.
+  // Streaming (media) only waits this long for HEADERS, not for the whole
+  // body, so video playback is unaffected.
+  requestTimeoutMs: parseInt(process.env.MM_REQUEST_TIMEOUT_MS || '15000', 10),
+
+  // Shorter timeout for the tiny content-type probe the disk embed does
+  // (resolveKind, one Range bytes=0-1 request per disk link) — that one is
+  // per-link and awaited in parallel before the task list is returned, so it
+  // must fail fast or the whole cabinet waits on it.
+  diskProbeTimeoutMs: parseInt(process.env.MM_DISK_PROBE_TIMEOUT_MS || '5000', 10),
+
   // Prints raw Mattermost block/property JSON to the server log — turn this
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',
