@@ -155,12 +155,24 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
   try {
     const { board, cards } = await loadBoard(req.params.boardId, { fresh: true });
     const q = (req.query.title || '').trim().toLowerCase();
-    const matches = q ? cards.filter((c) => (c.title || '').toLowerCase().includes(q)) : cards.slice(0, 5);
+    // ?project=<optionId> — filter by the "Проект" property's raw value
+    // instead of/in addition to title, so you can dump every card for one
+    // client at once (e.g. all your test cards) rather than guessing titles.
+    const projectFilter = (req.query.project || '').trim();
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+
+    let filtered = cards;
+    if (q) filtered = filtered.filter((c) => (c.title || '').toLowerCase().includes(q));
+    if (projectFilter && projectProp) {
+      filtered = filtered.filter((c) => (c.properties || {})[projectProp.id] === projectFilter);
+    }
+    const matches = q || projectFilter ? filtered : cards.slice(0, 5);
+
     res.json({
       totalCardsFetched: cards.length, // if this is a round 200/400/600..., listCards() pagination likely hit the cap
       allProperties: (board.cardProperties || []).map((p) => ({ id: p.id, name: p.name, type: p.type })),
       approvalProp: findPropertyDef(board, config.approvalPropertyName),
-      projectProp: findPropertyDef(board, config.projectPropertyName),
+      projectProp,
       matchCount: matches.length,
       cards: matches.map((c) => ({ id: c.id, title: c.title, properties: c.properties })),
     });
