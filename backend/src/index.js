@@ -218,7 +218,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/api/debug/boards/:boardId/find', async (req, res) => {
   if (!config.debug) return res.status(404).json({ error: 'set DEBUG_MATTERMOST=true to enable' });
   try {
-    const { board, cards } = await loadBoard(req.params.boardId, { fresh: true });
+    const { board, cards, blocks } = await loadBoard(req.params.boardId, { fresh: true });
     const q = (req.query.title || '').trim().toLowerCase();
     // ?project=<optionId> — filter by the "Проект" property's raw value
     // instead of/in addition to title, so you can dump every card for one
@@ -235,11 +235,22 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
 
     res.json({
       totalCardsFetched: cards.length, // if this is a round 200/400/600..., listCards() pagination likely hit the cap
+      totalBlocksFetched: blocks.length, // 0 = the /blocks endpoint isn't returning anything on this server
       allProperties: (board.cardProperties || []).map((p) => ({ id: p.id, name: p.name, type: p.type })),
       approvalProp: findPropertyDef(board, config.approvalPropertyName),
       projectProp,
       matchCount: matches.length,
-      cards: matches.map((c) => ({ id: c.id, title: c.title, properties: c.properties })),
+      // childBlocks: raw children of each matched card — this is what would
+      // carry photo/video attachments (fields.fileId) if you attach one to
+      // the card directly in Mattermost Boards. Use this to confirm the
+      // real shape (type, fields.fileId, fields.mimeType) before trusting
+      // that media actually shows up for the client.
+      cards: matches.map((c) => ({
+        id: c.id,
+        title: c.title,
+        properties: c.properties,
+        childBlocks: blocks.filter((b) => b.parentId === c.id),
+      })),
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
