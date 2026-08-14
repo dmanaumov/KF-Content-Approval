@@ -28,6 +28,39 @@ function clientLinkFor(token) {
   return `${location.origin}/l/${encodeURIComponent(token)}`;
 }
 
+// Robust clipboard write: the Clipboard API needs a secure context (https)
+// and can be missing/blocked in some embedded browsers — fall back to the
+// old hidden-textarea + execCommand trick so the button still works there
+// instead of silently doing nothing (this is what "не работает кнопка
+// копировать" turned out to be).
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (err) {
+      // fall through to the legacy method below
+    }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (err) {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  if (!ok) throw new Error('copy command failed');
+}
+
 let options = [];
 let mattermostWebUrl = '';
 let busyProjectId = null;
@@ -40,16 +73,25 @@ function render(filterText) {
       .map((o) => {
         const link = clientLinkFor(o.token);
         const busy = busyProjectId === o.id;
+        const initial = (o.label || '?').trim().charAt(0).toUpperCase();
+        const logo = o.logoUrl
+          ? `<img src="${esc(o.logoUrl)}" alt="">`
+          : `<span class="proj-logo-fallback">${esc(initial)}</span>`;
         return `<div class="proj-card">
-          <div class="proj-name">${esc(o.label)}</div>
-          <div class="proj-row">
-            <span class="proj-row-label">Mattermost:</span>
-            <a class="proj-mm-link" href="${esc(mattermostWebUrl)}" target="_blank" rel="noopener">${esc(mattermostWebUrl)}</a>
-          </div>
-          <div class="proj-row proj-link-row">
-            <span class="proj-row-label">Клиенту:</span>
-            <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
-            <button class="btn approve proj-copy" data-link="${esc(link)}">Копировать</button>
+          <div class="proj-card-top">
+            <div class="proj-logo">${logo}</div>
+            <div class="proj-info">
+              <div class="proj-name">${esc(o.label)}</div>
+              <div class="proj-row">
+                <span class="proj-row-label">Mattermost:</span>
+                <a class="proj-mm-link" href="${esc(mattermostWebUrl)}" target="_blank" rel="noopener">${esc(mattermostWebUrl)}</a>
+              </div>
+              <div class="proj-row proj-link-row">
+                <span class="proj-row-label">Клиенту:</span>
+                <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
+                <button class="proj-copy" title="Скопировать ссылку с приглашением" aria-label="Скопировать ссылку с приглашением" data-link="${esc(link)}" data-label="${esc(o.label)}">📋</button>
+              </div>
+            </div>
           </div>
           <div class="proj-row proj-actions-row">
             <button class="btn changes proj-edit" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">Редактировать</button>
@@ -106,9 +148,10 @@ document.getElementById('search').addEventListener('input', (e) => render(e.targ
 document.getElementById('list').addEventListener('click', async (e) => {
   const copyBtn = e.target.closest('.proj-copy');
   if (copyBtn) {
+    const text = `Направляю актуальную ссылку по управлению публикациями проекта #${copyBtn.dataset.label}:\n${copyBtn.dataset.link}`;
     try {
-      await navigator.clipboard.writeText(copyBtn.dataset.link);
-      toast('Ссылка скопирована');
+      await copyToClipboard(text);
+      toast('Скопировано — можно вставлять');
     } catch (err) {
       toast('Не удалось скопировать — выделите ссылку вручную');
     }
@@ -210,8 +253,12 @@ async function saveEdit() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
+    // Reflect the new logo in the list immediately, without a full reload.
+    const opt = options.find((o) => o.id === editingProjectId);
+    if (opt) opt.logoUrl = data.logoUrl || '';
     toast('Настройки сохранены');
     closeEdit();
+    render(document.getElementById('search').value);
   } catch (err) {
     errBox.textContent = 'Не удалось сохранить: ' + err.message;
     errBox.hidden = false;

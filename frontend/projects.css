@@ -5,20 +5,28 @@
 .proj-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(7,96,92,.08)}
 .proj-list{display:grid;gap:12px}
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
+.proj-card-top{display:flex;gap:12px;align-items:stretch}
+.proj-logo{flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#FAFBFB;border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+.proj-logo img{width:100%;height:100%;object-fit:contain}
+.proj-logo-fallback{font-weight:800;font-size:18px;color:var(--muted)}
+.proj-info{flex:1;min-width:0;display:grid;gap:9px;align-content:center}
 .proj-name{font-weight:800;font-size:15px}
 .proj-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .proj-row-label{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;min-width:74px}
 .proj-mm-link{font-size:12px;color:var(--accent);text-decoration:none;word-break:break-all}
 .proj-mm-link:hover{text-decoration:underline}
-.proj-link{flex:1;min-width:180px;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted);background:#FAFBFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.proj-copy,.proj-regen,.proj-edit{padding:9px 12px;font-size:12px;border-radius:10px;white-space:nowrap}
+.proj-link{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted);background:#FAFBFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.proj-copy{flex:0 0 auto;width:36px;height:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;font-size:16px;line-height:1;border:1px solid var(--line);background:var(--accent);color:#fff;cursor:pointer}
+.proj-copy:active{transform:scale(.94)}
+.proj-regen,.proj-edit{padding:9px 12px;font-size:12px;border-radius:10px;white-space:nowrap}
 .proj-actions-row{justify-content:flex-end}
 .proj-regen,.proj-edit{width:auto}
 @media(max-width:430px){
-  .proj-link{min-width:100%}
   .proj-row-label{min-width:100%}
   .proj-actions-row{justify-content:stretch;flex-wrap:nowrap}
   .proj-regen,.proj-edit{width:100%}
+  .proj-logo{width:44px}
+  .proj-logo-fallback{font-size:15px}
 }
 
 /* "Редактировать" popup — logo URL + per-network credentials. Reuses

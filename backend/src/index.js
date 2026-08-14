@@ -177,14 +177,14 @@ app.get('/api/projects', staffAuth, async (req, res) => {
       return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
     }
     const options = await Promise.all(
-      (projectProp.options || []).map(async (o) => ({
-        id: o.id,
-        label: o.value,
-        // Rotatable short link — see projectSettings.js. Created lazily on
-        // first read, so every project already has a working link the
-        // first time this list loads.
-        token: await projectSettings.getToken(boardId, o.id),
-      }))
+      (projectProp.options || []).map(async (o) => {
+        // Rotatable short link + logo URL — see projectSettings.js. Row is
+        // created lazily on first read, so every project already has a
+        // working link (and, once set, a logo) the first time this list
+        // loads.
+        const { token, logoUrl } = await projectSettings.getTokenAndLogo(boardId, o.id);
+        return { id: o.id, label: o.value, token, logoUrl };
+      })
     );
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
   } catch (err) {

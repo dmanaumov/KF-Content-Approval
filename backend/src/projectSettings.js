@@ -50,6 +50,20 @@ async function getToken(boardId, projectId) {
   return ensureRow(boardId, projectId);
 }
 
+// Token + logo URL in one go — used by the staff project-list page, which
+// needs both per project and would otherwise call ensureRow() twice (once
+// via getToken, once via getSettings) for every row.
+async function getTokenAndLogo(boardId, projectId) {
+  await ensureRow(boardId, projectId);
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT link_token, logo_url FROM project_settings WHERE board_id = $1 AND project_id = $2',
+    [boardId, projectId]
+  );
+  const row = rows[0] || { link_token: '', logo_url: '' };
+  return { token: row.link_token, logoUrl: row.logo_url || '' };
+}
+
 // Generates and stores a brand new token, overwriting (invalidating)
 // whatever token existed before — the old short link starts 404ing on its
 // very next use.
@@ -158,6 +172,7 @@ async function importLegacyFileTokens() {
 
 module.exports = {
   getToken,
+  getTokenAndLogo,
   regenerateToken,
   resolveToken,
   getSettings,
