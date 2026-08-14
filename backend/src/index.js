@@ -143,6 +143,30 @@ app.get('/api/files/:fileId', async (req, res) => {
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+// TEMPORARY diagnostic endpoint — only active when DEBUG_MATTERMOST=true.
+// Returns the target board's "Статус"/"Проект" property DEFINITIONS
+// (with every option id + label) side by side with the raw `properties`
+// of cards whose title matches ?title=..., with no truncation (unlike the
+// console debug logs, which cut off at 2000 chars and are useless for a
+// board with many cards). Delete this route once the real property/value
+// format is confirmed and taskMapper.js is fixed accordingly.
+app.get('/api/debug/boards/:boardId/find', async (req, res) => {
+  if (!config.debug) return res.status(404).json({ error: 'set DEBUG_MATTERMOST=true to enable' });
+  try {
+    const { board, cards } = await loadBoard(req.params.boardId, { fresh: true });
+    const q = (req.query.title || '').trim().toLowerCase();
+    const matches = q ? cards.filter((c) => (c.title || '').toLowerCase().includes(q)) : cards.slice(0, 5);
+    res.json({
+      approvalProp: findPropertyDef(board, config.approvalPropertyName),
+      projectProp: findPropertyDef(board, config.projectPropertyName),
+      matchCount: matches.length,
+      cards: matches.map((c) => ({ id: c.id, title: c.title, properties: c.properties })),
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Static frontend. Client link shape: /p/{boardId}?task={taskId}
 // (boardId is the Mattermost Board/Project id — the whole "auth" for now is

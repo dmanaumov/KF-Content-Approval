@@ -7,8 +7,16 @@ module.exports = {
   // Mattermost server, e.g. https://chat.company.com
   mattermostUrl: (process.env.MATTERMOST_URL || '').replace(/\/+$/, ''),
 
+  // Two auth options — see mattermostClient.js for details. If both
+  // MATTERMOST_LOGIN_ID and MATTERMOST_PASSWORD are set, session-login auth
+  // is used for every call (this is what the agency's own n8n integration
+  // relies on — per the agency, a plain PAT did not work there at all).
+  // Otherwise falls back to MATTERMOST_TOKEN (Personal Access Token).
+  mattermostLoginId: process.env.MATTERMOST_LOGIN_ID || '',
+  mattermostPassword: process.env.MATTERMOST_PASSWORD || '',
   // Personal Access Token of a dedicated bot/service account that has
-  // read + write access to the boards this app will serve.
+  // read + write access to the boards this app will serve. Used only if
+  // MATTERMOST_LOGIN_ID/MATTERMOST_PASSWORD are not set.
   mattermostToken: process.env.MATTERMOST_TOKEN || '',
 
   // Path prefix for the Boards REST API. CONFIRMED against the agency's real

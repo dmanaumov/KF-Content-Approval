@@ -11,22 +11,100 @@
 // to change. Fastest way to confirm exact shapes: open Boards in a browser,
 // do the equivalent action by hand, and read the request in devtools →
 // Network. Turn on DEBUG_MATTERMOST=true to log raw responses server-side.
+//
+// --- Auth ---------------------------------------------------------------
+// Two auth modes, tried in this order:
+//   1. Session login (MATTERMOST_LOGIN_ID + MATTERMOST_PASSWORD) — logs in
+//      via POST /api/v4/users/login and reuses the returned session token
+//      as a Bearer token, re-logging in on 401. This is what the agency's
+//      own n8n integration uses for EVERY call (including plain reads) —
+//      per the agency, a Personal Access Token did not work at all there.
+//   2. Personal Access Token (MATTERMOST_TOKEN) — simpler (no password to
+//      store, tokens don't expire), and DOES work for this app's own GET
+//      calls against the real server (confirmed in production logs). Kept
+//      as a fallback/alternative for whichever calls it's sufficient for.
+// If both are set, session login wins. See README/.env.example.
 
 const fetch = require('node-fetch');
 const config = require('./config');
 
+function usingSessionLogin() {
+  return !!(config.mattermostLoginId && config.mattermostPassword);
+}
+
 function assertConfigured() {
   if (!config.mattermostUrl) throw new Error('MATTERMOST_URL is not configured');
-  if (!config.mattermostToken) throw new Error('MATTERMOST_TOKEN is not configured');
+  if (!usingSessionLogin() && !config.mattermostToken) {
+    throw new Error('Neither MATTERMOST_TOKEN nor MATTERMOST_LOGIN_ID/MATTERMOST_PASSWORD are configured');
+  }
 }
 
 function boardsUrl(path) {
   return `${config.mattermostUrl}${config.boardsApiPrefix}${path}`;
 }
 
-function authHeaders(extra) {
+// --- Session login --------------------------------------------------------
+// Cached in memory only (no database, matches the rest of the app). A fresh
+// container restart re-logs in from scratch, which is fine since login is
+// cheap and happens lazily on first request.
+let session = { token: null };
+
+// Pulls the session token out of a Set-Cookie: MMAUTHTOKEN=<token>; ... header.
+// The agency's own working n8n login flow has a node literally named "Extract
+// Cookies" right after Login — strong signal that on this server the token
+// should be read from the cookie, not (only) trusted from the Token header.
+function extractAuthTokenFromCookies(res) {
+  // node-fetch v2: headers.raw() exposes multi-value headers like Set-Cookie
+  // as an array; headers.get('set-cookie') would only return the first one.
+  const rawCookies = (res.headers.raw && res.headers.raw()['set-cookie']) || [];
+  for (const cookie of rawCookies) {
+    const match = /(?:^|;\s*)MMAUTHTOKEN=([^;]+)/.exec(cookie);
+    if (match) return decodeURIComponent(match[1]);
+  }
+  return null;
+}
+
+async function login() {
+  const res = await fetch(`${config.mattermostUrl}/api/v4/users/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: config.mattermostLoginId, password: config.mattermostPassword }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`[mattermost] login() failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+  }
+  // Mattermost returns the session token two ways: a "Token" response header,
+  // and a Set-Cookie: MMAUTHTOKEN=... cookie. Try the header first (simpler),
+  // fall back to the cookie (this is what the agency's own n8n flow relies
+  // on — see comment on extractAuthTokenFromCookies above) since on this
+  // server the header alone might not be present/reliable.
+  const token = res.headers.get('token') || extractAuthTokenFromCookies(res);
+  if (!token) {
+    throw new Error(
+      '[mattermost] login() succeeded (200) but no session token found in either the Token header or the ' +
+        'MMAUTHTOKEN cookie — unexpected server behavior, see docs/MATTERMOST_INTEGRATION.md'
+    );
+  }
+  session = { token };
+  if (config.debug) {
+    console.log(
+      `[mattermost:debug] login() → session token acquired (source: ${res.headers.get('token') ? 'Token header' : 'MMAUTHTOKEN cookie'})`
+    );
+  }
+  return token;
+}
+
+async function getBearerToken({ forceRelogin = false } = {}) {
+  if (!usingSessionLogin()) return config.mattermostToken;
+  if (forceRelogin || !session.token) await login();
+  return session.token;
+}
+
+async function authHeaders(extra, opts) {
+  const token = await getBearerToken(opts);
   return {
-    Authorization: `Bearer ${config.mattermostToken}`,
+    Authorization: `Bearer ${token}`,
     // The boards plugin's v2 router enforces this header on every request
     // (server/api/api.go requireCSRFToken) regardless of auth method —
     // harmless to send even if your build doesn't require it.
@@ -51,13 +129,28 @@ async function asJsonOrThrow(res, context) {
   }
 }
 
+// Wraps fetch with: lazy session login (if configured), one retry-with-
+// relogin on a 401 (session tokens can expire/get invalidated server-side,
+// unlike PATs), and the debug-logged JSON parsing above. Every call in this
+// file that hits the Boards or core API goes through this.
+async function mmFetch(url, { headers: extraHeaders, ...opts } = {}, context) {
+  assertConfigured();
+  let headers = await authHeaders(extraHeaders);
+  let res = await fetch(url, { ...opts, headers });
+  if (res.status === 401 && usingSessionLogin()) {
+    if (config.debug) console.log(`[mattermost:debug] ${context}: got 401, re-logging in and retrying once`);
+    headers = await authHeaders(extraHeaders, { forceRelogin: true });
+    res = await fetch(url, { ...opts, headers });
+  }
+  return res;
+}
+
 // GET /teams/{teamId}/boards — all boards for a team, INCLUDING cardProperties
 // (property definitions: id, name, type, options: [{id, value, color}]).
 // Confirmed working shape against a real server (unlike the single-board
 // GET /boards/{boardId}, which is unverified — see docs/MATTERMOST_INTEGRATION.md).
 async function listTeamBoards(teamId) {
-  assertConfigured();
-  const res = await fetch(boardsUrl(`/teams/${teamId}/boards`), { headers: authHeaders() });
+  const res = await mmFetch(boardsUrl(`/teams/${teamId}/boards`), {}, `listTeamBoards(${teamId})`);
   const data = await asJsonOrThrow(res, `listTeamBoards(${teamId})`);
   return Array.isArray(data) ? data : (data && data.boards) || [];
 }
@@ -80,8 +173,11 @@ async function getBoard(boardId, teamId) {
 // NOTE: not paginated beyond the first 200 cards yet — fine for now, revisit
 // if a board ever has more than 200 non-archived cards.
 async function listCards(boardId) {
-  assertConfigured();
-  const res = await fetch(boardsUrl(`/boards/${boardId}/cards?page=0&per_page=200`), { headers: authHeaders() });
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/cards?page=0&per_page=200`),
+    {},
+    `listCards(${boardId})`
+  );
   const data = await asJsonOrThrow(res, `listCards(${boardId})`);
   return Array.isArray(data) ? data : (data && data.cards) || [];
 }
@@ -92,8 +188,7 @@ async function listCards(boardId) {
 // caption/media/comment children. Callers must tolerate this failing/being
 // empty and still show cards using listCards() alone.
 async function listBlocks(boardId) {
-  assertConfigured();
-  const res = await fetch(boardsUrl(`/boards/${boardId}/blocks`), { headers: authHeaders() });
+  const res = await mmFetch(boardsUrl(`/boards/${boardId}/blocks`), {}, `listBlocks(${boardId})`);
   const data = await asJsonOrThrow(res, `listBlocks(${boardId})`);
   return Array.isArray(data) ? data : (data && data.blocks) || [];
 }
@@ -102,13 +197,12 @@ async function listBlocks(boardId) {
 // Body mirrors Focalboard's model.BlockPatch: updatedProperties is a
 // propertyId -> value map. VERIFY against your server.
 async function patchCardProperty(boardId, cardId, propertyId, value) {
-  assertConfigured();
   const body = { updatedProperties: { [propertyId]: value } };
-  const res = await fetch(boardsUrl(`/boards/${boardId}/blocks/${cardId}`), {
-    method: 'PATCH',
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  });
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/blocks/${cardId}`),
+    { method: 'PATCH', body: JSON.stringify(body) },
+    `patchCardProperty(${boardId},${cardId},${propertyId})`
+  );
   return asJsonOrThrow(res, `patchCardProperty(${boardId},${cardId},${propertyId})`);
 }
 
@@ -116,7 +210,6 @@ async function patchCardProperty(boardId, cardId, propertyId, value) {
 // "comment" block to the card. This is how Boards records feedback. VERIFY
 // field names against your server (this mirrors Focalboard's Block model).
 async function addCardComment(boardId, cardId, text) {
-  assertConfigured();
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const nowMs = Date.now();
   const body = [
@@ -132,17 +225,17 @@ async function addCardComment(boardId, cardId, text) {
       fields: {},
     },
   ];
-  const res = await fetch(boardsUrl(`/boards/${boardId}/blocks`), {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  });
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/blocks`),
+    { method: 'POST', body: JSON.stringify(body) },
+    `addCardComment(${boardId},${cardId})`
+  );
   return asJsonOrThrow(res, `addCardComment(${boardId},${cardId})`);
 }
 
 // Files attached to Boards cards live in core Mattermost file storage and
 // are served via the stable, documented core file API. This requires the
-// same bot token, so it is NOT directly reachable by a client's browser —
+// same auth, so it is NOT directly reachable by a client's browser —
 // mediaRoutes proxies bytes through our backend instead (with Range support
 // for video, since iPhone Safari needs it).
 function fileDownloadUrl(fileId) {
@@ -151,10 +244,17 @@ function fileDownloadUrl(fileId) {
 
 async function fetchFileStream(fileId, rangeHeader) {
   assertConfigured();
-  const headers = authHeaders();
+  const headers = await authHeaders();
   delete headers['Content-Type'];
   if (rangeHeader) headers.Range = rangeHeader;
-  return fetch(fileDownloadUrl(fileId), { headers });
+  let res = await fetch(fileDownloadUrl(fileId), { headers });
+  if (res.status === 401 && usingSessionLogin()) {
+    const retryHeaders = await authHeaders(undefined, { forceRelogin: true });
+    delete retryHeaders['Content-Type'];
+    if (rangeHeader) retryHeaders.Range = rangeHeader;
+    res = await fetch(fileDownloadUrl(fileId), { headers: retryHeaders });
+  }
+  return res;
 }
 
 module.exports = {
