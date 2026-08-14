@@ -35,6 +35,12 @@ function applyBranding() {
   if (logo) {
     const el = document.getElementById('clientLogo');
     el.outerHTML = `<img id="clientLogo" src="${esc(logo)}" alt="">`;
+  } else {
+    // No logo image supplied — show the client/project's own first letter
+    // (from ?name=) in the placeholder frame instead of a hardcoded letter.
+    const el = document.getElementById('clientLogo');
+    const letter = (name || '').trim().charAt(0).toUpperCase();
+    if (el) el.textContent = letter || 'К';
   }
 }
 
@@ -134,11 +140,22 @@ function cardHtml(task) {
   </article>`;
 }
 
+// Besides the label, each week entry now also tracks whether it contains
+// something still awaiting client approval (hasWaiting) and, more
+// specifically, something urgent (hasUrgent — publish date within 3 days).
+// hasUrgent is always a subset of hasWaiting (isUrgent() requires
+// status === 'waiting'), so the period pill only needs one border-accent
+// class; the icon (dot vs fire) is chosen from hasUrgent alone.
 function weeksOf(tasks) {
   const map = new Map();
   for (const t of tasks) {
     if (!t.weekStart) continue;
-    if (!map.has(t.weekStart)) map.set(t.weekStart, t.weekLabel);
+    if (!map.has(t.weekStart)) {
+      map.set(t.weekStart, { label: t.weekLabel, hasWaiting: false, hasUrgent: false });
+    }
+    const entry = map.get(t.weekStart);
+    if (t.status === 'waiting') entry.hasWaiting = true;
+    if (isUrgent(t)) entry.hasUrgent = true;
   }
   return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0])); // newest first
 }
@@ -150,7 +167,15 @@ function render() {
   }
 
   document.getElementById('weeks').innerHTML = weeks
-    .map(([w, label]) => `<button class="week${w === activeWeek ? ' active' : ''}" data-week="${w}">${esc(label)}</button>`)
+    .map(([w, info]) => {
+      const marker = info.hasUrgent
+        ? '<span class="week-marker fire" aria-hidden="true">🔥</span>'
+        : info.hasWaiting
+        ? '<span class="week-marker dot" aria-hidden="true"></span>'
+        : '';
+      const cls = `week${w === activeWeek ? ' active' : ''}${info.hasWaiting ? ' has-waiting' : ''}`;
+      return `<button class="${cls}" data-week="${w}">${marker}${esc(info.label)}</button>`;
+    })
     .join('');
 
   const inWeek = state.tasks.filter((t) => t.weekStart === activeWeek);

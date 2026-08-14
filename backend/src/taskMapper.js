@@ -149,22 +149,6 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
         mimeType: (b.fields && b.fields.mimeType) || '',
       }));
 
-    // Show client feedback only from our own app's account (config.
-    // feedbackAuthorUsername, resolved to a user id in index.js) — a shared
-    // production board can have unrelated internal comments left directly
-    // on the card in Mattermost by staff, which shouldn't surface to the
-    // client as if they were "правки". Fallback (if the id wasn't resolved,
-    // or nothing matched it): a comment whose text literally names the
-    // account, in case authorship can't be determined some other way.
-    const allComments = children.filter((b) => b.type === 'comment').sort((a, b) => (b.createAt || 0) - (a.createAt || 0));
-    const authorNeedle = normLabel(config.feedbackAuthorUsername).toLowerCase();
-    const comments = allComments.filter(
-      (b) =>
-        (opts.feedbackAuthorUserId && b.createdBy === opts.feedbackAuthorUserId) ||
-        (authorNeedle && String(b.title || '').toLowerCase().includes(authorNeedle))
-    );
-    const feedback = comments.length ? comments[0].title : null;
-
     const properties = card.properties || {};
     const statusOptionId = approvalProp ? properties[approvalProp.id] : null;
     const statusLabel = optionLabelById(approvalProp, statusOptionId);
@@ -172,6 +156,26 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     // client-facing values (e.g. still "Не начато"/"В процессе") → excluded
     // below, not shown to the client at all.
     const status = statusEnumFromLabel(statusLabel);
+
+    // Show client feedback only from our own app's account (config.
+    // feedbackAuthorUsername, resolved to a user id in index.js) — a shared
+    // production board can have unrelated internal comments left directly
+    // on the card in Mattermost by staff, which shouldn't surface to the
+    // client as if they were "правки". Fallback (if the id wasn't resolved,
+    // or nothing matched it): a comment whose text literally names the
+    // account, in case authorship can't be determined some other way.
+    // Only surfaced while status === 'changes': our own account also posts
+    // a dated "СОГЛАСОВАНО" marker comment on approve (see index.js), and
+    // without this gate that marker would show up as a stale "правки" note
+    // on an already-approved card.
+    const allComments = children.filter((b) => b.type === 'comment').sort((a, b) => (b.createAt || 0) - (a.createAt || 0));
+    const authorNeedle = normLabel(config.feedbackAuthorUsername).toLowerCase();
+    const comments = allComments.filter(
+      (b) =>
+        (opts.feedbackAuthorUserId && b.createdBy === opts.feedbackAuthorUserId) ||
+        (authorNeedle && String(b.title || '').toLowerCase().includes(authorNeedle))
+    );
+    const feedback = status === 'changes' && comments.length ? comments[0].title : null;
 
     const rawPublishDate = publishDateProp ? properties[publishDateProp.id] : null;
     const publishDate = parsePropertyDate(rawPublishDate);

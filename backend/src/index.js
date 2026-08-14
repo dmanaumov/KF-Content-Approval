@@ -37,6 +37,24 @@ function invalidate(boardId) {
   cache.delete(boardId);
 }
 
+// Every approve/feedback action must leave a dated marker comment on the
+// Mattermost card ("СОГЛАСОВАНО" / "ПРАВКИ" + date+time) so staff working
+// directly in Mattermost can see when/what the client did without opening
+// the cabinet. Formatted in Moscow time regardless of where the server runs.
+function formatMoscowTimestamp() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(now);
+  const get = (type) => (parts.find((p) => p.type === type) || {}).value || '';
+  return `${get('day')}.${get('month')}.${get('year')} ${get('hour')}:${get('minute')}`;
+}
+
 // Resolved once and cached inside mattermostClient itself — cheap to call
 // repeatedly. Used so taskMapper.js can show only feedback comments posted
 // by our own app's account, not unrelated internal comments left directly
@@ -85,7 +103,9 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
 // POST /api/boards/:boardId/tasks/:taskId/approve — idempotent.
 app.post('/api/boards/:boardId/tasks/:taskId/approve', async (req, res) => {
   try {
-    const updated = await setApprovalStatus(req.params.boardId, req.params.taskId, 'approved');
+    const { boardId, taskId } = req.params;
+    await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СОГЛАСОВАНО`);
+    const updated = await setApprovalStatus(boardId, taskId, 'approved');
     res.json({ task: updated });
   } catch (err) {
     console.error('[api] approve failed:', err.message);
@@ -99,7 +119,12 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback', async (req, res) => {
   if (!comment) return res.status(400).json({ error: 'comment_required' });
   try {
     const { boardId, taskId } = req.params;
-    await mm.addCardComment(boardId, taskId, comment);
+    // Marker line + the client's actual text in one comment, so it still
+    // shows correctly as "правки" in the cabinet (taskMapper picks the most
+    // recent comment from our own account as task.feedback) while also
+    // giving Mattermost staff the date/time + "ПРАВКИ" marker they asked for.
+    const commentWithMarker = `${formatMoscowTimestamp()} ПРАВКИ\n\n${comment}`;
+    await mm.addCardComment(boardId, taskId, commentWithMarker);
     const updated = await setApprovalStatus(boardId, taskId, 'changes');
     res.json({ task: updated });
   } catch (err) {
