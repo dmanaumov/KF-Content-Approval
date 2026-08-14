@@ -76,6 +76,26 @@ async function resolveLinkToken() {
   return data.name || '';
 }
 
+// A post's "Название" often starts with a shorthand for which social network
+// it's meant for (agency's own convention, e.g. "IG: карусель про..." or
+// "tg - анонс..."). Detected case-insensitively from the title's start only
+// (\b keeps "Igor..."/"Maxim..." etc. from false-matching) and rendered as a
+// colored badge instead of raw shorthand text, since "IG"/"tg" isn't
+// meaningful to the client the way a recognizable network name/color is.
+const SOCIAL_MAP = {
+  ig: { label: 'Instagram', short: 'IG', color: '#C13584' },
+  tg: { label: 'Telegram', short: 'TG', color: '#229ED9' },
+  vk: { label: 'ВКонтакте', short: 'VK', color: '#0077FF' },
+  ok: { label: 'Одноклассники', short: 'OK', color: '#EE8208' },
+  max: { label: 'MAX', short: 'MAX', color: '#7C3AED' },
+};
+const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max)\b[\s:\-–—]*/i;
+function detectSocial(title) {
+  const m = String(title || '').match(SOCIAL_PREFIX_RE);
+  if (!m) return null;
+  return { ...SOCIAL_MAP[m[1].toLowerCase()], matchedPrefix: m[0] };
+}
+
 function statusInfo(status) {
   if (status === 'approved') return { cls: 'approved', text: 'Согласовано' };
   if (status === 'changes') return { cls: 'changes', text: 'Правки' };
@@ -165,11 +185,16 @@ function cardHtml(task) {
     ? `<div class="post-link"><a href="${esc(task.url)}" target="_blank" rel="noopener">Открыть опубликованный пост →</a></div>`
     : '';
   const urgentBadge = urgent ? '<span class="status urgent">🔥 ГОРИТ!</span>' : '';
+  const social = detectSocial(task.title);
+  const displayTitle = social ? task.title.slice(social.matchedPrefix.length) : task.title;
+  const socialBadge = social
+    ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
+    : '';
   return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}" id="task-${esc(task.id)}">
     <div class="meta">
       <div class="meta-left">
         ${task.format ? `<div class="eyebrow">${esc(task.format)}</div>` : ''}
-        <h2>${esc(task.title)}</h2>
+        <h2>${socialBadge}<span class="h2-text">${esc(displayTitle)}</span></h2>
       </div>
       <div class="badges">
         ${urgentBadge}

@@ -19,7 +19,7 @@ button{cursor:pointer}
 .page{max-width:660px;margin:0 auto;padding:18px 14px 70px}
 .head{background:#fff;border:1px solid var(--line);border-radius:25px;padding:18px;margin-bottom:24px;position:relative;box-shadow:none}
 .head-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.head-left{display:flex;align-items:center;gap:14px;min-width:0;flex:1}
+.head-right{display:flex;align-items:center;gap:10px;min-width:0}
 .cal-toggle{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:12px;width:40px;height:40px;font-size:17px;display:grid;place-items:center}
 .kf img{width:70px;height:auto;display:block}
 .client-brand{display:flex;align-items:center;gap:9px;min-width:0}
@@ -52,7 +52,9 @@ button{cursor:pointer}
 .meta{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:17px 17px 10px}
 .meta-left{min-width:0}
 .eyebrow{font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.04em;text-transform:uppercase}
-.meta h2{margin:5px 0 0;font-size:20px;letter-spacing:-.035em;line-height:1.18}
+.meta h2{margin:5px 0 0;font-size:20px;letter-spacing:-.035em;line-height:1.18;display:flex;align-items:flex-start;gap:7px}
+.h2-text{min-width:0}
+.social-badge{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:900;letter-spacing:.02em;border-radius:7px;padding:4px 6px;line-height:1;margin-top:3px}
 .badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .status{font-size:11px;font-weight:800;padding:7px 9px;border-radius:999px;white-space:nowrap}
 .status.waiting{background:#FFF3C9;color:#755600}
