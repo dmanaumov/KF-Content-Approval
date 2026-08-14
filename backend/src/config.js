@@ -92,4 +92,17 @@ module.exports = {
   // Prints raw Mattermost block/property JSON to the server log — turn this
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',
+
+  // Where rotatable client-link tokens are persisted (see linkTokens.js).
+  // Deliberately a plain JSON file, not a database — but it MUST sit on a
+  // volume that survives a Dokploy redeploy (docker-compose.yml mounts one
+  // at /app/data by default), or "revoking" a link only lasts until the
+  // next deploy, which defeats the point.
+  projectLinksFile: process.env.PROJECT_LINKS_FILE || '/app/data/project-links.json',
+
+  // Static link to the Mattermost web app itself, shown on the internal
+  // /projects/{boardId} staff page next to each project (same URL for every
+  // project — Boards doesn't have a per-project deep-link, it's one shared
+  // board with a client-side filter).
+  mattermostWebUrl: process.env.MATTERMOST_WEB_URL || 'https://messager.kontentferma.com/',
 };

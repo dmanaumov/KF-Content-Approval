@@ -84,16 +84,25 @@ function mediaHtml(task) {
   }
   const slides = task.media
     .map((m) => {
-      // Board attachments live in the Boards plugin's own file storage,
-      // keyed by team+board — the proxy route needs the board id too.
-      const fileUrl = `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
+      // Two possible sources: an attachment on the Mattermost card itself
+      // (Boards' own file storage, keyed by team+board), or a
+      // disk.kontentferma.* share link found in the post text/URL and
+      // proxied through our own disk-embed route instead.
+      const fileUrl =
+        m.source === 'disk'
+          ? `/api/disk-embed?u=${encodeURIComponent(m.shareUrl)}`
+          : `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
       if (m.kind === 'image') {
         return `<div class="slide"><img src="${fileUrl}" alt="" loading="lazy"></div>`;
       }
       if (m.kind === 'video') {
         return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" src="${fileUrl}"></video></div></div>`;
       }
-      return `<div class="slide file-link"><div><b>${esc(m.name || 'Файл')}</b><br><a href="${fileUrl}" target="_blank" rel="noopener">Открыть</a></div></div>`;
+      // Unknown/generic file: for a disk link, send the client to the
+      // original share page (Nextcloud's own preview UI) rather than our
+      // raw download proxy; card attachments still use our own proxy link.
+      const href = m.source === 'disk' ? m.shareUrl : fileUrl;
+      return `<div class="slide file-link"><div><b>${esc(m.name || 'Файл')}</b><br><a href="${href}" target="_blank" rel="noopener">Открыть</a></div></div>`;
     })
     .join('');
   const counter = task.media.length > 1 ? `<div class="dots">1 / ${task.media.length}</div>` : '';

@@ -8,3 +8,14 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      # Persists rotatable client-link tokens (see backend/src/linkTokens.js)
+      # across redeploys/restarts — a named volume survives `docker compose
+      # up -d --build` (only the container is recreated, not the volume), so
+      # Dokploy rebuilding/redeploying this service does NOT wipe it. It
+      # would be lost if the volume itself is explicitly removed (e.g.
+      # `docker compose down -v`) — avoid that for this service.
+      - project-links-data:/app/data
+
+volumes:
+  project-links-data:

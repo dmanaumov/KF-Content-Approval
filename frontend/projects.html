@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>КФ — Ссылки на проекты</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/projects.css">
+</head>
+<body>
+<div class="page">
+  <div id="app">
+    <header class="head">
+      <div class="head-top">
+        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+        <div class="client-brand">
+          <strong>Ссылки на проекты клиентов</strong>
+        </div>
+      </div>
+    </header>
+
+    <input id="search" class="proj-search" type="text" placeholder="Поиск по названию клиента…">
+
+    <div id="loading" class="loading">Загружаем список проектов из Mattermost…</div>
+    <main id="list" class="proj-list"></main>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/projects.js"></script>
+</body>
+</html>

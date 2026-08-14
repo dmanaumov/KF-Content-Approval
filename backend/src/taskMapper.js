@@ -5,6 +5,7 @@
 // compare against what you expect.
 
 const config = require('./config');
+const { extractDiskLinks, stripDiskLinks, parseAndValidateShareUrl } = require('./diskEmbeds');
 
 const MONTHS_RU = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
@@ -154,10 +155,11 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     const children = childBlocks.filter((b) => b.parentId === card.id && !b.deleteAt);
 
     const mediaBlocks = children.filter((b) => b.fields && b.fields.fileId);
-    const media = mediaBlocks
+    const cardMedia = mediaBlocks
       .sort((a, b) => (a.createAt || 0) - (b.createAt || 0))
       .map((b) => ({
         id: b.id,
+        source: 'mattermost',
         fileId: b.fields.fileId,
         kind: guessMediaKind(b),
         name: b.title || b.fields.filename || '',
@@ -212,13 +214,56 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
         .join('\n\n');
     }
 
+    // "Материал уже на диске" links (https://disk.kontentferma.<tld>/s/<token>)
+    // pasted into the post text: strip the raw link out of the visible text
+    // and embed the actual file in the media carousel instead, so the client
+    // sees the material directly rather than clicking through to another
+    // site. Each match is re-validated (not just regex-matched) before being
+    // trusted — see diskEmbeds.js for why.
+    const rawDiskMatches = extractDiskLinks(caption);
+    const validatedCaptionDiskLinks = [];
+    for (const raw of rawDiskMatches) {
+      const normalized = parseAndValidateShareUrl(raw);
+      if (normalized) validatedCaptionDiskLinks.push({ raw, normalized });
+    }
+    if (validatedCaptionDiskLinks.length) {
+      caption = stripDiskLinks(caption, validatedCaptionDiskLinks.map((l) => l.raw));
+    }
+
     let format = null;
     if (formatProp) {
       const rawFormat = properties[formatProp.id];
       format = formatProp.type === 'select' ? optionLabelById(formatProp, rawFormat) : rawFormat;
     }
 
-    const url = urlProp ? String(properties[urlProp.id] || '').trim() : '';
+    let url = urlProp ? String(properties[urlProp.id] || '').trim() : '';
+    // Occasionally staff paste a disk.kontentferma link into "URL" instead
+    // of a real published-post link — treat that the same way (embed as
+    // media) rather than rendering it as "Открыть опубликованный пост →".
+    let urlAsDiskLink = null;
+    if (url) {
+      const normalized = parseAndValidateShareUrl(url);
+      if (normalized) {
+        urlAsDiskLink = normalized;
+        url = '';
+      }
+    }
+
+    const diskShareUrls = [
+      ...validatedCaptionDiskLinks.map((l) => l.normalized),
+      ...(urlAsDiskLink ? [urlAsDiskLink] : []),
+    ];
+    // kind/name are resolved later, server-side (index.js), since it takes a
+    // network call to the disk server to know image vs video — buildTasks()
+    // itself stays synchronous, matching every other caller's expectations.
+    const diskMedia = diskShareUrls.map((shareUrl, i) => ({
+      id: `disk-${card.id}-${i}`,
+      source: 'disk',
+      shareUrl,
+      kind: null,
+      name: '',
+    }));
+    const media = [...cardMedia, ...diskMedia];
 
     return {
       id: card.id,
@@ -259,4 +304,4 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   };
 }
 
-module.exports = { buildTasks, findPropertyDef, optionIdByLabel };
+module.exports = { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById };

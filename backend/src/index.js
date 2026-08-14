@@ -2,7 +2,9 @@ const express = require('express');
 const path = require('path');
 const config = require('./config');
 const mm = require('./mattermostClient');
-const { buildTasks, findPropertyDef, optionIdByLabel } = require('./taskMapper');
+const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
+const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./diskEmbeds');
+const linkTokens = require('./linkTokens');
 
 const app = express();
 app.use(express.json());
@@ -68,6 +70,29 @@ async function getFeedbackAuthorId() {
   }
 }
 
+// buildTasks() stays synchronous and can't itself know image-vs-video for a
+// disk.kontentferma link (that takes a network call to the disk server) —
+// it leaves media.kind === null for those entries, and this fills it in
+// afterwards, in parallel, using diskEmbeds' in-memory cache so repeat
+// requests for the same link are free.
+async function resolveDiskMediaKinds(tasks) {
+  const jobs = [];
+  for (const t of tasks) {
+    for (const m of t.media) {
+      if (m.source === 'disk' && m.kind === null) {
+        jobs.push(
+          resolveKind(m.shareUrl).then((info) => {
+            m.kind = info.kind;
+            if (info.name) m.name = info.name;
+          })
+        );
+      }
+    }
+  }
+  if (jobs.length) await Promise.all(jobs);
+  return tasks;
+}
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
@@ -89,6 +114,7 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
           'refusing to show tasks to avoid leaking other clients\' cards. Pass the project option id or exact label.',
       });
     }
+    await resolveDiskMediaKinds(tasks);
     res.json({
       board: { id: req.params.boardId, title: board.title || '' },
       tasks,
@@ -97,6 +123,53 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
   } catch (err) {
     console.error('[api] GET tasks failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// GET /api/boards/:boardId/projects — every option of the "Проект" property,
+// for the internal staff page that lists all client cabinet links (see
+// frontend/projects.html). Reads live from the board's property definition
+// (same source of truth as everything else in this app, no separate list to
+// keep in sync by hand) — a new client project shows up here automatically
+// as soon as it's added as an option in Mattermost.
+app.get('/api/boards/:boardId/projects', async (req, res) => {
+  try {
+    const { board } = await loadBoard(req.params.boardId);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    if (!projectProp) {
+      return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
+    }
+    res.json({
+      board: { id: req.params.boardId, title: board.title || '' },
+      mattermostWebUrl: config.mattermostWebUrl,
+      options: (projectProp.options || []).map((o) => ({
+        id: o.id,
+        label: o.value,
+        // Rotatable short link — see linkTokens.js. Created lazily on first
+        // read, so every project already has a working link the first time
+        // this list loads.
+        token: linkTokens.getToken(req.params.boardId, o.id),
+      })),
+    });
+  } catch (err) {
+    console.error('[api] GET projects failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// POST /api/boards/:boardId/projects/:projectId/regenerate-link — issues a
+// brand new short link for this project and immediately invalidates the old
+// one. Internal staff action (this route isn't reachable from anywhere in
+// the client-facing cabinet) — used when a link may have leaked/been
+// misused, per the agency's request; see linkTokens.js for how revocation
+// is made to actually survive a redeploy.
+app.post('/api/boards/:boardId/projects/:projectId/regenerate-link', async (req, res) => {
+  try {
+    const token = linkTokens.regenerateToken(req.params.boardId, req.params.projectId);
+    res.json({ token });
+  } catch (err) {
+    console.error('[api] regenerate-link failed:', err.message);
+    res.status(500).json({ error: 'regenerate_failed', message: err.message });
   }
 });
 
@@ -185,6 +258,7 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
         `либо формат запроса отличается от ожидаемого (см. docs/MATTERMOST_INTEGRATION.md §4).`
     );
   }
+  await resolveDiskMediaKinds([updated]);
   return updated;
 }
 
@@ -206,6 +280,31 @@ app.get('/api/files/:boardId/:fileId', async (req, res) => {
   } catch (err) {
     console.error('[api] file proxy failed:', err.message);
     res.status(502).json({ error: 'file_unavailable', message: err.message });
+  }
+});
+
+// GET /api/disk-embed?u=<share url> — proxies a file from the agency's own
+// disk.kontentferma.* file server (Nextcloud-style public share links
+// pasted into "Текст поста" or "URL"), so the client sees the material
+// inline instead of clicking through to another site. STRICTLY validates
+// the URL against the disk.kontentferma.* share-link shape before fetching
+// anything — this route is reachable by anyone holding a client link, so it
+// must never become an open fetch-any-URL relay. See diskEmbeds.js.
+app.get('/api/disk-embed', async (req, res) => {
+  const shareUrl = parseAndValidateShareUrl(req.query.u || '');
+  if (!shareUrl) return res.status(400).json({ error: 'invalid_disk_url' });
+  try {
+    const upstream = await streamDiskFile(shareUrl, req.headers.range);
+    res.status(upstream.status);
+    for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control']) {
+      const v = upstream.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    if (!res.hasHeader('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
+    upstream.body.pipe(res);
+  } catch (err) {
+    console.error('[api] disk-embed proxy failed:', err.message);
+    res.status(502).json({ error: 'disk_unavailable', message: err.message });
   }
 });
 
@@ -269,6 +368,40 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
 const frontendDir = path.join(__dirname, '..', '..', 'frontend');
 app.use(express.static(frontendDir));
 app.get('/p/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
+
+// GET /l/:token — the short, rotatable link actually handed out to clients
+// now (see linkTokens.js). Resolves the token and 302-redirects to the real
+// /p/{boardId}?project={projectId}&name={label} cabinet URL — a plain
+// redirect, as requested, NOT a proxy: once opened, the browser address bar
+// shows the real underlying URL from then on. That's a known limitation —
+// regenerating a project's link only stops the SHORT /l/ link from working;
+// it does not retroactively invalidate a /p/... URL someone already noted
+// down after clicking through once. Good enough against a casually
+// forwarded/leaked short link, not against a determined technical actor.
+app.get('/l/:token', async (req, res) => {
+  const resolved = linkTokens.resolveToken(req.params.token);
+  if (!resolved) {
+    return res.status(404).send('Ссылка недействительна или была отозвана. Обратитесь к вашему менеджеру за новой ссылкой.');
+  }
+  try {
+    const { board } = await loadBoard(resolved.boardId);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    const label = optionLabelById(projectProp, resolved.projectId) || '';
+    const params = new URLSearchParams({ project: resolved.projectId });
+    if (label) params.set('name', label);
+    res.redirect(302, `/p/${encodeURIComponent(resolved.boardId)}?${params.toString()}`);
+  } catch (err) {
+    console.error('[api] /l/:token redirect failed:', err.message);
+    res.status(502).send('Не удалось открыть кабинет — попробуйте ещё раз чуть позже.');
+  }
+});
+
+// Internal staff page listing every client's cabinet link, in the same
+// visual style as the client cabinet — see frontend/projects.html.
+// NOT for clients: no board/task data, just the list of ready-made links
+// (same info an agency staffer would otherwise hand-assemble from the
+// "Проект" property options + this app's own /p/{boardId}?project= shape).
+app.get('/projects/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
 
 app.listen(config.port, () => {
   console.log(`KF Approval listening on :${config.port}`);
