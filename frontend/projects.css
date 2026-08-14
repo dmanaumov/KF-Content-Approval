@@ -16,9 +16,10 @@
 .proj-mm-link{font-size:12px;color:var(--accent);text-decoration:none;word-break:break-all}
 .proj-mm-link:hover{text-decoration:underline}
 .proj-link{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted);background:#FAFBFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.proj-copy{flex:0 0 auto;width:36px;height:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;font-size:16px;line-height:1;border:1px solid var(--line);background:var(--accent);color:#fff;cursor:pointer}
+.proj-copy{flex:0 0 auto;width:36px;height:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;font-size:16px;line-height:1;border:1px solid var(--line);background:#ff5f60;color:#fff;cursor:pointer}
 .proj-copy:active{transform:scale(.94)}
 .proj-regen,.proj-edit{padding:9px 12px;font-size:12px;border-radius:10px;white-space:nowrap}
+.proj-edit{background:#ff5f60;color:#fff}
 .proj-actions-row{justify-content:flex-end}
 .proj-regen,.proj-edit{width:auto}
 @media(max-width:430px){

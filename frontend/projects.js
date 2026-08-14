@@ -94,7 +94,7 @@ function render(filterText) {
             </div>
           </div>
           <div class="proj-row proj-actions-row">
-            <button class="btn changes proj-edit" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">Редактировать</button>
+            <button class="btn approve proj-edit" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">Редактировать</button>
             <button class="btn changes proj-regen" ${busy ? 'disabled' : ''} data-project-id="${esc(o.id)}" data-label="${esc(o.label)}">
               ${busy ? 'Обновляем…' : 'Сгенерировать новую ссылку'}
             </button>
