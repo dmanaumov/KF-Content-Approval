@@ -2,8 +2,12 @@
 // its rotatable client cabinet link (see backend/src/linkTokens.js), a link
 // to open the project directly in Mattermost, and a "regenerate" button for
 // when a link may have leaked. No build step, same approach as app.js.
-
-const boardId = (location.pathname.match(/^\/projects\/([^/]+)/) || [])[1];
+//
+// Deliberately does NOT take a board id from this page's own URL (unlike
+// app.js's /p/{boardId} handling) — the backend already knows the one board
+// it operates on (config.mattermostBoardId) and this page's path itself is
+// configurable (config.staffProjectsPath) specifically so nothing
+// identifying has to sit in a URL someone might screenshot/bookmark/share.
 
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
@@ -58,7 +62,7 @@ async function load() {
   const loading = document.getElementById('loading');
   loading.hidden = false;
   try {
-    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/projects`);
+    const res = await fetch('/api/projects');
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
     mattermostWebUrl = data.mattermostWebUrl || '';
@@ -77,7 +81,7 @@ async function regenerateLink(projectId, label) {
   busyProjectId = projectId;
   render(document.getElementById('search').value);
   try {
-    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/projects/${encodeURIComponent(projectId)}/regenerate-link`, {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/regenerate-link`, {
       method: 'POST',
     });
     const data = await res.json();
@@ -112,9 +116,4 @@ document.getElementById('list').addEventListener('click', async (e) => {
   }
 });
 
-if (!boardId) {
-  document.getElementById('loading').hidden = true;
-  document.getElementById('list').innerHTML = '<div class="error-box">В адресе не указан ID борда.</div>';
-} else {
-  load();
-}
+load();

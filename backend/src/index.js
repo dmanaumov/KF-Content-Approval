@@ -126,21 +126,36 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
   }
 });
 
-// GET /api/boards/:boardId/projects — every option of the "Проект" property,
-// for the internal staff page that lists all client cabinet links (see
-// frontend/projects.html). Reads live from the board's property definition
-// (same source of truth as everything else in this app, no separate list to
-// keep in sync by hand) — a new client project shows up here automatically
-// as soon as it's added as an option in Mattermost.
-app.get('/api/boards/:boardId/projects', async (req, res) => {
+function requireStaffBoardId(res) {
+  if (!config.mattermostBoardId) {
+    res.status(500).json({
+      error: 'board_not_configured',
+      message: 'MATTERMOST_BOARD_ID is not set — the staff projects page needs it (see .env.example).',
+    });
+    return null;
+  }
+  return config.mattermostBoardId;
+}
+
+// GET /api/projects — every option of the "Проект" property, for the
+// internal staff page that lists all client cabinet links (see
+// frontend/projects.html). Deliberately does NOT take boardId from the URL
+// (unlike the client-facing /api/boards/:boardId/... routes) — it reads
+// config.mattermostBoardId instead, so nothing about which board this is
+// ever needs to appear in a URL a person types/bookmarks/screenshots.
+// Reads live from the board's property definition (same source of truth as
+// everything else in this app) — a new client project shows up here
+// automatically as soon as it's added as an option in Mattermost.
+app.get('/api/projects', async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
   try {
-    const { board } = await loadBoard(req.params.boardId);
+    const { board } = await loadBoard(boardId);
     const projectProp = findPropertyDef(board, config.projectPropertyName);
     if (!projectProp) {
       return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
     }
     res.json({
-      board: { id: req.params.boardId, title: board.title || '' },
       mattermostWebUrl: config.mattermostWebUrl,
       options: (projectProp.options || []).map((o) => ({
         id: o.id,
@@ -148,7 +163,7 @@ app.get('/api/boards/:boardId/projects', async (req, res) => {
         // Rotatable short link — see linkTokens.js. Created lazily on first
         // read, so every project already has a working link the first time
         // this list loads.
-        token: linkTokens.getToken(req.params.boardId, o.id),
+        token: linkTokens.getToken(boardId, o.id),
       })),
     });
   } catch (err) {
@@ -157,15 +172,16 @@ app.get('/api/boards/:boardId/projects', async (req, res) => {
   }
 });
 
-// POST /api/boards/:boardId/projects/:projectId/regenerate-link — issues a
-// brand new short link for this project and immediately invalidates the old
-// one. Internal staff action (this route isn't reachable from anywhere in
-// the client-facing cabinet) — used when a link may have leaked/been
-// misused, per the agency's request; see linkTokens.js for how revocation
-// is made to actually survive a redeploy.
-app.post('/api/boards/:boardId/projects/:projectId/regenerate-link', async (req, res) => {
+// POST /api/projects/:projectId/regenerate-link — issues a brand new short
+// link for this project and immediately invalidates the old one. Internal
+// staff action (not reachable from anywhere in the client-facing cabinet) —
+// used when a link may have leaked/been misused; see linkTokens.js for how
+// revocation is made to actually survive a redeploy.
+app.post('/api/projects/:projectId/regenerate-link', async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
   try {
-    const token = linkTokens.regenerateToken(req.params.boardId, req.params.projectId);
+    const token = linkTokens.regenerateToken(boardId, req.params.projectId);
     res.json({ token });
   } catch (err) {
     console.error('[api] regenerate-link failed:', err.message);
@@ -370,38 +386,49 @@ app.use(express.static(frontendDir));
 app.get('/p/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
 
 // GET /l/:token — the short, rotatable link actually handed out to clients
-// now (see linkTokens.js). Resolves the token and 302-redirects to the real
-// /p/{boardId}?project={projectId}&name={label} cabinet URL — a plain
-// redirect, as requested, NOT a proxy: once opened, the browser address bar
-// shows the real underlying URL from then on. That's a known limitation —
-// regenerating a project's link only stops the SHORT /l/ link from working;
-// it does not retroactively invalidate a /p/... URL someone already noted
-// down after clicking through once. Good enough against a casually
-// forwarded/leaked short link, not against a determined technical actor.
-app.get('/l/:token', async (req, res) => {
+// now (see linkTokens.js). Serves the SAME cabinet page as /p/{boardId} —
+// but crucially does NOT redirect. The page resolves the token into
+// {boardId, projectId, name} itself via GET /api/links/:token right after
+// load (see resolveLinkToken() in app.js) and keeps using it entirely in
+// memory from then on. The address bar always stays on /l/{token}, nothing
+// else is ever shown/copyable — this is what makes "Сгенерировать новую
+// ссылку" an actual revoke. (An earlier version of this route did a 302
+// redirect to /p/{boardId}?project=...&name=..., which the browser then
+// displayed permanently — a redirect only hides the destination up to the
+// first click, not after; switched away from that on purpose.)
+app.get('/l/:token', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
+
+// GET /api/links/:token — resolves a rotatable client link (see above) into
+// the {boardId, projectId, name} it currently points to. Returns 404 (JSON,
+// not a redirect) when the token is unknown/revoked, so the frontend can
+// show a clean "ссылка недействительна" message.
+app.get('/api/links/:token', async (req, res) => {
   const resolved = linkTokens.resolveToken(req.params.token);
   if (!resolved) {
-    return res.status(404).send('Ссылка недействительна или была отозвана. Обратитесь к вашему менеджеру за новой ссылкой.');
+    return res.status(404).json({
+      error: 'link_not_found',
+      message: 'Ссылка недействительна или была отозвана. Обратитесь к вашему менеджеру за новой ссылкой.',
+    });
   }
   try {
     const { board } = await loadBoard(resolved.boardId);
     const projectProp = findPropertyDef(board, config.projectPropertyName);
-    const label = optionLabelById(projectProp, resolved.projectId) || '';
-    const params = new URLSearchParams({ project: resolved.projectId });
-    if (label) params.set('name', label);
-    res.redirect(302, `/p/${encodeURIComponent(resolved.boardId)}?${params.toString()}`);
+    const name = optionLabelById(projectProp, resolved.projectId) || '';
+    res.json({ boardId: resolved.boardId, projectId: resolved.projectId, name });
   } catch (err) {
-    console.error('[api] /l/:token redirect failed:', err.message);
-    res.status(502).send('Не удалось открыть кабинет — попробуйте ещё раз чуть позже.');
+    console.error('[api] /api/links/:token failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
   }
 });
 
 // Internal staff page listing every client's cabinet link, in the same
-// visual style as the client cabinet — see frontend/projects.html.
-// NOT for clients: no board/task data, just the list of ready-made links
-// (same info an agency staffer would otherwise hand-assemble from the
-// "Проект" property options + this app's own /p/{boardId}?project= shape).
-app.get('/projects/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
+// visual style as the client cabinet — see frontend/projects.html. Path is
+// configurable (config.staffProjectsPath, default "/projects") specifically
+// so it doesn't have to reveal anything (like a board id) in a fixed,
+// guessable URL. NOT for clients: no board/task data, just the list of
+// ready-made links (same info a staffer would otherwise hand-assemble from
+// the "Проект" property options).
+app.get(config.staffProjectsPath, (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
 
 app.listen(config.port, () => {
   console.log(`KF Approval listening on :${config.port}`);

@@ -101,8 +101,22 @@ module.exports = {
   projectLinksFile: process.env.PROJECT_LINKS_FILE || '/app/data/project-links.json',
 
   // Static link to the Mattermost web app itself, shown on the internal
-  // /projects/{boardId} staff page next to each project (same URL for every
-  // project — Boards doesn't have a per-project deep-link, it's one shared
-  // board with a client-side filter).
+  // staff page next to each project (same URL for every project — Boards
+  // doesn't have a per-project deep-link, it's one shared board with a
+  // client-side filter).
   mattermostWebUrl: process.env.MATTERMOST_WEB_URL || 'https://messager.kontentferma.com/',
+
+  // The one Mattermost board this whole app operates on. Previously every
+  // route took boardId as a URL path segment (in principle multi-board
+  // capable); the internal staff page specifically must NOT show it (or
+  // anything else identifying) in a URL a person can see/copy, so that page
+  // and its API now read the board id from here instead of the address bar.
+  mattermostBoardId: process.env.MATTERMOST_BOARD_ID || '',
+
+  // URL PATH of the internal staff page (list of clients + their rotatable
+  // links). Deliberately configurable rather than a fixed "/projects" — the
+  // agency didn't want a guessable, identity-revealing path here. This is
+  // still only obscurity (same security model as the rest of this app — see
+  // README), not real access control; pick something not easily guessed.
+  staffProjectsPath: process.env.STAFF_PROJECTS_PATH || '/projects',
 };

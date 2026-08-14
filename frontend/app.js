@@ -2,9 +2,21 @@
 // prototype, just wired to a real API instead of hardcoded demo data.
 
 const params = new URLSearchParams(location.search);
-const boardId = (location.pathname.match(/^\/p\/([^/]+)/) || [])[1];
-const projectFilter = params.get('project'); // which client this link is for, on a shared board
+// /l/{token} — the short, rotatable client link (see backend linkTokens.js
+// and index.js's /l/:token route). boardId/projectFilter start out unknown
+// and get filled in by resolveLinkToken() below, entirely in memory — the
+// whole point of this link shape is that neither ever appears in the URL,
+// so a page reload always re-resolves the CURRENT token instead of ever
+// showing/letting anyone copy the real underlying board/project ids.
+const linkToken = (location.pathname.match(/^\/l\/([^/]+)/) || [])[1];
+// /p/{boardId}?project=... — the older, direct link shape. Still supported
+// (nothing was disabled server-side), just no longer what's handed out from
+// the /projects staff page.
+const directBoardId = (location.pathname.match(/^\/p\/([^/]+)/) || [])[1];
 const deepLinkTaskId = params.get('task');
+
+let boardId = directBoardId || null;
+let projectFilter = params.get('project') || null; // which client this link is for, on a shared board
 
 let state = { tasks: [], board: null };
 let activeWeek = null;
@@ -24,10 +36,15 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
-function applyBranding() {
+// resolvedName: passed explicitly by a /l/{token} link (the name came back
+// from GET /api/links/:token, never from the URL) — falls back to the
+// legacy ?name= query param for a direct /p/{boardId} link. Single place
+// that sets the client name/logo letter so a /l/ link's resolved name can
+// never get clobbered by an (absent) ?name= param afterwards.
+function applyBranding(resolvedName) {
   const color = params.get('color');
-  const name = params.get('name');
   const logo = params.get('logo');
+  const name = resolvedName || params.get('name');
   if (color && /^#[0-9a-fA-F]{6}$/.test(color)) {
     document.documentElement.style.setProperty('--accent', color);
   }
@@ -37,11 +54,24 @@ function applyBranding() {
     el.outerHTML = `<img id="clientLogo" src="${esc(logo)}" alt="">`;
   } else {
     // No logo image supplied — show the client/project's own first letter
-    // (from ?name=) in the placeholder frame instead of a hardcoded letter.
+    // in the placeholder frame instead of a hardcoded letter.
     const el = document.getElementById('clientLogo');
     const letter = (name || '').trim().charAt(0).toUpperCase();
     if (el) el.textContent = letter || 'К';
   }
+}
+
+// Resolves a /l/{token} link into the {boardId, projectId, name} it
+// currently points to, and fills in the module-level boardId/projectFilter
+// used by everything else below. Throws with a user-facing message on an
+// unknown/revoked token (404) or any other failure.
+async function resolveLinkToken() {
+  const res = await fetch(`/api/links/${encodeURIComponent(linkToken)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || data.error || 'Не удалось открыть кабинет.');
+  boardId = data.boardId;
+  projectFilter = data.projectId;
+  return data.name || '';
 }
 
 function statusInfo(status) {
@@ -306,10 +336,28 @@ document.querySelector('[data-action="send-feedback"]').addEventListener('click'
   sendFeedback(feedbackTaskId, text);
 });
 
-if (!boardId) {
-  document.getElementById('loading').hidden = true;
-  document.getElementById('stack').innerHTML = '<div class="error-box">Ссылка неполная: не указан ID проекта Mattermost.</div>';
-} else {
+async function init() {
+  if (linkToken) {
+    document.getElementById('loading').hidden = false;
+    let name = '';
+    try {
+      name = await resolveLinkToken();
+    } catch (err) {
+      document.getElementById('loading').hidden = true;
+      document.getElementById('stack').innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+      return;
+    }
+    applyBranding(name);
+    loadTasks();
+    return;
+  }
+  if (!boardId) {
+    document.getElementById('loading').hidden = true;
+    document.getElementById('stack').innerHTML = '<div class="error-box">Ссылка неполная: не указан ID проекта Mattermost.</div>';
+    return;
+  }
   applyBranding();
   loadTasks();
 }
+
+init();
