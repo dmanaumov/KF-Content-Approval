@@ -1,8 +1,8 @@
 :root{
-  --kf-green:#07605C;
+  --kf-green:#004643;
   --kf-coral:#DF6162;
-  --accent:#07605C;
-  --urgent:#de6463;
+  --accent:#004643;
+  --urgent:#ff5f60;
   --ink:#17201F;
   --muted:#707A78;
   --bg:#F4F6F5;
@@ -45,7 +45,7 @@ button{cursor:pointer}
 .filter{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 11px;font-size:12px;font-weight:750;color:#687270;white-space:nowrap}
 .filter.active{background:var(--accent);border-color:var(--accent);color:#fff}
 .attention{background:#fff;border:1px solid var(--line);border-radius:18px;padding:13px 16px;margin:0 0 12px;display:grid;gap:6px}
-.attention.urgent{background:#FFF3F2;border-color:#ff5f60}
+.attention.urgent{background:#FFF3F2;border-color:var(--urgent)}
 .attention.urgent .attention-row1 .attention-link{color:#E0484A}
 .attention.waiting{background:#E8F4EA;border-color:#BFDFC5}
 .attention.waiting .attention-row1 .attention-link{color:#2E7D4F}
@@ -56,8 +56,8 @@ button{cursor:pointer}
 .stack{display:grid;gap:16px;position:relative}
 .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(16,45,42,.035)}
 .card.pending-action{opacity:.6;pointer-events:none}
-.card.urgent{border-color:var(--urgent);box-shadow:0 0 0 2px var(--urgent),0 10px 26px rgba(222,100,99,.28);background:#FFF5F4}
-.card.urgent .meta{background:linear-gradient(180deg,rgba(222,100,99,.12),rgba(222,100,99,0))}
+.card.urgent{border-color:var(--urgent);box-shadow:0 0 0 2px var(--urgent),0 10px 26px rgba(255,95,96,.28);background:#FFF5F4}
+.card.urgent .meta{background:linear-gradient(180deg,rgba(255,95,96,.12),rgba(255,95,96,0))}
 .meta{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:17px 17px 10px}
 .meta-left{min-width:0}
 .eyebrow{font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.04em;text-transform:uppercase}
@@ -90,14 +90,14 @@ button{cursor:pointer}
 .caption-head{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0 0 6px}
 .caption-tip{flex:1;min-width:0;color:var(--muted);font-size:12px;font-weight:650}
 .caption-head-actions{display:flex;gap:8px;flex:0 0 auto}
-.caption-edit{width:34px;height:34px;border:0;border-radius:999px;background:#FFF1F1;color:#ff5f60;display:grid;place-items:center;cursor:pointer;box-shadow:0 0 0 1px rgba(255,95,96,.22) inset}
+.caption-edit{width:34px;height:34px;border:0;border-radius:999px;background:#FFF1F1;color:var(--urgent);display:grid;place-items:center;cursor:pointer;box-shadow:0 0 0 1px rgba(255,95,96,.22) inset}
 .caption-edit svg{width:16px;height:16px;display:block}
 .caption-edit:disabled{opacity:.45;cursor:default}
 .caption-btn{border:0;border-radius:12px;padding:9px 12px;font-size:13px;font-weight:850;cursor:pointer}
 .caption-btn.cancel{background:#F2F4F4;color:#33413F}
-.caption-btn.save{background:#ff5f60;color:#fff}
+.caption-btn.save{background:var(--urgent);color:#fff}
 .caption-editor{width:100%;min-height:140px;border:1px solid #D8DFDE;border-radius:16px;padding:12px 13px;resize:vertical;outline:none;line-height:1.52;font-size:14px}
-.caption-editor:focus{border-color:#ff5f60;box-shadow:0 0 0 3px rgba(255,95,96,.10)}
+.caption-editor:focus{border-color:var(--urgent);box-shadow:0 0 0 3px rgba(255,95,96,.10)}
 .caption b,.caption strong{font-weight:800}
 .caption u{text-decoration:underline}
 .caption s{text-decoration:line-through}
@@ -124,7 +124,7 @@ button{cursor:pointer}
 .sheet h3{margin:0 0 5px;font-size:20px}
 .sheet p{margin:0 0 13px;color:var(--muted);font-size:13px}
 .sheet textarea{width:100%;min-height:130px;border:1px solid var(--line);border-radius:15px;padding:13px;resize:vertical;outline:none}
-.sheet textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(7,96,92,.08)}
+.sheet textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .sheet-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;margin-top:10px}
 .toast{position:fixed;left:50%;bottom:18px;transform:translate(-50%,10px);background:#17201f;color:#fff;border-radius:14px;padding:12px 15px;font-size:13px;font-weight:750;opacity:0;pointer-events:none;transition:.2s;z-index:80;max-width:calc(100vw - 30px)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
