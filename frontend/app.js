@@ -128,6 +128,20 @@ async function resolveLinkToken() {
 // (\b keeps "Igor..."/"Maxim..." etc. from false-matching) and rendered as a
 // colored badge instead of raw shorthand text, since "IG"/"tg" isn't
 // meaningful to the client the way a recognizable network name/color is.
+// "[AI]" anywhere in the title marks a post as AI-generated (agency's own
+// convention, case-insensitive, works in any position relative to a network
+// prefix like "IG:"). Stripped from the displayed title and shown instead as
+// a glowing card border + a small badge (see .card.ai / .status.ai in
+// app.css). Checked BEFORE detectSocial() below so "[AI] IG: ..." and
+// "IG: [AI] ..." both work.
+const AI_TAG_RE = /\[ai\]/i;
+function isAiPost(title) {
+  return AI_TAG_RE.test(String(title || ''));
+}
+function stripAiTag(title) {
+  return String(title || '').replace(AI_TAG_RE, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 const SOCIAL_MAP = {
   ig: { label: 'Instagram', short: 'IG', color: '#C13584' },
   tg: { label: 'Telegram', short: 'TG', color: '#229ED9' },
@@ -212,6 +226,7 @@ function cardHtml(task) {
   const st = statusInfo(task.status);
   const busy = busyTaskId === task.id;
   const urgent = isUrgent(task);
+  const ai = isAiPost(task.title);
   const editingText = editingTextTaskId === task.id;
   const canEditText = task.status !== 'approved' && task.status !== 'published';
   let actions;
@@ -232,9 +247,17 @@ function cardHtml(task) {
   const urlLink = task.url
     ? `<div class="post-link"><a href="${esc(task.url)}" target="_blank" rel="noopener">Открыть опубликованный пост →</a></div>`
     : '';
+  const aiAvatar = ai
+    ? '<button type="button" class="ai-avatar" data-action="ai-info" title="Этот пост сгенерирован с помощью ИИ"><img src="/ai-avatar.png" alt="" loading="lazy"></button>'
+    : '';
+  const aiDisclaimer = ai
+    ? '<div class="ai-disclaimer">⚠️ Материал подготовлен с помощью ИИ и может содержать неточности. Проверка фактов и ответственность за публикацию — на стороне пользователя.</div>'
+    : '';
   const urgentBadge = urgent ? '<span class="status urgent">🔥 ГОРИТ!</span>' : '';
-  const social = detectSocial(task.title);
-  const displayTitle = social ? task.title.slice(social.matchedPrefix.length) : task.title;
+  const aiBadge = ai ? '<span class="status ai">✨ AI</span>' : '';
+  const titleClean = ai ? stripAiTag(task.title) : task.title;
+  const social = detectSocial(titleClean);
+  const displayTitle = social ? titleClean.slice(social.matchedPrefix.length) : titleClean;
   const socialBadge = social
     ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
     : '';
@@ -261,13 +284,15 @@ function cardHtml(task) {
           ${captionText ? `<div class="caption open">${formatTelegram(captionText)}</div>` : ''}
         </div>`
     : '';
-  return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}" id="task-${esc(task.id)}">
+  return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}">
+    ${aiAvatar}
     <div class="meta">
       <div class="meta-left">
         ${task.format ? `<div class="eyebrow">${esc(task.format)}</div>` : ''}
         <h2>${socialBadge}<span class="h2-text">${esc(displayTitle)}</span></h2>
       </div>
       <div class="badges">
+        ${aiBadge}
         ${urgentBadge}
         ${dateBadge}
         <span class="status ${st.cls}">${st.text}</span>
@@ -278,6 +303,7 @@ function cardHtml(task) {
     ${urlLink}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
     ${actions}
+    ${aiDisclaimer}
   </article>`;
 }
 
@@ -613,6 +639,7 @@ document.getElementById('stack').addEventListener('click', (e) => {
     render();
   }
   if (btn.dataset.action === 'save-text') saveTextEdit(id);
+  if (btn.dataset.action === 'ai-info') toast('✨ Этот пост сгенерирован с помощью ИИ');
 });
 
 document.querySelector('[data-action="close-feedback"]').addEventListener('click', () => {

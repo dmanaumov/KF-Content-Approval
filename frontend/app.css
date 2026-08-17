@@ -3,6 +3,8 @@
   --kf-coral:#DF6162;
   --accent:#004643;
   --urgent:#ff5f60;
+  --ai:#9B5AF6;      /* [AI] в названии поста — рамка/свечение карточки, .card.ai/.status.ai. Активный. */
+  --spark:#F6E95A;   /* про запас — второй "особый" цвет, пока нигде не подключён. */
   --ink:#17201F;
   --muted:#707A78;
   --bg:#F4F6F5;
@@ -54,10 +56,61 @@ button{cursor:pointer}
 .attention-row1 .attention-link{font-size:14px;font-weight:800}
 .attention-row2{font-size:12px;color:var(--muted);font-weight:650}
 .stack{display:grid;gap:16px;position:relative}
-.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(16,45,42,.035)}
+.card{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(16,45,42,.035)}
 .card.pending-action{opacity:.6;pointer-events:none}
 .card.urgent{border-color:var(--urgent);box-shadow:0 0 0 2px var(--urgent),0 10px 26px rgba(255,95,96,.28);background:#FFF5F4}
 .card.urgent .meta{background:linear-gradient(180deg,rgba(255,95,96,.12),rgba(255,95,96,0))}
+.card.ai{border-color:var(--ai);box-shadow:0 0 0 2px var(--ai),0 10px 24px rgba(155,90,246,.22);background:linear-gradient(180deg,#FBF9FF,#fff 120px);animation:ai-pulse 2.8s ease-in-out infinite}
+.card.ai .meta{background:linear-gradient(180deg,rgba(155,90,246,.10),rgba(155,90,246,0));padding-right:64px}
+@keyframes ai-pulse{
+  0%,100%{box-shadow:0 0 0 2px var(--ai),0 10px 24px rgba(155,90,246,.22)}
+  50%{box-shadow:0 0 0 2px var(--ai),0 14px 34px rgba(155,90,246,.42)}
+}
+@media (prefers-reduced-motion: reduce){
+  .card.ai{animation:none}
+}
+/* Avatar bubble (top-right of an [AI] card) — glossy sphere: dark base +
+   specular highlight, white ring to separate it from the media below. Sits
+   inside the card's own rounded/clipped box, so it never fights .card's
+   overflow:hidden. It's a real <button> (see app.js) — tap/click shows a
+   toast explaining the tag, native title="" covers hover on desktop. */
+.ai-avatar{
+  position:absolute;
+  top:10px;
+  right:12px;
+  width:46px;
+  height:46px;
+  border:0;
+  border-radius:50%;
+  z-index:5;
+  background:radial-gradient(circle at 32% 26%,#2a2f45,#0d0f1c 72%);
+  box-shadow:
+    0 0 0 3px #fff,
+    0 3px 10px rgba(155,90,246,.5),
+    0 1px 2px rgba(17,20,30,.25),
+    inset 0 -6px 9px rgba(0,0,0,.35),
+    inset 0 5px 8px rgba(255,255,255,.10);
+}
+.ai-avatar img{
+  position:absolute;
+  inset:3px;
+  width:calc(100% - 6px);
+  height:calc(100% - 6px);
+  border-radius:50%;
+  object-fit:cover;
+  display:block;
+  pointer-events:none;
+}
+.ai-avatar::after{
+  content:'';
+  position:absolute;
+  inset:0;
+  border-radius:50%;
+  background:radial-gradient(circle at 30% 22%,rgba(255,255,255,.65),rgba(255,255,255,0) 42%);
+  pointer-events:none;
+}
+/* Small, non-intrusive AI disclaimer at the bottom of every [AI] card. */
+.ai-disclaimer{margin:10px 17px 0;padding:9px 11px;background:#F4EEFE;border-radius:12px;font-size:10.5px;line-height:1.4;color:#5B3FA0}
 .meta{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:17px 17px 10px}
 .meta-left{min-width:0}
 .eyebrow{font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.04em;text-transform:uppercase}
@@ -71,6 +124,7 @@ button{cursor:pointer}
 .status.changes{background:#FBE0E0;color:#A12E2E}
 .status.published{background:#DCEAF7;color:#1E4E7A}
 .status.urgent{background:var(--urgent);color:#fff}
+.status.ai{background:var(--ai);color:#fff}
 .status.date{background:#EDEFEF;color:#4B5654}
 .media{margin:4px 12px 0;border-radius:19px;overflow:hidden;background:#EEF1F0;position:relative;aspect-ratio:4/5}
 .carousel{display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;-webkit-overflow-scrolling:touch}
@@ -173,4 +227,6 @@ button{cursor:pointer}
   .cal-day{min-height:44px;padding:3px 2px 4px}
   .cal-post-title{font-size:8.3px}
   .cal-legend{font-size:10px;gap:6px 10px}
+  .ai-avatar{width:38px;height:38px;top:8px;right:9px}
+  .card.ai .meta{padding-right:54px}
 }
