@@ -28,8 +28,13 @@
 
 <div id="editModal" class="modal-wrap">
   <div class="sheet edit-sheet">
-    <h3>Настройки проекта</h3>
-    <p id="editProjectName"></p>
+    <div class="edit-sheet-head">
+      <div>
+        <h3>Настройки проекта</h3>
+        <p id="editProjectName"></p>
+      </div>
+      <div class="proj-mmid" id="editMmid" title="ID проекта в Mattermost — для n8n">MM ID: <code id="editMmidValue"></code></div>
+    </div>
 
     <label class="field-label" for="editLogoUrl">Ссылка на лого клиента (для кабинета)</label>
     <input id="editLogoUrl" class="field-input" type="text" placeholder="https://disk.kontentferma.../s/.../download или другая прямая ссылка на картинку">

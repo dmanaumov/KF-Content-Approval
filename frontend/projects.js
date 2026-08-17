@@ -190,6 +190,8 @@ function updateLogoPreview() {
 async function openEdit(projectId, label) {
   editingProjectId = projectId;
   document.getElementById('editProjectName').textContent = label;
+  document.getElementById('editMmid').dataset.mmid = projectId;
+  document.getElementById('editMmidValue').textContent = projectId;
   document.getElementById('editError').hidden = true;
   document.getElementById('editLogoUrl').value = '';
   document.getElementById('editLogoPreview').hidden = true;
@@ -263,6 +265,14 @@ async function saveEdit() {
   }
 }
 
+document.getElementById('editMmid').addEventListener('click', async () => {
+  try {
+    await copyToClipboard(editingProjectId);
+    toast('MM ID скопирован');
+  } catch (err) {
+    toast('Не удалось скопировать — выделите ID вручную');
+  }
+});
 document.getElementById('editLogoUrl').addEventListener('input', updateLogoPreview);
 document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
 document.querySelector('[data-action="save-edit"]').addEventListener('click', saveEdit);

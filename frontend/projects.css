@@ -69,6 +69,17 @@
    .modal-wrap/.sheet/.sheet-actions from app.css (same bottom-sheet pattern
    as the client cabinet's feedback popup) so it matches visually. */
 .edit-sheet{max-height:85vh;overflow-y:auto}
+.edit-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+
+/* Small MM ID tag, tucked in the corner of the edit popup — the Mattermost
+   option id behind this project's "Проект" property value (see
+   backend/src/index.js's GET /api/projects). Not shown anywhere in
+   Mattermost's own UI; staff need it to point n8n automations at the right
+   project when creating new cards. Click-to-copy, same toast pattern as the
+   other icon actions. */
+.proj-mmid{flex:0 0 auto;text-align:right;font-size:10px;color:var(--muted);cursor:pointer;user-select:none;padding-top:2px}
+.proj-mmid code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#F6F7F7;border-radius:4px;padding:1px 6px;color:#7B8482}
+.proj-mmid:hover code{background:#EDEFEF;color:var(--ink)}
 .field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
 .field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink)}
 .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
