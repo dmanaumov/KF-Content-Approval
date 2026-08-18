@@ -47,6 +47,18 @@ async function initSchema() {
       PRIMARY KEY (board_id, project_id)
     );
   `);
+  // Idempotent column additions for tables that may predate a field (no
+  // separate migration step to remember — same philosophy as the rest of
+  // initSchema).
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS start_date text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS posts_per_month text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS strategy_prompt text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS planning_prompt text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS post_prompt text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS image_prompt text NOT NULL DEFAULT '';
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);

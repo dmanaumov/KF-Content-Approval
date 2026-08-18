@@ -1,10 +1,14 @@
 // Postgres-backed per-project settings: the rotatable client cabinet link
 // (token), the client's logo URL (shown in the cabinet header — see
 // resolveLinkToken()/applyBranding() in app.js — instead of the generic
-// letter avatar), and per-social-network publishing credentials (a plain
-// JSON blob per network, meant to be read directly by the n8n publishing
+// letter avatar), per-social-network publishing credentials (a plain JSON
+// blob per network, meant to be read directly by the n8n publishing
 // automation via its own Postgres connection — this app itself never reads
-// social_credentials, only stores/returns it for the staff edit popup).
+// social_credentials, only stores/returns it for the staff edit popup), and
+// the project's planning/profile metadata for that automation: report start
+// date, posts per month, and the strategy/planning/post/image prompts.
+// Like the credentials, the prompts are stored for n8n to read directly;
+// this app only persists/returns them for the staff edit popup.
 //
 // Replaces the earlier flat-JSON-file link store (linkTokens.js) — that was
 // fine while a link token was the only thing worth persisting, but real
@@ -96,11 +100,22 @@ async function getSettings(boardId, projectId) {
   await ensureRow(boardId, projectId); // guarantees a row exists to read
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    'SELECT logo_url, social_credentials FROM project_settings WHERE board_id = $1 AND project_id = $2',
+    `SELECT logo_url, social_credentials, start_date, posts_per_month,
+            strategy_prompt, planning_prompt, post_prompt, image_prompt
+     FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
-  const row = rows[0] || { logo_url: '', social_credentials: {} };
-  return { logoUrl: row.logo_url || '', socialCredentials: row.social_credentials || {} };
+  const row = rows[0] || {};
+  return {
+    logoUrl: row.logo_url || '',
+    socialCredentials: row.social_credentials || {},
+    startDate: row.start_date || '',
+    postsPerMonth: row.posts_per_month || '',
+    strategyPrompt: row.strategy_prompt || '',
+    planningPrompt: row.planning_prompt || '',
+    postPrompt: row.post_prompt || '',
+    imagePrompt: row.image_prompt || '',
+  };
 }
 
 // Same 5 shorthands the client cabinet already detects in a post title
@@ -109,7 +124,15 @@ async function getSettings(boardId, projectId) {
 // this rule out for whoever builds the automation.
 const KNOWN_NETWORKS = ['ig', 'tg', 'vk', 'ok', 'max'];
 
-async function updateSettings(boardId, projectId, { logoUrl, socialCredentials }) {
+function textOrEmpty(value) {
+  return value == null ? '' : String(value);
+}
+
+async function updateSettings(boardId, projectId, {
+  logoUrl, socialCredentials,
+  startDate, postsPerMonth,
+  strategyPrompt, planningPrompt, postPrompt, imagePrompt,
+}) {
   if (typeof logoUrl !== 'string') {
     throw new Error('logoUrl must be a string (may be empty).');
   }
@@ -125,9 +148,22 @@ async function updateSettings(boardId, projectId, { logoUrl, socialCredentials }
   const pool = db.requirePool();
   await pool.query(
     `UPDATE project_settings
-     SET logo_url = $3, social_credentials = $4::jsonb, updated_at = now()
+     SET logo_url = $3,
+         social_credentials = $4::jsonb,
+         start_date = $5,
+         posts_per_month = $6,
+         strategy_prompt = $7,
+         planning_prompt = $8,
+         post_prompt = $9,
+         image_prompt = $10,
+         updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
-    [boardId, projectId, logoUrl, JSON.stringify(socialCredentials)]
+    [
+      boardId, projectId, logoUrl, JSON.stringify(socialCredentials),
+      textOrEmpty(startDate), textOrEmpty(postsPerMonth),
+      textOrEmpty(strategyPrompt), textOrEmpty(planningPrompt),
+      textOrEmpty(postPrompt), textOrEmpty(imagePrompt),
+    ]
   );
 }
 
