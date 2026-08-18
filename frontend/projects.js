@@ -82,7 +82,7 @@ function render(filterText) {
           : `<span class="proj-logo-fallback">${esc(initial)}</span>`;
         const aiClass = o.aiStatus === 'ai' ? ' ai' : o.aiStatus === 'partial' ? ' attention' : '';
         const avatar = o.aiStatus === 'ai' || o.aiStatus === 'partial'
-          ? `<img class="proj-ai-avatar" src="/ai-avatar.png" alt="ИИ" title="${o.aiStatus === 'ai' ? 'Промты ИИ заполнены полностью' : 'Заполнены не все промты ИИ'}">`
+          ? `<span class="proj-ai-avatar-wrap" data-tip="${o.aiStatus === 'ai' ? 'ИИ-проект — промты заполнены полностью' : 'Заполнены не все промты ИИ — требуется внимание'}"><img class="proj-ai-avatar" src="/ai-avatar.png" alt="ИИ"></span>`
           : '';
         return `<div class="proj-card${aiClass}">
           <div class="proj-card-top">
