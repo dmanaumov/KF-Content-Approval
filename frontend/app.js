@@ -20,7 +20,7 @@ let projectFilter = params.get('project') || null; // which client this link is 
 
 let state = { tasks: [], board: null };
 let activeWeek = null;
-let activeFilter = '';
+let activeFilter = 'waiting'; // default view: only what actually needs the client's attention
 let feedbackTaskId = '';
 let busyTaskId = null;
 let editingTextTaskId = '';
