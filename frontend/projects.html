@@ -36,72 +36,82 @@
       <div class="proj-mmid" id="editMmid" title="ID проекта в Mattermost">MM ID: <code id="editMmidValue"></code></div>
     </div>
 
-    <label class="field-label" for="editLogoUrl">Ссылка на лого клиента (для кабинета)</label>
-    <input id="editLogoUrl" class="field-input" type="text" placeholder="https://disk.kontentferma.../s/.../download или другая прямая ссылка на картинку">
-    <div id="editLogoPreview" class="logo-preview" hidden>
-      <img id="editLogoPreviewImg" alt="">
-      <span>Так будет выглядеть лого в кабинете клиента</span>
+    <div class="edit-tabs">
+      <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
+      <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
     </div>
 
-    <div class="cred-intro">
-      Параметры проекта — менеджер, отчётная дата, объём, время публикации и промты для генерации контента.
-    </div>
-    <div class="proj-fields">
-      <div class="proj-field-row">
-        <div>
-          <label class="field-label" for="editStartDate">Отчётная дата проекта (дата старта)</label>
-          <input id="editStartDate" class="field-input" type="date">
-        </div>
-        <div>
-          <label class="field-label" for="editProjectManager">Менеджер проекта</label>
-          <input id="editProjectManager" class="field-input" type="text" placeholder="Имя, фамилия">
-        </div>
-        <div>
-          <label class="field-label" for="editPostsPerMonth">Количество постов в месяц</label>
-          <input id="editPostsPerMonth" class="field-input" type="number" min="0" step="1" inputmode="numeric" placeholder="Например, 12">
-        </div>
-        <div>
-          <label class="field-label" for="editPublishTimeMsk">Время публикации (МСК)</label>
-          <input id="editPublishTimeMsk" class="field-input" type="time" placeholder="10:00">
+    <div class="edit-panel" id="editTabSettings">
+
+      <label class="field-label" for="editLogoUrl">Ссылка на лого клиента (для кабинета)</label>
+      <input id="editLogoUrl" class="field-input" type="text" placeholder="https://disk.kontentferma.../s/.../download или другая прямая ссылка на картинку">
+      <div id="editLogoPreview" class="logo-preview" hidden>
+        <img id="editLogoPreviewImg" alt="">
+        <span>Так будет выглядеть лого в кабинете клиента</span>
+      </div>
+
+      <div class="cred-intro">
+        Параметры проекта — менеджер, отчётная дата, объём и время публикации.
+      </div>
+      <div class="proj-fields">
+        <div class="proj-field-row">
+          <div>
+            <label class="field-label" for="editStartDate">Отчётная дата проекта (дата старта)</label>
+            <input id="editStartDate" class="field-input" type="date">
+          </div>
+          <div>
+            <label class="field-label" for="editProjectManager">Менеджер проекта</label>
+            <input id="editProjectManager" class="field-input" type="text" placeholder="Имя, фамилия">
+          </div>
+          <div>
+            <label class="field-label" for="editPostsPerMonth">Количество постов в месяц</label>
+            <input id="editPostsPerMonth" class="field-input" type="number" min="0" step="1" inputmode="numeric" placeholder="Например, 12">
+          </div>
+          <div>
+            <label class="field-label" for="editPublishTimeMsk">Время публикации (МСК)</label>
+            <input id="editPublishTimeMsk" class="field-input" type="time" placeholder="10:00">
+          </div>
         </div>
       </div>
-      <div class="ai-prompts">
-        <div class="ai-prompts-title">Промты для ИИ</div>
-        <label class="field-label" for="editStrategyPrompt">Стратегический промт</label>
-        <textarea id="editStrategyPrompt" class="field-textarea" rows="4" placeholder="Стратегия продвижения проекта…"></textarea>
-        <label class="field-label" for="editPlanningPrompt">Промт для планирования постов на месяц</label>
-        <textarea id="editPlanningPrompt" class="field-textarea" rows="4" placeholder="Как планировать посты на месяц…"></textarea>
-        <label class="field-label" for="editPostPrompt">Промт для постов</label>
-        <textarea id="editPostPrompt" class="field-textarea" rows="4" placeholder="Как писать тексты постов…"></textarea>
-        <label class="field-label" for="editImagePrompt">Промт для генерации картинок</label>
-        <textarea id="editImagePrompt" class="field-textarea" rows="4" placeholder="Как генерировать изображения…"></textarea>
+
+      <div class="cred-intro">
+        Данные ниже нужны только будущей автоматизации публикаций — само приложение их не использует. Формат — на ваше усмотрение (JSON-объект), главное чтобы совпадал с тем, что настроит разработчик автоматизации.
       </div>
+      <div class="cred-networks">
+        <div class="cred-net" data-net="ig">
+          <label><i class="net-dot" style="background:#C13584"></i>Instagram (IG)</label>
+          <textarea data-net-field="ig" rows="3" placeholder="{}"></textarea>
+        </div>
+        <div class="cred-net" data-net="tg">
+          <label><i class="net-dot" style="background:#229ED9"></i>Telegram (TG)</label>
+          <textarea data-net-field="tg" rows="3" placeholder='{"botToken": "...", "chatId": "..."}'></textarea>
+        </div>
+        <div class="cred-net" data-net="vk">
+          <label><i class="net-dot" style="background:#0077FF"></i>ВКонтакте (VK)</label>
+          <textarea data-net-field="vk" rows="3" placeholder="{}"></textarea>
+        </div>
+        <div class="cred-net" data-net="ok">
+          <label><i class="net-dot" style="background:#EE8208"></i>Одноклассники (OK)</label>
+          <textarea data-net-field="ok" rows="3" placeholder="{}"></textarea>
+        </div>
+        <div class="cred-net" data-net="max">
+          <label><i class="net-dot" style="background:#7C3AED"></i>MAX</label>
+          <textarea data-net-field="max" rows="3" placeholder="{}"></textarea>
+        </div>
+      </div>
+
     </div>
 
-    <div class="cred-intro">
-      Данные ниже нужны только будущей автоматизации публикаций — само приложение их не использует. Формат — на ваше усмотрение (JSON-объект), главное чтобы совпадал с тем, что настроит разработчик автоматизации.
-    </div>
-    <div class="cred-networks">
-      <div class="cred-net" data-net="ig">
-        <label><i class="net-dot" style="background:#C13584"></i>Instagram (IG)</label>
-        <textarea data-net-field="ig" rows="3" placeholder="{}"></textarea>
-      </div>
-      <div class="cred-net" data-net="tg">
-        <label><i class="net-dot" style="background:#229ED9"></i>Telegram (TG)</label>
-        <textarea data-net-field="tg" rows="3" placeholder='{"botToken": "...", "chatId": "..."}'></textarea>
-      </div>
-      <div class="cred-net" data-net="vk">
-        <label><i class="net-dot" style="background:#0077FF"></i>ВКонтакте (VK)</label>
-        <textarea data-net-field="vk" rows="3" placeholder="{}"></textarea>
-      </div>
-      <div class="cred-net" data-net="ok">
-        <label><i class="net-dot" style="background:#EE8208"></i>Одноклассники (OK)</label>
-        <textarea data-net-field="ok" rows="3" placeholder="{}"></textarea>
-      </div>
-      <div class="cred-net" data-net="max">
-        <label><i class="net-dot" style="background:#7C3AED"></i>MAX</label>
-        <textarea data-net-field="max" rows="3" placeholder="{}"></textarea>
-      </div>
+    <div class="edit-panel ai" id="editTabAi" hidden>
+      <div class="ai-prompts-title">Промты для ИИ</div>
+      <label class="field-label" for="editStrategyPrompt">Стратегический промт</label>
+      <textarea id="editStrategyPrompt" class="field-textarea" rows="4" placeholder="Стратегия продвижения проекта…"></textarea>
+      <label class="field-label" for="editPlanningPrompt">Промт для планирования постов на месяц</label>
+      <textarea id="editPlanningPrompt" class="field-textarea" rows="4" placeholder="Как планировать посты на месяц…"></textarea>
+      <label class="field-label" for="editPostPrompt">Промт для постов</label>
+      <textarea id="editPostPrompt" class="field-textarea" rows="4" placeholder="Как писать тексты постов…"></textarea>
+      <label class="field-label" for="editImagePrompt">Промт для генерации картинок</label>
+      <textarea id="editImagePrompt" class="field-textarea" rows="4" placeholder="Как генерировать изображения…"></textarea>
     </div>
 
     <div id="editError" class="error-box" hidden></div>

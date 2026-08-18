@@ -206,6 +206,7 @@ async function openEdit(projectId, label) {
   document.getElementById('editPlanningPrompt').value = '';
   document.getElementById('editPostPrompt').value = '';
   document.getElementById('editImagePrompt').value = '';
+  switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
   try {
@@ -231,6 +232,14 @@ async function openEdit(projectId, label) {
   } catch (err) {
     toast('Не удалось загрузить настройки: ' + err.message);
   }
+}
+
+function switchEditTab(name) {
+  document.querySelectorAll('.edit-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  document.getElementById('editTabSettings').hidden = name !== 'settings';
+  document.getElementById('editTabAi').hidden = name !== 'ai';
 }
 
 function closeEdit() {
@@ -305,5 +314,8 @@ document.getElementById('editMmid').addEventListener('click', async () => {
 document.getElementById('editLogoUrl').addEventListener('input', updateLogoPreview);
 document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
 document.querySelector('[data-action="save-edit"]').addEventListener('click', saveEdit);
+document.querySelectorAll('.edit-tab').forEach((b) => {
+  b.addEventListener('click', () => switchEditTab(b.dataset.tab));
+});
 
 load();
