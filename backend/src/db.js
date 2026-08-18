@@ -54,6 +54,8 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS start_date text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS posts_per_month text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS publish_time_msk text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS project_manager text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS strategy_prompt text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS planning_prompt text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS post_prompt text NOT NULL DEFAULT '',

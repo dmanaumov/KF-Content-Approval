@@ -3,10 +3,10 @@
 // link to open the project directly in Mattermost, a "regenerate" button for
 // when a link may have leaked, and a "Редактировать" popup for the client's
 // logo URL, per-network publishing credentials, and the planning/profile
-// fields (report start date, posts per month, strategy/planning/post/image
-// prompts) — also in projectSettings.js, Postgres-backed, meant to be read
-// directly by the future n8n publishing automation). No build step, same
-// approach as app.js.
+// fields (report start date, project manager, posts per month, MSK publish
+// time, strategy/planning/post/image prompts) — also in projectSettings.js,
+// Postgres-backed, meant to be read directly by the future publishing
+// automation. No build step, same approach as app.js.
 //
 // Deliberately does NOT take a board id from this page's own URL (unlike
 // app.js's /p/{boardId} handling) — the backend already knows the one board
@@ -199,7 +199,9 @@ async function openEdit(projectId, label) {
   document.getElementById('editLogoPreview').hidden = true;
   credTextareas().forEach((ta) => { ta.value = ''; });
   document.getElementById('editStartDate').value = '';
+  document.getElementById('editProjectManager').value = '';
   document.getElementById('editPostsPerMonth').value = '';
+  document.getElementById('editPublishTimeMsk').value = '';
   document.getElementById('editStrategyPrompt').value = '';
   document.getElementById('editPlanningPrompt').value = '';
   document.getElementById('editPostPrompt').value = '';
@@ -213,7 +215,9 @@ async function openEdit(projectId, label) {
     document.getElementById('editLogoUrl').value = data.logoUrl || '';
     updateLogoPreview();
     document.getElementById('editStartDate').value = data.startDate || '';
+    document.getElementById('editProjectManager').value = data.projectManager || '';
     document.getElementById('editPostsPerMonth').value = data.postsPerMonth || '';
+    document.getElementById('editPublishTimeMsk').value = data.publishTimeMsk || '';
     document.getElementById('editStrategyPrompt').value = data.strategyPrompt || '';
     document.getElementById('editPlanningPrompt').value = data.planningPrompt || '';
     document.getElementById('editPostPrompt').value = data.postPrompt || '';
@@ -267,7 +271,9 @@ async function saveEdit() {
         logoUrl,
         socialCredentials,
         startDate: document.getElementById('editStartDate').value,
+        projectManager: document.getElementById('editProjectManager').value.trim(),
         postsPerMonth: document.getElementById('editPostsPerMonth').value.trim(),
+        publishTimeMsk: document.getElementById('editPublishTimeMsk').value,
         strategyPrompt: document.getElementById('editStrategyPrompt').value,
         planningPrompt: document.getElementById('editPlanningPrompt').value,
         postPrompt: document.getElementById('editPostPrompt').value,

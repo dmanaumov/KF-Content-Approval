@@ -243,11 +243,11 @@ app.post('/api/projects/:projectId/regenerate-link', staffAuth, async (req, res)
 });
 
 // GET /api/projects/:projectId/settings — logo URL + per-network publishing
-// credentials + planning/profile fields (start date, posts per month, the
-// strategy/planning/post/image prompts), for the staff "Редактировать"
-// popup (frontend/projects.js). Returned as-is (not masked) — this is
-// already the staff-only page (see staffAuth above); the popup needs to show
-// existing values to edit them.
+// credentials + planning/profile fields (start date, project manager, posts
+// per month, MSK publish time, the strategy/planning/post/image prompts),
+// for the staff "Редактировать" popup (frontend/projects.js). Returned
+// as-is (not masked) — this is already the staff-only page (see staffAuth
+// above); the popup needs to show existing values to edit them.
 app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
@@ -263,11 +263,10 @@ app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
 // PUT /api/projects/:projectId/settings — saves logo URL, social
 // credentials, and the planning/profile fields from the edit popup. Body:
 // { logoUrl: string, socialCredentials: { ig?, tg?, vk?, ok?, max? },
-//   startDate?, postsPerMonth?, strategyPrompt?, planningPrompt?,
-//   postPrompt?, imagePrompt? } — each network's value is a free-form JSON
-// object; this app never reads any of it, it's stored purely so the n8n
-// publishing automation can read it directly from Postgres (see
-// docs/N8N_AUTOMATION.md).
+//   startDate?, postsPerMonth?, publishTimeMsk?, projectManager?,
+//   strategyPrompt?, planningPrompt?, postPrompt?, imagePrompt? } — each network's value is a
+// free-form JSON object; this app never reads any of it, it's stored purely
+// so the publishing automation can read it directly from Postgres.
 app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;

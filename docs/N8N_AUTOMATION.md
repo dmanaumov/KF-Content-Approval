@@ -27,6 +27,8 @@ n8n** — там помечено, что взято прямо из вашей 
      скажете, в соответствующее поле попапа (это обычный textarea с JSON);
    - `start_date` — отчётная дата проекта (дата старта), `YYYY-MM-DD`;
    - `posts_per_month` — количество постов в месяц (число строкой);
+   - `publish_time_msk` — время публикации (МСК), строка `HH:MM`;
+   - `project_manager` — менеджер проекта (текст);
    - `strategy_prompt` / `planning_prompt` / `post_prompt` / `image_prompt` —
      промты для генерации контента (стратегия, план на месяц, тексты постов,
      картинки), текстовые строки.
@@ -75,7 +77,9 @@ CREATE TABLE project_settings (
   social_credentials jsonb,          -- {"ig": {...}, "tg": {...}, "vk": {...}, "ok": {...}, "max": {...}}
   start_date text,                   -- отчётная дата проекта (дата старта), "YYYY-MM-DD" или пусто
   posts_per_month text,              -- количество постов в месяц (число строкой) или пусто
-  strategy_prompt text,              -- стратегический промт
+publish_time_msk text,             -- время публикации (МСК), "HH:MM" или пусто
+  project_manager text,             -- менеджер проекта
+  strategy_prompt text,             -- стратегический промт
   planning_prompt text,              -- промт для планирования постов на месяц
   post_prompt text,                  -- промт для постов
   image_prompt text,                 -- промт для генерации картинок

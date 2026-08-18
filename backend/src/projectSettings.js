@@ -2,13 +2,14 @@
 // (token), the client's logo URL (shown in the cabinet header — see
 // resolveLinkToken()/applyBranding() in app.js — instead of the generic
 // letter avatar), per-social-network publishing credentials (a plain JSON
-// blob per network, meant to be read directly by the n8n publishing
-// automation via its own Postgres connection — this app itself never reads
+// blob per network, meant to be read directly by the publishing automation
+// via its own Postgres connection — this app itself never reads
 // social_credentials, only stores/returns it for the staff edit popup), and
 // the project's planning/profile metadata for that automation: report start
-// date, posts per month, and the strategy/planning/post/image prompts.
-// Like the credentials, the prompts are stored for n8n to read directly;
-// this app only persists/returns them for the staff edit popup.
+// date, posts per month, preferred MSK publish time, project manager, and
+// the strategy/planning/post/image prompts. Like the credentials, these are
+// stored for the automation to read directly; this app only persists/returns
+// them for the staff edit popup.
 //
 // Replaces the earlier flat-JSON-file link store (linkTokens.js) — that was
 // fine while a link token was the only thing worth persisting, but real
@@ -101,7 +102,8 @@ async function getSettings(boardId, projectId) {
   const pool = db.requirePool();
   const { rows } = await pool.query(
     `SELECT logo_url, social_credentials, start_date, posts_per_month,
-            strategy_prompt, planning_prompt, post_prompt, image_prompt
+            publish_time_msk, project_manager, strategy_prompt, planning_prompt,
+            post_prompt, image_prompt
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -111,6 +113,8 @@ async function getSettings(boardId, projectId) {
     socialCredentials: row.social_credentials || {},
     startDate: row.start_date || '',
     postsPerMonth: row.posts_per_month || '',
+    publishTimeMsk: row.publish_time_msk || '',
+    projectManager: row.project_manager || '',
     strategyPrompt: row.strategy_prompt || '',
     planningPrompt: row.planning_prompt || '',
     postPrompt: row.post_prompt || '',
@@ -130,7 +134,7 @@ function textOrEmpty(value) {
 
 async function updateSettings(boardId, projectId, {
   logoUrl, socialCredentials,
-  startDate, postsPerMonth,
+  startDate, postsPerMonth, publishTimeMsk, projectManager,
   strategyPrompt, planningPrompt, postPrompt, imagePrompt,
 }) {
   if (typeof logoUrl !== 'string') {
@@ -152,15 +156,18 @@ async function updateSettings(boardId, projectId, {
          social_credentials = $4::jsonb,
          start_date = $5,
          posts_per_month = $6,
-         strategy_prompt = $7,
-         planning_prompt = $8,
-         post_prompt = $9,
-         image_prompt = $10,
+         publish_time_msk = $7,
+         project_manager = $8,
+         strategy_prompt = $9,
+         planning_prompt = $10,
+         post_prompt = $11,
+         image_prompt = $12,
          updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
     [
       boardId, projectId, logoUrl, JSON.stringify(socialCredentials),
-      textOrEmpty(startDate), textOrEmpty(postsPerMonth),
+      textOrEmpty(startDate), textOrEmpty(postsPerMonth), textOrEmpty(publishTimeMsk),
+      textOrEmpty(projectManager),
       textOrEmpty(strategyPrompt), textOrEmpty(planningPrompt),
       textOrEmpty(postPrompt), textOrEmpty(imagePrompt),
     ]
