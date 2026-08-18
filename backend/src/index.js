@@ -214,8 +214,8 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // created lazily on first read, so every project already has a
         // working link (and, once set, a logo) the first time this list
         // loads.
-        const { token, logoUrl } = await projectSettings.getTokenAndLogo(boardId, o.id);
-        return { id: o.id, label: o.value, token, logoUrl };
+        const { token, logoUrl, aiStatus } = await projectSettings.getTokenAndLogo(boardId, o.id);
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus };
       })
     );
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });

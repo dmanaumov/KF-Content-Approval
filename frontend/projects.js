@@ -67,6 +67,8 @@ let options = [];
 let busyProjectId = null;
 
 function render(filterText) {
+  // TODO (когда проектов станет >20): разделить ИИ-проекты и обычные через
+  // закладки/фильтры — сейчас они вперемешку в одном списке.
   const needle = (filterText || '').trim().toLowerCase();
   const visible = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
   document.getElementById('list').innerHTML =
@@ -78,7 +80,11 @@ function render(filterText) {
         const logo = o.logoUrl
           ? `<img src="${esc(o.logoUrl)}" alt="">`
           : `<span class="proj-logo-fallback">${esc(initial)}</span>`;
-        return `<div class="proj-card">
+        const aiClass = o.aiStatus === 'ai' ? ' ai' : o.aiStatus === 'partial' ? ' attention' : '';
+        const avatar = o.aiStatus === 'ai' || o.aiStatus === 'partial'
+          ? `<img class="proj-ai-avatar" src="/ai-avatar.png" alt="ИИ" title="${o.aiStatus === 'ai' ? 'Промты ИИ заполнены полностью' : 'Заполнены не все промты ИИ'}">`
+          : '';
+        return `<div class="proj-card${aiClass}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}</div>
             <div class="proj-info">
@@ -89,6 +95,7 @@ function render(filterText) {
               </div>
             </div>
             <div class="proj-actions-col">
+              ${avatar}
               <button class="icon-btn proj-copy" type="button" data-tip="Скопировать — ссылка для клиента с приглашением" data-link="${esc(link)}" data-label="${esc(o.label)}" aria-label="Скопировать ссылку с приглашением">
                 <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
@@ -294,6 +301,12 @@ async function saveEdit() {
     // Reflect the new logo in the list immediately, without a full reload.
     const opt = options.find((o) => o.id === editingProjectId);
     if (opt) opt.logoUrl = data.logoUrl || '';
+    if (opt) {
+      const filled = ['editStrategyPrompt', 'editPlanningPrompt', 'editPostPrompt', 'editImagePrompt']
+        .map((id) => document.getElementById(id).value.trim())
+        .filter(Boolean).length;
+      opt.aiStatus = filled === 4 ? 'ai' : filled > 0 ? 'partial' : 'none';
+    }
     toast('Настройки сохранены');
     closeEdit();
     render(document.getElementById('search').value);

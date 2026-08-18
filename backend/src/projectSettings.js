@@ -57,16 +57,34 @@ async function getToken(boardId, projectId) {
 
 // Token + logo URL in one go — used by the staff project-list page, which
 // needs both per project and would otherwise call ensureRow() twice (once
-// via getToken, once via getSettings) for every row.
+// via getToken, once via getSettings) for every row. Also returns aiStatus —
+// whether the project is "AI" based on the four generation prompts (see
+// aiStatusOf() below), which the staff list renders as a highlight + avatar.
 async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    'SELECT link_token, logo_url FROM project_settings WHERE board_id = $1 AND project_id = $2',
+    `SELECT link_token, logo_url, strategy_prompt, planning_prompt, post_prompt,
+            image_prompt
+     FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
-  const row = rows[0] || { link_token: '', logo_url: '' };
-  return { token: row.link_token, logoUrl: row.logo_url || '' };
+  const row = rows[0] || {};
+  return {
+    token: row.link_token || '',
+    logoUrl: row.logo_url || '',
+    aiStatus: aiStatusOf(row),
+  };
+}
+
+// How "AI" a project is, purely from whether the four generation prompts are
+// filled in: all four non-empty = 'ai', at least one but not all = 'partial'
+// (needs attention), none = 'none' (a regular project). Kept in sync with
+// frontend/projects.js's own re-classification on save.
+function aiStatusOf(row) {
+  const filled = ['strategy_prompt', 'planning_prompt', 'post_prompt', 'image_prompt']
+    .filter((k) => String(row[k] || '').trim()).length;
+  return filled === 4 ? 'ai' : filled > 0 ? 'partial' : 'none';
 }
 
 // Generates and stores a brand new token, overwriting (invalidating)

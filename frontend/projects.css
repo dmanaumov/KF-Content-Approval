@@ -5,6 +5,12 @@
 .proj-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .proj-list{display:grid;gap:12px}
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
+/* AI-project cards: full AI (all four prompts filled) gets the AI accent —
+   20% tinted fill + purple frame; partially-configured projects get the
+   same avatar but an orange "needs attention" frame instead. */
+.proj-card.ai{background:rgba(155,90,246,.20);border-color:var(--ai);box-shadow:0 0 0 1px var(--ai) inset,0 10px 24px rgba(155,90,246,.16)}
+.proj-card.attention{background:rgba(238,130,8,.12);border-color:#EE8208;box-shadow:0 0 0 1px #EE8208 inset}
+.proj-ai-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;margin-bottom:2px;box-shadow:0 0 0 2px #fff,0 3px 10px rgba(155,90,246,.5),inset 0 -6px 9px rgba(0,0,0,.35),inset 0 5px 8px rgba(255,255,255,.10)}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
 .proj-logo{flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
 .proj-logo img{width:100%;height:100%;object-fit:contain}
