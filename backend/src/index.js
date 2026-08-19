@@ -441,7 +441,7 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   // of reporting false success back to the client.
   if (updated.status !== statusKey) {
     throw new Error(
-      `Mattermost принял запрос на изменение статуса (PATCH вернул успех), но после повторного чтения ` +
+      `Производственная система КонтетФермы приняла запрос на изменение статуса (PATCH вернул успех), но после повторного чтения ` +
         `карточки ${taskId} статус остался "${updated.statusLabel || '(нет)'}", а не "${targetLabel}". ` +
         `Похоже, PATCH на этом сервере не применяется по факту — либо аккаунт, от имени которого идёт ` +
         `запрос (см. MATTERMOST_LOGIN_ID/MATTERMOST_TOKEN), не имеет прав редактировать эту карточку/борд, ` +

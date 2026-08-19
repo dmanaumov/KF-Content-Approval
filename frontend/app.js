@@ -1012,7 +1012,12 @@ async function init() {
   }
   if (!boardId) {
     document.getElementById('loading').hidden = true;
-    document.getElementById('stack').innerHTML = '<div class="error-box">Ссылка неполная: не указан ID проекта Mattermost.</div>';
+    document.getElementById('stack').innerHTML = `
+      <div class="not-found">
+        <img class="not-found-img" src="/not-found.png" alt="">
+        <div class="not-found-title">Упс, ссылка неполная</div>
+        <div class="not-found-sub">Мы не смогли определить проект. Свяжитесь с вашим менеджером — он пришлёт актуальную ссылку.</div>
+      </div>`;
     return;
   }
   applyBranding();

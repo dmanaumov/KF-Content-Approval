@@ -73,6 +73,12 @@ button{cursor:pointer}
 .team-coming-mascot{width:132px;height:132px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 4px #fff,0 6px 20px rgba(155,90,246,.4)}
 .team-coming-title{font-weight:850;font-size:18px;margin-top:6px}
 .team-coming-sub{font-size:13px;color:var(--muted);line-height:1.5}
+/* Client cabinet "bad link" state — no project id in the URL (app.js): the
+   404 mascot + a "contact your manager" note instead of a raw error. */
+.not-found{display:grid;justify-items:center;gap:8px;text-align:center;background:#fff;border:1px solid var(--line);border-radius:24px;padding:36px 22px;box-shadow:0 8px 24px rgba(16,45,42,.04)}
+.not-found-img{width:230px;max-width:72%;height:auto;border-radius:18px;object-fit:contain}
+.not-found-title{font-weight:850;font-size:17px;margin-top:8px}
+.not-found-sub{font-size:13px;color:var(--muted);line-height:1.5;max-width:340px}
 .card{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(16,45,42,.035)}
 .card.pending-action{opacity:.6;pointer-events:none}
 .card.urgent{border-color:var(--urgent);box-shadow:0 0 0 2px var(--urgent),0 10px 26px rgba(255,95,96,.28);background:#FFF5F4}
