@@ -668,11 +668,12 @@ function resetSwipe() {
 function finishSwipe() {
   const { card, dx } = swipe;
   swipe = null;
+  const wrap = swipeWrapOf(card);
   if (Math.abs(dx) < SWIPE_THRESHOLD) {
     card.classList.remove('swiping');
     card.style.transform = '';
-    swipeWrapOf(card).classList.remove('swiping', 'swipe-right', 'swipe-left');
-    swipeWrapOf(card).querySelectorAll('.swipe-zone').forEach((z) => { z.style.opacity = ''; });
+    wrap.classList.remove('swiping', 'swipe-right', 'swipe-left');
+    wrap.querySelectorAll('.swipe-zone').forEach((z) => { z.style.opacity = ''; });
     return;
   }
   const dir = dx > 0 ? 'right' : 'left';
@@ -680,6 +681,8 @@ function finishSwipe() {
   card.classList.remove('swiping');
   card.classList.add('flying', dir);
   card.style.transform = `translateX(${dir === 'right' ? '130%' : '-130%'}) rotate(${dir === 'right' ? 14 : -14}deg)`;
+  wrap.classList.remove('swiping', 'swipe-right', 'swipe-left');
+  wrap.querySelectorAll('.swipe-zone').forEach((z) => { z.style.opacity = ''; });
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 150);
   setTimeout(() => {
@@ -688,46 +691,114 @@ function finishSwipe() {
   }, 240);
 }
 
-document.getElementById('stack').addEventListener('pointerdown', (e) => {
-  if (swipe || busyTaskId) return;
-  if (e.pointerType === 'mouse' && e.button !== 0) return;
-  const card = e.target.closest('.card.swipeable');
-  if (!card) return;
-  if (e.target.closest('button, a, input, textarea, select')) return;
-  if (!swipeWrapOf(card)) return;
+function tryStartSwipe(card, x, y) {
+  if (swipe || busyTaskId) return false;
+  if (!card || !swipeWrapOf(card)) return false;
   swipe = {
     card, wrap: swipeWrapOf(card),
-    startX: e.clientX, startY: e.clientY,
+    startX: x, startY: y,
     dx: 0, dy: 0, locked: false,
+    touchId: null, ptPointerId: null,
   };
-});
+  return true;
+}
 
-document.getElementById('stack').addEventListener('pointermove', (e) => {
-  if (!swipe) return;
-  const dx = e.clientX - swipe.startX;
-  const dy = e.clientY - swipe.startY;
+// Returns true when the gesture is being handled (caller may preventDefault
+// so the browser doesn't steal the drag into a scroll); false when it should
+// be left to the browser (tiny move or clear vertical intent).
+function moveSwipe(x, y) {
+  if (!swipe) return false;
+  swipe.dx = x - swipe.startX;
+  swipe.dy = y - swipe.startY;
   if (!swipe.locked) {
-    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-    if (Math.abs(dy) > Math.abs(dx) * 1.2) { swipe = null; return; } // vertical intent → let the page scroll
+    if (Math.abs(swipe.dx) < 8 && Math.abs(swipe.dy) < 8) return false;
+    if (Math.abs(swipe.dy) > Math.abs(swipe.dx) * 1.6 && Math.abs(swipe.dy) > 14) { swipe = null; return false; }
     swipe.locked = true;
-    swipe.card.setPointerCapture(e.pointerId);
     swipe.card.classList.add('swiping');
     swipe.wrap.classList.add('swiping');
   }
-  applySwipe(dx);
-});
+  applySwipe(swipe.dx);
+  return true;
+}
 
-document.getElementById('stack').addEventListener('pointerup', (e) => {
+function endSwipe() {
   if (!swipe) return;
   if (!swipe.locked) { swipe = null; return; }
-  finishSwipe();
-});
+  finishSwipe(); // clears swipe
+}
 
-document.getElementById('stack').addEventListener('pointercancel', (e) => {
+function cancelSwipe() {
   if (!swipe) return;
-  if (swipe.locked) { resetSwipe(); }
+  // The browser stole the gesture (vertical scroll, edge-back,
+  // pull-to-refresh). If the card was already dragged past the threshold,
+  // still commit the swipe instead of silently snapping back — otherwise a
+  // good swipe dies at the last moment. Below the threshold → clean reset.
+  if (swipe.locked) {
+    if (Math.abs(swipe.dx) >= SWIPE_THRESHOLD) finishSwipe();
+    else resetSwipe();
+  }
   swipe = null;
+}
+
+// Touch (iPhone etc.): legacy touch events with preventDefault() in
+// touchmove — unlike pointer events, this reliably stops iOS Safari from
+// stealing the drag into a scroll once horizontal intent is confirmed.
+// touch-action stays pan-y so vertical page scrolling over cards still works.
+const stackEl = document.getElementById('stack');
+stackEl.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  const card = t.target.closest('.card.swipeable');
+  if (!card) return;
+  if (t.target.closest('button, a, input, textarea, select')) return;
+  if (!tryStartSwipe(card, t.clientX, t.clientY)) return;
+  swipe.touchId = t.identifier;
+}, { passive: true });
+stackEl.addEventListener('touchmove', (e) => {
+  if (!swipe || swipe.touchId == null) return;
+  let t = null;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === swipe.touchId) { t = e.changedTouches[i]; break; }
+  }
+  if (!t) return;
+  if (moveSwipe(t.clientX, t.clientY) && e.cancelable) e.preventDefault();
+}, { passive: false });
+stackEl.addEventListener('touchend', (e) => {
+  if (!swipe || swipe.touchId == null) return;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === swipe.touchId) {
+      swipe.touchId = null;
+      endSwipe();
+      return;
+    }
+  }
+}, { passive: true });
+stackEl.addEventListener('touchcancel', (e) => {
+  if (!swipe || swipe.touchId == null) return;
+  swipe.touchId = null;
+  cancelSwipe();
+}, { passive: true });
+
+// Mouse/trackpad: pointer events. Touch pointer events are ignored here —
+// the touch handlers above own the gesture on touch devices.
+stackEl.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') return;
+  if (e.button !== 0) return;
+  const card = e.target.closest('.card.swipeable');
+  if (!card) return;
+  if (e.target.closest('button, a, input, textarea, select')) return;
+  if (!tryStartSwipe(card, e.clientX, e.clientY)) return;
+  swipe.ptPointerId = e.pointerId;
 });
+stackEl.addEventListener('pointermove', (e) => {
+  if (!swipe || swipe.ptPointerId == null || swipe.ptPointerId !== e.pointerId) return;
+  if (moveSwipe(e.clientX, e.clientY)) {
+    if (e.cancelable) e.preventDefault();
+    try { swipe.card.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+});
+stackEl.addEventListener('pointerup', endSwipe);
+stackEl.addEventListener('pointercancel', cancelSwipe);
 
 document.getElementById('stack').addEventListener('click', (e) => {
   if (suppressClick) return;

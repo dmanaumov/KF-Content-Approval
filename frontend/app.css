@@ -14,7 +14,7 @@
 }
 *{box-sizing:border-box}
 [hidden]{display:none !important}
-html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overscroll-behavior-x:none}
 body{min-height:100vh}
 button,textarea{font:inherit}
 button{cursor:pointer}
@@ -91,9 +91,11 @@ button{cursor:pointer}
 .swipe-zone.right{background:linear-gradient(90deg,#2E9E4F,#58B972);justify-content:flex-start;padding-left:24px}
 .swipe-zone.left{background:linear-gradient(90deg,#D04848,#E27A6A);justify-content:flex-end;padding-right:24px}
 .swipe-zone span{display:flex;align-items:center;gap:8px;text-shadow:0 1px 2px rgba(0,0,0,.18)}
-.swipe-wrap.swiping .swipe-zone{transition:opacity .08s linear}
+.swipe-zone{transition:opacity .18s ease-out}
+.swipe-wrap.swiping .swipe-zone{transition:none}
 .card.swipeable{position:relative;z-index:1;touch-action:pan-y;cursor:grab}
-.card.swipeable.swiping{cursor:grabbing;user-select:none;-webkit-user-select:none;transition:none;animation:none}
+.card.swipeable.swiping{cursor:grabbing;user-select:none;-webkit-user-select:none;transition:none;animation:none;will-change:transform}
+.swipe-wrap:not(.swiping) .card.swipeable{transition:transform .25s ease-out}
 .swipe-wrap.swipe-right .card{border-color:#2E9E4F;box-shadow:0 0 0 2px #2E9E4F}
 .swipe-wrap.swipe-left .card{border-color:#D04848;box-shadow:0 0 0 2px #D04848}
 .card.flying{transition:transform .22s ease-in;z-index:2}
