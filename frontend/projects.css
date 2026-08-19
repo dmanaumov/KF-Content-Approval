@@ -13,7 +13,18 @@
 .proj-ai-avatar-wrap{position:relative;display:inline-flex;margin-bottom:2px}
 .proj-ai-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px #fff,0 3px 10px rgba(155,90,246,.5),inset 0 -6px 9px rgba(0,0,0,.35),inset 0 5px 8px rgba(255,255,255,.10)}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
-.proj-logo{flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
+.proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
+/* Traffic-light "в графике" dot — corner of the client logo. Only rendered
+   when the project has a posts-per-month KPI set (backend/src/index.js's
+   computeScheduleStatus); no dot at all otherwise, so projects that don't
+   use this feature look exactly as before (see chat: "если не указано — не
+   показываем"). Colors are reused, not invented: green matches
+   .status.approved's tone, gold is the same one the calendar already uses
+   for "waiting" (.cal-dot.waiting), red is the app-wide --urgent. */
+.proj-kpi-dot{position:absolute;bottom:-2px;right:-2px;width:13px;height:13px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.proj-kpi-dot.ontrack{background:#216A39}
+.proj-kpi-dot.minor{background:#F5C518}
+.proj-kpi-dot.off{background:var(--urgent)}
 .proj-logo img{width:100%;height:100%;object-fit:contain}
 .proj-logo-fallback{font-weight:800;font-size:18px;color:#fff}
 .proj-info{flex:1;min-width:0;display:grid;gap:9px;align-content:center}
@@ -72,10 +83,25 @@
   .proj-ai-avatar-wrap:hover::after,
   .proj-ai-avatar-wrap:focus::after{opacity:1}
 }
+/* KPI summary banner above the search box — reuses app.css's .attention
+   component (same one the client cabinet uses), two new color modifiers:
+   .off (burning — same red as an urgent post) and .minor (amber, same gold
+   as the calendar's "waiting" dot). Only rendered at all when at least one
+   project needs a look — see renderKpiBanner() in projects.js. */
+.attention.off{background:#FFF3F2;border-color:var(--urgent)}
+.attention.minor{background:#FFFAE0;border-color:#F5C518}
+/* Row-level (not container-level) tier color — a banner can show both an
+   "off" row and a "minor" row at once (the container's own off/minor class
+   above just picks the stronger background/border), so each row's own text
+   color has to come from its own tier, not the container's. */
+.row-off .attention-link{color:#E0484A}
+.row-minor .attention-link{color:#8A6D00}
+
 @media(max-width:430px){
   .proj-row-label{min-width:100%}
   .proj-logo{width:44px}
   .proj-logo-fallback{font-size:15px}
+  .proj-kpi-dot{width:11px;height:11px}
 }
 
 /* "Редактировать" popup — logo URL + per-network credentials. Reuses

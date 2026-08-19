@@ -59,13 +59,16 @@ async function getToken(boardId, projectId) {
 // needs both per project and would otherwise call ensureRow() twice (once
 // via getToken, once via getSettings) for every row. Also returns aiStatus —
 // whether the project is "AI" based on the four generation prompts (see
-// aiStatusOf() below), which the staff list renders as a highlight + avatar.
+// aiStatusOf() below), which the staff list renders as a highlight + avatar —
+// and postsPerMonth (the KPI target, reused as-is from the planning tab; see
+// computeScheduleStatus() in index.js for how it turns into a green/amber/red
+// "в графике" indicator).
 async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `SELECT link_token, logo_url, strategy_prompt, planning_prompt, post_prompt,
-            image_prompt
+    `SELECT link_token, logo_url, posts_per_month, strategy_prompt, planning_prompt,
+            post_prompt, image_prompt
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -74,6 +77,7 @@ async function getTokenAndLogo(boardId, projectId) {
     token: row.link_token || '',
     logoUrl: row.logo_url || '',
     aiStatus: aiStatusOf(row),
+    postsPerMonth: row.posts_per_month || '',
   };
 }
 

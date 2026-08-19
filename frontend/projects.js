@@ -14,6 +14,15 @@
 // configurable (config.staffProjectsPath) specifically so nothing
 // identifying has to sit in a URL someone might screenshot/bookmark/share.
 
+// Russian plural: plural(1,'проект','проекта','проектов') → "проект" etc.
+function plural(n, one, few, many) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+  return many;
+}
+
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
 }
@@ -84,9 +93,18 @@ function render(filterText) {
         const avatar = o.aiStatus === 'ai' || o.aiStatus === 'partial'
           ? `<span class="proj-ai-avatar-wrap" data-tip="${o.aiStatus === 'ai' ? 'ИИ-проект — промты заполнены полностью' : 'Заполнены не все промты ИИ — требуется внимание'}"><img class="proj-ai-avatar" src="/ai-avatar.png" alt="ИИ"></span>`
           : '';
-        return `<div class="proj-card${aiClass}">
+        const kpi = o.scheduleStatus;
+        const kpiTip = kpi
+          ? kpi.tier === 'ontrack'
+            ? `В графике — ${kpi.planned}/${kpi.target} постов за месяц, просрочек нет`
+            : kpi.tier === 'minor'
+            ? `Небольшое отклонение — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
+            : `Не укладываемся в KPI — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
+          : '';
+        const kpiDot = kpi ? `<span class="proj-kpi-dot ${kpi.tier}" title="${esc(kpiTip)}"></span>` : '';
+        return `<div class="proj-card${aiClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
-            <div class="proj-logo">${logo}</div>
+            <div class="proj-logo">${logo}${kpiDot}</div>
             <div class="proj-info">
               <div class="proj-name">${esc(o.label)}</div>
               <div class="proj-row proj-link-row">
@@ -112,6 +130,35 @@ function render(filterText) {
       .join('') || '<div class="empty">Ничего не найдено.</div>';
 }
 
+function renderKpiBanner() {
+  const el = document.getElementById('kpiBanner');
+  const off = options.filter((o) => o.scheduleStatus && o.scheduleStatus.tier === 'off');
+  const minor = options.filter((o) => o.scheduleStatus && o.scheduleStatus.tier === 'minor');
+  if (!off.length && !minor.length) {
+    el.hidden = true;
+    return;
+  }
+  const namesLine = (list) => {
+    const shown = list.slice(0, 3).map((o) => o.label);
+    const rest = list.length - shown.length;
+    return shown.join(', ') + (rest > 0 ? ` и ещё ${rest}` : '');
+  };
+  const rows = [];
+  if (off.length) {
+    rows.push(
+      `<div class="attention-row1 row-off"><button type="button" class="attention-link" data-scroll="${esc(off[0].id)}">🔥 ${off.length} ${plural(off.length, 'проект не укладывается', 'проекта не укладываются', 'проектов не укладываются')} в KPI — ${esc(namesLine(off))}</button></div>`
+    );
+  }
+  if (minor.length) {
+    rows.push(
+      `<div class="attention-row1 row-minor"><button type="button" class="attention-link" data-scroll="${esc(minor[0].id)}">⚠️ ${minor.length} ${plural(minor.length, 'проект с небольшим отклонением', 'проекта с небольшим отклонением', 'проектов с небольшим отклонением')} — ${esc(namesLine(minor))}</button></div>`
+    );
+  }
+  el.className = `attention ${off.length ? 'off' : 'minor'}`;
+  el.innerHTML = rows.join('');
+  el.hidden = false;
+}
+
 async function load() {
   const loading = document.getElementById('loading');
   loading.hidden = false;
@@ -119,8 +166,14 @@ async function load() {
     const res = await fetch('/api/projects');
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
-    options = data.options.slice().sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+    const KPI_TIER_RANK = { off: 0, minor: 1, ontrack: 2 };
+    const kpiRank = (o) => (o.scheduleStatus ? KPI_TIER_RANK[o.scheduleStatus.tier] : 3);
+    options = data.options.slice().sort((a, b) => {
+      const r = kpiRank(a) - kpiRank(b);
+      return r !== 0 ? r : a.label.localeCompare(b.label, 'ru');
+    });
     render(document.getElementById('search').value);
+    renderKpiBanner();
   } catch (err) {
     document.getElementById('list').innerHTML = `<div class="error-box">Не удалось загрузить список проектов: ${esc(err.message)}</div>`;
   } finally {
@@ -151,6 +204,15 @@ async function regenerateLink(projectId, label) {
 }
 
 document.getElementById('search').addEventListener('input', (e) => render(e.target.value));
+
+document.getElementById('kpiBanner').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-scroll]');
+  if (!btn) return;
+  const search = document.getElementById('search');
+  if (search.value) { search.value = ''; render(''); }
+  const el = document.getElementById(`proj-${btn.dataset.scroll}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 
 document.getElementById('list').addEventListener('click', async (e) => {
   const copyBtn = e.target.closest('.proj-copy');
@@ -298,18 +360,13 @@ async function saveEdit() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
-    // Reflect the new logo in the list immediately, without a full reload.
-    const opt = options.find((o) => o.id === editingProjectId);
-    if (opt) opt.logoUrl = data.logoUrl || '';
-    if (opt) {
-      const filled = ['editStrategyPrompt', 'editPlanningPrompt', 'editPostPrompt', 'editImagePrompt']
-        .map((id) => document.getElementById(id).value.trim())
-        .filter(Boolean).length;
-      opt.aiStatus = filled === 4 ? 'ai' : filled > 0 ? 'partial' : 'none';
-    }
     toast('Настройки сохранены');
     closeEdit();
-    render(document.getElementById('search').value);
+    // Full reload rather than a local patch: postsPerMonth just changed,
+    // and its KPI traffic-light (scheduleStatus) is computed server-side
+    // from live Mattermost task data — a local patch can't recompute that,
+    // and it also drives sort order, so re-fetching keeps both correct.
+    load();
   } catch (err) {
     errBox.textContent = 'Не удалось сохранить: ' + err.message;
     errBox.hidden = false;

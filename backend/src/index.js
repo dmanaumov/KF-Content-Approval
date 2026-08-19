@@ -179,6 +179,45 @@ function tooManyForgotPasswordAttempts(ip) {
   return recent.length > limit;
 }
 
+// "В графике" / "Небольшое отклонение" / "Не укладываемся" — a project's
+// current-month posting KPI (posts_per_month, set in the "Редактировать"
+// popup's planning tab), turned into a traffic-light status for the staff
+// project list. Only computed when a KPI is actually set (falsy/non-numeric
+// target => null, meaning "don't show anything" — see frontend/projects.js).
+//
+// Method: of this project's client-facing tasks (same set buildTasks()
+// already shows the client — internal/archived stages are never counted)
+// whose planned publish date falls in the CURRENT CALENDAR MONTH (Moscow
+// time, matching formatMoscowTimestamp elsewhere in this file):
+//   planned   = how many exist
+//   late      = of those, how many are past their date and still not in the
+//               "Опубликовано" status. There's no "actually published at"
+//               timestamp in this data model (only the planned date and
+//               current status), so a task that reached "Опубликовано" at
+//               any point counts as resolved — this can't distinguish
+//               "published exactly on time" from "published a day late".
+//   shortfall = max(0, target − planned) — fewer posts scheduled this month
+//               than the KPI calls for.
+//   deviation = late + shortfall
+// deviation 0 → 'ontrack', 1–2 → 'minor', >2 → 'off'. Matches the three
+// tiers the agency described: fully on schedule / a post or two off / not
+// meeting KPI or more than 2 posts late.
+function computeScheduleStatus(tasks, kpiTargetRaw) {
+  const target = parseInt(String(kpiTargetRaw || '').trim(), 10);
+  if (!Number.isFinite(target) || target <= 0) return null;
+
+  const moscowToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date()); // YYYY-MM-DD
+  const monthPrefix = moscowToday.slice(0, 7); // YYYY-MM
+
+  const thisMonth = tasks.filter((t) => t.publishDate && t.publishDate.startsWith(monthPrefix));
+  const late = thisMonth.filter((t) => t.status !== 'published' && t.publishDate < moscowToday).length;
+  const planned = thisMonth.length;
+  const shortfall = Math.max(0, target - planned);
+  const deviation = late + shortfall;
+  const tier = deviation === 0 ? 'ontrack' : deviation <= 2 ? 'minor' : 'off';
+  return { tier, target, planned, late };
+}
+
 function requireStaffBoardId(res) {
   if (!config.mattermostBoardId) {
     res.status(500).json({
@@ -208,14 +247,22 @@ app.get('/api/projects', staffAuth, async (req, res) => {
     if (!projectProp) {
       return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
     }
+    const { cards, blocks } = await loadBoard(boardId);
     const options = await Promise.all(
       (projectProp.options || []).map(async (o) => {
         // Rotatable short link + logo URL — see projectSettings.js. Row is
         // created lazily on first read, so every project already has a
         // working link (and, once set, a logo) the first time this list
         // loads.
-        const { token, logoUrl, aiStatus } = await projectSettings.getTokenAndLogo(boardId, o.id);
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus };
+        const { token, logoUrl, aiStatus, postsPerMonth } = await projectSettings.getTokenAndLogo(boardId, o.id);
+        // buildTasks() is pure computation over the board/cards/blocks
+        // already fetched above — re-filtering per project here costs no
+        // extra Mattermost calls, just re-running an in-memory filter once
+        // per project that actually has a KPI set.
+        const scheduleStatus = postsPerMonth
+          ? computeScheduleStatus(buildTasks(board, cards, blocks, { projectFilter: o.id }).tasks, postsPerMonth)
+          : null;
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus };
       })
     );
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
