@@ -4,6 +4,7 @@
 // things once you see real board data — turn on DEBUG_MATTERMOST=true and
 // compare against what you expect.
 
+const crypto = require('crypto');
 const config = require('./config');
 const { extractDiskLinks, stripDiskLinks, parseAndValidateShareUrl } = require('./diskEmbeds');
 
@@ -283,8 +284,17 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     // kind/name are resolved later, server-side (index.js), since it takes a
     // network call to the disk server to know image vs video — buildTasks()
     // itself stays synchronous, matching every other caller's expectations.
-    const diskMedia = diskShareUrls.map((shareUrl, i) => ({
-      id: `disk-${card.id}-${i}`,
+    //
+    // id is derived from the URL itself (short hash), NOT from position in
+    // the list — the client can now save a custom media order (mediaOrder.js),
+    // keyed by these ids, and a later caption edit can reorder/add/remove the
+    // disk links found in the text. A position-based id ("disk-<card>-0")
+    // would silently point at different content after that happens; a
+    // content-based id stays correct (worst case, the same link pasted twice
+    // in one caption collides — accepted, rare, and the reorder degrades to
+    // "treat both as one" rather than doing anything destructive).
+    const diskMedia = diskShareUrls.map((shareUrl) => ({
+      id: `disk-${card.id}-${crypto.createHash('md5').update(shareUrl).digest('hex').slice(0, 10)}`,
       source: 'disk',
       shareUrl,
       kind: null,

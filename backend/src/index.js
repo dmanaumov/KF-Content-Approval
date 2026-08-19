@@ -6,6 +6,7 @@ const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = requir
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./diskEmbeds');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
+const mediaOrder = require('./mediaOrder');
 const mailer = require('./mailer');
 
 const app = express();
@@ -125,6 +126,7 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
       });
     }
     await resolveDiskMediaKinds(tasks);
+    await mediaOrder.applyStoredOrder(req.params.boardId, tasks);
     res.json({
       board: { id: req.params.boardId, title: board.title || '' },
       tasks,
@@ -376,6 +378,24 @@ app.post('/api/boards/:boardId/tasks/:taskId/text', async (req, res) => {
   }
 });
 
+// POST /api/boards/:boardId/tasks/:taskId/media-order — body: { order: [mediaId, ...] }
+// `order` must be a full permutation of the task's current media ids (see
+// updateTaskMediaOrder) — the client always sends the whole list it's
+// currently showing, reordered.
+app.post('/api/boards/:boardId/tasks/:taskId/media-order', async (req, res) => {
+  const order = Array.isArray(req.body && req.body.order) ? req.body.order.map(String) : null;
+  if (!order || !order.length) return res.status(400).json({ error: 'order_required' });
+  try {
+    const { boardId, taskId } = req.params;
+    const updated = await updateTaskMediaOrder(boardId, taskId, order);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] media order update failed:', err.message);
+    const status = err.code === 'stale_media_order' ? 409 : 502;
+    res.status(status).json({ error: err.code || 'media_order_failed', message: err.message });
+  }
+});
+
 async function setApprovalStatus(boardId, taskId, statusKey) {
   const { board, cards } = await loadBoard(boardId);
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
@@ -429,6 +449,7 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
     );
   }
   await resolveDiskMediaKinds([updated]);
+  await mediaOrder.applyStoredOrder(boardId, [updated]);
   return updated;
 }
 
@@ -475,7 +496,60 @@ async function updateTaskText(boardId, taskId, text) {
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after text update.`);
   await resolveDiskMediaKinds([updated]);
+  await mediaOrder.applyStoredOrder(boardId, [updated]);
   return updated;
+}
+
+// Reorders a task's media (photos/videos) per a client-submitted list of
+// media ids, then flips status to 'changes' exactly like updateTaskText —
+// the client corrected something about how the post reads, staff should
+// re-review before publishing. Leaves a comment naming which items moved
+// and where, not just a generic "changed" marker, so staff can tell at a
+// glance whether it's worth reopening the card in Mattermost.
+async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, feedbackAuthorUserId });
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before media reorder.`);
+  await resolveDiskMediaKinds([task]);
+  await mediaOrder.applyStoredOrder(boardId, [task]); // current effective ("before") order
+
+  const beforeIds = task.media.map((m) => m.id);
+  const beforeSet = new Set(beforeIds);
+  const afterSet = new Set(newOrderIds);
+  const isSamePermutation =
+    newOrderIds.length === beforeIds.length &&
+    beforeIds.every((id) => afterSet.has(id)) &&
+    newOrderIds.every((id) => beforeSet.has(id));
+  if (!isSamePermutation) {
+    const err = new Error('Список материалов устарел — обновите страницу и попробуйте снова.');
+    err.code = 'stale_media_order';
+    throw err;
+  }
+
+  const beforePos = new Map(beforeIds.map((id, i) => [id, i + 1]));
+  const afterPos = new Map(newOrderIds.map((id, i) => [id, i + 1]));
+  const byId = new Map(task.media.map((m) => [m.id, m]));
+  const kindLabel = (k) => (k === 'image' ? 'Фото' : k === 'video' ? 'Видео' : 'Файл');
+  const moved = beforeIds
+    .filter((id) => beforePos.get(id) !== afterPos.get(id))
+    .map((id) => {
+      const m = byId.get(id);
+      const label = (m && m.name) ? m.name : `${kindLabel(m && m.kind)} #${beforePos.get(id)}`;
+      return `${label}: было на месте ${beforePos.get(id)} → стало на месте ${afterPos.get(id)}`;
+    });
+
+  await mediaOrder.setMediaOrder(boardId, taskId, newOrderIds);
+
+  if (moved.length) {
+    await mm.addCardComment(
+      boardId,
+      taskId,
+      `${formatMoscowTimestamp()} ЗАКАЗЧИК ИЗМЕНИЛ ПОРЯДОК МЕДИА:\n${moved.map((l) => `• ${l}`).join('\n')}`
+    );
+  }
+  return setApprovalStatus(boardId, taskId, 'changes');
 }
 
 // GET /api/files/:boardId/:fileId — proxies media bytes from Mattermost with

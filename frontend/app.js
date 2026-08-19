@@ -24,6 +24,8 @@ let activeFilter = 'waiting'; // default view: only what actually needs the clie
 let feedbackTaskId = '';
 let busyTaskId = null;
 let editingTextTaskId = '';
+let reorderTaskId = ''; // task currently open in the media-order modal, '' = closed
+let reorderIds = []; // working copy of that task's media ids, in the order being edited
 let calYear = null; // calendar view's current year/month (0-indexed month) —
 let calMonth = null; // set lazily to today's month the first time it opens.
 
@@ -191,20 +193,23 @@ function isUrgent(task) {
   return d !== null && d < 3;
 }
 
-function mediaHtml(task) {
+// Two possible sources: an attachment on the Mattermost card itself (Boards'
+// own file storage, keyed by team+board), or a disk.kontentferma.* share
+// link found in the post text/URL and proxied through our own disk-embed
+// route instead. Shared by mediaHtml() and the media-order modal below.
+function mediaFileUrl(m) {
+  return m.source === 'disk'
+    ? `/api/disk-embed?u=${encodeURIComponent(m.shareUrl)}`
+    : `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
+}
+
+function mediaHtml(task, canReorder) {
   if (!task.media.length) {
     return '<div class="media"><div class="carousel"><div class="slide file-link"><div><b>Без вложений</b></div></div></div></div>';
   }
   const slides = task.media
     .map((m) => {
-      // Two possible sources: an attachment on the Mattermost card itself
-      // (Boards' own file storage, keyed by team+board), or a
-      // disk.kontentferma.* share link found in the post text/URL and
-      // proxied through our own disk-embed route instead.
-      const fileUrl =
-        m.source === 'disk'
-          ? `/api/disk-embed?u=${encodeURIComponent(m.shareUrl)}`
-          : `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
+      const fileUrl = mediaFileUrl(m);
       if (m.kind === 'image') {
         return `<div class="slide"><img src="${fileUrl}" alt="" loading="lazy"></div>`;
       }
@@ -219,7 +224,15 @@ function mediaHtml(task) {
     })
     .join('');
   const counter = task.media.length > 1 ? `<div class="dots">1 / ${task.media.length}</div>` : '';
-  return `<div class="media"><div class="carousel" data-count="${task.media.length}">${slides}</div>${counter}</div>`;
+  // Reordering only makes sense with 2+ items, and only while the post is
+  // still editable (same gate as the text-edit pencil — an approved/
+  // published post's media is final).
+  const reorderBtn = canReorder && task.media.length > 1
+    ? `<button type="button" class="media-reorder-btn" data-action="open-media-order" data-id="${task.id}" aria-label="Изменить порядок фото/видео" title="Изменить порядок фото/видео">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l0 10M8 7L5 10M8 7l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l0-10M16 17l3-3M16 17l-3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>`
+    : '';
+  return `<div class="media">${reorderBtn}<div class="carousel" data-count="${task.media.length}">${slides}</div>${counter}</div>`;
 }
 
 function cardHtml(task) {
@@ -299,7 +312,7 @@ function cardHtml(task) {
         <span class="status ${st.cls}">${st.text}</span>
       </div>
     </div>
-    ${mediaHtml(task)}
+    ${mediaHtml(task, canEditText)}
     ${captionBlock}
     ${urlLink}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
@@ -607,6 +620,96 @@ async function saveTextEdit(taskId) {
   }
 }
 
+// Media-order modal: a plain sheet with an up/down-arrow list, not
+// drag-and-drop — the card list already has a Tinder-style horizontal swipe
+// gesture and the carousel itself scrolls horizontally, so a drag surface
+// here would fight both. Arrows are unambiguous and work identically on
+// touch and mouse.
+function mediaKindLabel(kind) {
+  return kind === 'image' ? 'Фото' : kind === 'video' ? 'Видео' : 'Файл';
+}
+
+function openMediaOrder(id) {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return;
+  reorderTaskId = id;
+  reorderIds = task.media.map((m) => m.id);
+  renderMediaOrderList();
+  document.getElementById('mediaOrderModal').classList.add('show');
+}
+
+function closeMediaOrder() {
+  document.getElementById('mediaOrderModal').classList.remove('show');
+  reorderTaskId = '';
+  reorderIds = [];
+}
+
+function renderMediaOrderList() {
+  const task = state.tasks.find((t) => t.id === reorderTaskId);
+  const list = document.getElementById('moList');
+  if (!task || !list) return;
+  const byId = new Map(task.media.map((m) => [m.id, m]));
+  list.innerHTML = reorderIds
+    .map((id, i) => {
+      const m = byId.get(id);
+      if (!m) return '';
+      const thumb = m.kind === 'image'
+        ? `<img class="mo-thumb" src="${mediaFileUrl(m)}" alt="" loading="lazy">`
+        : `<div class="mo-thumb mo-thumb-icon">${m.kind === 'video' ? '🎬' : '📄'}</div>`;
+      return `<div class="mo-row">
+        ${thumb}
+        <div class="mo-label">${i + 1}. ${esc(m.name || mediaKindLabel(m.kind))}</div>
+        <div class="mo-arrows">
+          <button type="button" class="mo-btn" data-action="mo-up" data-id="${id}" ${i === 0 ? 'disabled' : ''} aria-label="Выше">↑</button>
+          <button type="button" class="mo-btn" data-action="mo-down" data-id="${id}" ${i === reorderIds.length - 1 ? 'disabled' : ''} aria-label="Ниже">↓</button>
+        </div>
+      </div>`;
+    })
+    .join('');
+}
+
+function moveMediaOrder(id, dir) {
+  const i = reorderIds.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= reorderIds.length) return;
+  [reorderIds[i], reorderIds[j]] = [reorderIds[j], reorderIds[i]];
+  renderMediaOrderList();
+}
+
+async function saveMediaOrder() {
+  if (!reorderTaskId) return;
+  const taskId = reorderTaskId;
+  const order = reorderIds.slice();
+  busyTaskId = taskId;
+  render();
+  try {
+    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/tasks/${encodeURIComponent(taskId)}/media-order`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    state.tasks = state.tasks.map((t) => (t.id === taskId ? data.task : t));
+    closeMediaOrder();
+    toast('Порядок обновлён');
+  } catch (err) {
+    toast('Не удалось сохранить порядок: ' + err.message);
+  } finally {
+    busyTaskId = null;
+    render();
+  }
+}
+
+document.getElementById('moList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  if (btn.dataset.action === 'mo-up') moveMediaOrder(btn.dataset.id, -1);
+  if (btn.dataset.action === 'mo-down') moveMediaOrder(btn.dataset.id, 1);
+});
+document.querySelector('[data-action="close-media-order"]').addEventListener('click', closeMediaOrder);
+document.querySelector('[data-action="save-media-order"]').addEventListener('click', saveMediaOrder);
+
 document.getElementById('weeks').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-week]');
   if (!btn) return;
@@ -823,6 +926,7 @@ document.getElementById('stack').addEventListener('click', (e) => {
     render();
   }
   if (btn.dataset.action === 'save-text') saveTextEdit(id);
+  if (btn.dataset.action === 'open-media-order') openMediaOrder(id);
   if (btn.dataset.action === 'ai-info') toast('✨ Этот пост сгенерирован с помощью ИИ');
 });
 

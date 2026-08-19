@@ -65,6 +65,21 @@ async function initSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);
   `);
+  // Client-chosen display order of a post's media (photos/videos), keyed by
+  // the ids buildTasks() assigns each media item (see taskMapper.js). This is
+  // the other reason (besides project_settings above) this app keeps its own
+  // Postgres table: Mattermost has no concept of a custom media order at all
+  // — only upload time — so there's nothing on the Mattermost side to persist
+  // this into. Written/read by mediaOrder.js only.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_media_order (
+      board_id text NOT NULL,
+      task_id text NOT NULL,
+      media_order jsonb NOT NULL DEFAULT '[]'::jsonb,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (board_id, task_id)
+    );
+  `);
   // Written to by the n8n automation directly (its own Postgres connection,
   // see docs/N8N_AUTOMATION.md) — this app never writes to it itself, only
   // the table needs to exist up front so n8n has somewhere to insert into
