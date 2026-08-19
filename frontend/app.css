@@ -69,6 +69,37 @@ button{cursor:pointer}
 @media (prefers-reduced-motion: reduce){
   .card.ai{animation:none}
 }
+/* Tinder-style swipe (list view only): each non-terminal card sits in a
+   .swipe-wrap with two zones behind it that light up as the card is
+   dragged — green "✓ СОГЛАСОВАТЬ" on the right, red "✎ ЕСТЬ ПРАВКИ" on the
+   left. Only the card moves; zones stay put underneath (see app.js). */
+.swipe-wrap{position:relative}
+.swipe-zone{
+  position:absolute;
+  inset:0;
+  z-index:0;
+  border-radius:var(--radius);
+  display:flex;
+  align-items:center;
+  font-weight:850;
+  font-size:15px;
+  letter-spacing:.02em;
+  color:#fff;
+  opacity:0;
+  pointer-events:none;
+}
+.swipe-zone.right{background:linear-gradient(90deg,#2E9E4F,#58B972);justify-content:flex-start;padding-left:24px}
+.swipe-zone.left{background:linear-gradient(90deg,#D04848,#E27A6A);justify-content:flex-end;padding-right:24px}
+.swipe-zone span{display:flex;align-items:center;gap:8px;text-shadow:0 1px 2px rgba(0,0,0,.18)}
+.swipe-wrap.swiping .swipe-zone{transition:opacity .08s linear}
+.card.swipeable{position:relative;z-index:1;touch-action:pan-y;cursor:grab}
+.card.swipeable.swiping{cursor:grabbing;user-select:none;-webkit-user-select:none;transition:none;animation:none}
+.swipe-wrap.swipe-right .card{border-color:#2E9E4F;box-shadow:0 0 0 2px #2E9E4F}
+.swipe-wrap.swipe-left .card{border-color:#D04848;box-shadow:0 0 0 2px #D04848}
+.card.flying{transition:transform .22s ease-in;z-index:2}
+@media (prefers-reduced-motion: reduce){
+  .card.flying{transition-duration:.01ms}
+}
 /* Avatar bubble (top-right of an [AI] card) — glossy sphere: dark base +
    specular highlight, white ring to separate it from the media below. Sits
    inside the card's own rounded/clipped box, so it never fights .card's

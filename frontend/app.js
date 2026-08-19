@@ -229,6 +229,7 @@ function cardHtml(task) {
   const ai = isAiPost(task.title);
   const editingText = editingTextTaskId === task.id;
   const canEditText = task.status !== 'approved' && task.status !== 'published';
+  const swipeable = canEditText;
   let actions;
   if (task.status === 'approved') {
     actions = '<div class="actions"><div class="approved-box">✓ Согласовано</div></div>';
@@ -284,7 +285,7 @@ function cardHtml(task) {
           ${captionText ? `<div class="caption open">${formatTelegram(captionText)}</div>` : ''}
         </div>`
     : '';
-  return `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}">
+  const article = `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}" data-task-id="${esc(task.id)}">
     ${aiAvatar}
     <div class="meta">
       <div class="meta-left">
@@ -305,6 +306,16 @@ function cardHtml(task) {
     ${actions}
     ${aiDisclaimer}
   </article>`;
+
+  // Swipeable cards (anything still awaiting a decision) sit in a wrapper
+  // with two behind-the-card zones that light up green (approve) / red
+  // (changes) as the card is dragged — see the swipe handlers below.
+  if (!swipeable) return article;
+  return `<div class="swipe-wrap">
+    <div class="swipe-zone right"><span>✓ СОГЛАСОВАТЬ</span></div>
+    ${article}
+    <div class="swipe-zone left"><span>✎ ЕСТЬ ПРАВКИ</span></div>
+  </div>`;
 }
 
 // Besides the label, each week entry now also tracks whether it contains
@@ -611,18 +622,120 @@ document.querySelectorAll('.filter').forEach((b) =>
   })
 );
 
+function openFeedbackFor(id) {
+  feedbackTaskId = id;
+  const task = state.tasks.find((t) => t.id === id);
+  document.getElementById('feedbackTitle').textContent = task ? task.title : '';
+  document.getElementById('feedbackText').value = '';
+  document.getElementById('feedbackModal').classList.add('show');
+}
+
+// Tinder-style swipe approval, list view only (the cards in #stack — the
+// calendar view has no cards to swipe). Only non-terminal cards are
+// swipeable (same set that gets the Согласовать/Есть правки buttons): drag
+// right → green "✓ СОГЛАСОВАТЬ" zone lights up behind the card and, past a
+// threshold, approves; drag left → red "✎ ЕСТЬ ПРАВКИ" zone and opens the
+// feedback popup. Pointer events so it works for both touch and mouse; the
+// buttons stay as the no-gesture fallback.
+const SWIPE_THRESHOLD = 96;
+const SWIPE_ZONE_MAX = 90; // px of drag needed to fully reveal a zone
+let swipe = null;
+let suppressClick = false;
+
+function swipeWrapOf(card) {
+  const wrap = card.parentElement;
+  return wrap && wrap.classList.contains('swipe-wrap') ? wrap : null;
+}
+
+function applySwipe(dx) {
+  const rot = Math.max(-12, Math.min(12, dx / 12));
+  swipe.card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`;
+  const progress = Math.min(1, Math.abs(dx) / SWIPE_ZONE_MAX);
+  swipe.wrap.querySelector('.swipe-zone.right').style.opacity = dx > 0 ? progress : 0;
+  swipe.wrap.querySelector('.swipe-zone.left').style.opacity = dx < 0 ? progress : 0;
+  swipe.wrap.classList.toggle('swipe-right', dx > 30);
+  swipe.wrap.classList.toggle('swipe-left', dx < -30);
+}
+
+function resetSwipe() {
+  const { card, wrap } = swipe;
+  card.classList.remove('swiping');
+  wrap.classList.remove('swiping', 'swipe-right', 'swipe-left');
+  card.style.transform = '';
+  wrap.querySelectorAll('.swipe-zone').forEach((z) => { z.style.opacity = ''; });
+}
+
+function finishSwipe() {
+  const { card, dx } = swipe;
+  swipe = null;
+  if (Math.abs(dx) < SWIPE_THRESHOLD) {
+    card.classList.remove('swiping');
+    card.style.transform = '';
+    swipeWrapOf(card).classList.remove('swiping', 'swipe-right', 'swipe-left');
+    swipeWrapOf(card).querySelectorAll('.swipe-zone').forEach((z) => { z.style.opacity = ''; });
+    return;
+  }
+  const dir = dx > 0 ? 'right' : 'left';
+  const id = card.dataset.taskId;
+  card.classList.remove('swiping');
+  card.classList.add('flying', dir);
+  card.style.transform = `translateX(${dir === 'right' ? '130%' : '-130%'}) rotate(${dir === 'right' ? 14 : -14}deg)`;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 150);
+  setTimeout(() => {
+    if (dir === 'right') approve(id);
+    else openFeedbackFor(id);
+  }, 240);
+}
+
+document.getElementById('stack').addEventListener('pointerdown', (e) => {
+  if (swipe || busyTaskId) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const card = e.target.closest('.card.swipeable');
+  if (!card) return;
+  if (e.target.closest('button, a, input, textarea, select')) return;
+  if (!swipeWrapOf(card)) return;
+  swipe = {
+    card, wrap: swipeWrapOf(card),
+    startX: e.clientX, startY: e.clientY,
+    dx: 0, dy: 0, locked: false,
+  };
+});
+
+document.getElementById('stack').addEventListener('pointermove', (e) => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.startX;
+  const dy = e.clientY - swipe.startY;
+  if (!swipe.locked) {
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    if (Math.abs(dy) > Math.abs(dx) * 1.2) { swipe = null; return; } // vertical intent → let the page scroll
+    swipe.locked = true;
+    swipe.card.setPointerCapture(e.pointerId);
+    swipe.card.classList.add('swiping');
+    swipe.wrap.classList.add('swiping');
+  }
+  applySwipe(dx);
+});
+
+document.getElementById('stack').addEventListener('pointerup', (e) => {
+  if (!swipe) return;
+  if (!swipe.locked) { swipe = null; return; }
+  finishSwipe();
+});
+
+document.getElementById('stack').addEventListener('pointercancel', (e) => {
+  if (!swipe) return;
+  if (swipe.locked) { resetSwipe(); }
+  swipe = null;
+});
+
 document.getElementById('stack').addEventListener('click', (e) => {
+  if (suppressClick) return;
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const id = btn.dataset.id;
   if (btn.dataset.action === 'approve') approve(id);
-  if (btn.dataset.action === 'open-feedback') {
-    feedbackTaskId = id;
-    const task = state.tasks.find((t) => t.id === id);
-    document.getElementById('feedbackTitle').textContent = task ? task.title : '';
-    document.getElementById('feedbackText').value = '';
-    document.getElementById('feedbackModal').classList.add('show');
-  }
+  if (btn.dataset.action === 'open-feedback') openFeedbackFor(id);
   if (btn.dataset.action === 'edit-text') {
     editingTextTaskId = id;
     render();
