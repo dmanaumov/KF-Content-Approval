@@ -700,12 +700,17 @@ app.get('/api/links/:token', async (req, res) => {
 
 // Internal staff page listing every client's cabinet link, in the same
 // visual style as the client cabinet — see frontend/projects.html. Path is
-// configurable (config.staffProjectsPath, default "/projects") specifically
+// configurable (config.staffProjectsPath, default "/admin") specifically
 // so it doesn't have to reveal anything (like a board id) in a fixed,
 // guessable URL. NOT for clients: no board/task data, just the list of
 // ready-made links (same info a staffer would otherwise hand-assemble from
 // the "Проект" property options).
 app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
+
+// Team landing page — placeholder for now (frontend/team.html); the team
+// dashboard will replace it later. Public on purpose: it's a stub with no
+// board/task data, just the shared header so the URL exists and works.
+app.get('/team', (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
 
 // "Забыли пароль" recovery for the staff Basic Auth above. Deliberately
 // public (no staffAuth — that would be circular) but gated by a

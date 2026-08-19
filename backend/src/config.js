@@ -139,11 +139,11 @@ module.exports = {
   mattermostBoardId: process.env.MATTERMOST_BOARD_ID || '',
 
   // URL PATH of the internal staff page (list of clients + their rotatable
-  // links). Deliberately configurable rather than a fixed "/projects" — the
+  // links). Deliberately configurable rather than a fixed "/admin" — the
   // agency didn't want a guessable, identity-revealing path here. This is
   // still only obscurity (same security model as the rest of this app — see
   // README), not real access control; pick something not easily guessed.
-  staffProjectsPath: process.env.STAFF_PROJECTS_PATH || '/projects',
+  staffProjectsPath: process.env.STAFF_PROJECTS_PATH || '/admin',
 
   // Dedicated, least-privilege Postgres role created (and kept up to date)
   // for the n8n publishing automation — see db.js's ensureN8nRole(). n8n

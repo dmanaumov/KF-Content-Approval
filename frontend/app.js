@@ -11,7 +11,7 @@ const params = new URLSearchParams(location.search);
 const linkToken = (location.pathname.match(/^\/l\/([^/]+)/) || [])[1];
 // /p/{boardId}?project=... — the older, direct link shape. Still supported
 // (nothing was disabled server-side), just no longer what's handed out from
-// the /projects staff page.
+// the /admin staff page.
 const directBoardId = (location.pathname.match(/^\/p\/([^/]+)/) || [])[1];
 const deepLinkTaskId = params.get('task');
 
