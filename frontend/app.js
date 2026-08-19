@@ -519,8 +519,28 @@ function render() {
   document.getElementById('progressFill').style.width = (inWeek.length ? (approved / inWeek.length) * 100 : 0) + '%';
   document.getElementById('progressText').textContent = `${approved} из ${inWeek.length} согласовано`;
 
+  // Nothing left to approve anywhere (no 'waiting' task across the whole
+  // board) → celebrate with the mascot and make sure the "Все" filter is
+  // active so the approved posts are actually visible below it.
+  const nothingToApprove = !state.tasks.some((t) => t.status === 'waiting');
+  if (nothingToApprove && activeFilter) {
+    activeFilter = '';
+    document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
+  }
+
   const visible = inWeek.filter((t) => !activeFilter || t.status === activeFilter);
-  document.getElementById('stack').innerHTML = visible.map(cardHtml).join('') || '<div class="empty">Здесь пока ничего нет.</div>';
+  const mascot = nothingToApprove
+    ? `<div class="all-done">
+        <img class="all-done-mascot" src="/mascot.jpg" alt="КРАСАВА">
+        <div>
+          <div class="all-done-title">Всё согласовано!</div>
+          <div class="all-done-sub">Ничего не ждёт вашего решения. Ниже — согласованные посты.</div>
+        </div>
+      </div>`
+    : '';
+  const cards = visible.map(cardHtml).join('');
+  document.getElementById('stack').innerHTML =
+    mascot + (cards || (nothingToApprove ? '' : '<div class="empty">Здесь пока ничего нет.</div>'));
 
   if (deepLinkTaskId) {
     const el = document.getElementById(`task-${deepLinkTaskId}`);

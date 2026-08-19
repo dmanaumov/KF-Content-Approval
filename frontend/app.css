@@ -56,6 +56,17 @@ button{cursor:pointer}
 .attention-row1 .attention-link{font-size:14px;font-weight:800}
 .attention-row2{font-size:12px;color:var(--muted);font-weight:650}
 .stack{display:grid;gap:16px;position:relative}
+/* "Всё согласовано" banner with the КРАСАВА mascot — shown at the top of
+   the stack whenever no task anywhere on the board is still awaiting
+   approval (see render() in app.js). */
+.all-done{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:22px;padding:16px;box-shadow:0 8px 24px rgba(16,45,42,.04)}
+.all-done-mascot{width:76px;height:76px;border-radius:50%;object-fit:cover;flex:0 0 auto;box-shadow:0 0 0 3px #fff,0 4px 14px rgba(155,90,246,.4)}
+.all-done-title{font-weight:850;font-size:16px}
+.all-done-sub{font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:3px}
+@media(max-width:430px){
+  .all-done{padding:12px;gap:12px}
+  .all-done-mascot{width:60px;height:60px}
+}
 .card{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(16,45,42,.035)}
 .card.pending-action{opacity:.6;pointer-events:none}
 .card.urgent{border-color:var(--urgent);box-shadow:0 0 0 2px var(--urgent),0 10px 26px rgba(255,95,96,.28);background:#FFF5F4}
