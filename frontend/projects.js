@@ -101,7 +101,7 @@ function render(filterText) {
             ? `Небольшое отклонение — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
             : `Не укладываемся в KPI — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
           : '';
-        const kpiDot = kpi ? `<span class="proj-kpi-dot ${kpi.tier}" title="${esc(kpiTip)}"></span>` : '';
+        const kpiDot = kpi ? `<span class="proj-kpi-dot ${kpi.tier}" data-tip="${esc(kpiTip)}"></span>` : '';
         return `<div class="proj-card${aiClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>

@@ -13,7 +13,12 @@
 .proj-ai-avatar-wrap{position:relative;display:inline-flex;margin-bottom:2px}
 .proj-ai-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px #fff,0 3px 10px rgba(155,90,246,.5),inset 0 -6px 9px rgba(0,0,0,.35),inset 0 5px 8px rgba(255,255,255,.10)}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
-.proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;overflow:hidden;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
+.proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
+/* overflow was hidden here, but the KPI dot (and its tooltip) needs to
+   poke out of this box's corner — object-fit:contain below never overflows
+   the box on its own, so dropping overflow:hidden doesn't change how the
+   logo image/fallback letter looks, just unblocks the dot. */
+.proj-logo img{border-radius:14px}
 /* Traffic-light "в графике" dot — corner of the client logo. Only rendered
    when the project has a posts-per-month KPI set (backend/src/index.js's
    computeScheduleStatus); no dot at all otherwise, so projects that don't
@@ -21,10 +26,39 @@
    показываем"). Colors are reused, not invented: green matches
    .status.approved's tone, gold is the same one the calendar already uses
    for "waiting" (.cal-dot.waiting), red is the app-wide --urgent. */
-.proj-kpi-dot{position:absolute;bottom:-2px;right:-2px;width:13px;height:13px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.proj-kpi-dot{position:absolute;bottom:-2px;right:-2px;width:13px;height:13px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:default}
 .proj-kpi-dot.ontrack{background:#216A39}
 .proj-kpi-dot.minor{background:#F5C518}
 .proj-kpi-dot.off{background:var(--urgent)}
+/* Same styled-tooltip idea as .icon-btn/.proj-ai-avatar-wrap (data-tip attr,
+   dark pill, hover+touch), but anchored below instead of to the left — the
+   dot sits at the bottom-right of the LOGO, on the card's left edge, so a
+   leftward tooltip (like icon-btn's) would run off the page. */
+.proj-kpi-dot[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 9px);
+  left:50%;
+  transform:translateX(-50%);
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+}
+.proj-kpi-dot[data-tip]:hover::after,
+.proj-kpi-dot[data-tip]:focus-visible::after{opacity:1}
+@media (hover:none){
+  .proj-kpi-dot[data-tip]::after{white-space:normal;max-width:180px}
+  .proj-kpi-dot[data-tip]:active::after{opacity:1}
+}
 .proj-logo img{width:100%;height:100%;object-fit:contain}
 .proj-logo-fallback{font-weight:800;font-size:18px;color:#fff}
 .proj-info{flex:1;min-width:0;display:grid;gap:9px;align-content:center}
