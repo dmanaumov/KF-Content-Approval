@@ -285,7 +285,7 @@ function cardHtml(task) {
           ${captionText ? `<div class="caption open">${formatTelegram(captionText)}</div>` : ''}
         </div>`
     : '';
-  const article = `<article class="card${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}" data-task-id="${esc(task.id)}">
+  const article = `<article class="card${swipeable ? ' swipeable' : ''}${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}" data-task-id="${esc(task.id)}">
     ${aiAvatar}
     <div class="meta">
       <div class="meta-left">
