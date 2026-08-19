@@ -531,7 +531,7 @@ function render() {
   const visible = inWeek.filter((t) => !activeFilter || t.status === activeFilter);
   const mascot = nothingToApprove
     ? `<div class="all-done">
-        <img class="all-done-mascot" src="/mascot.jpg" alt="КРАСАВА">
+        <img class="all-done-mascot" src="/mascot.png" alt="КРАСАВА">
         <div>
           <div class="all-done-title">Всё согласовано!</div>
           <div class="all-done-sub">Ничего не ждёт вашего решения. Ниже — согласованные посты.</div>
