@@ -120,6 +120,11 @@ async function initSchema() {
     ALTER TABLE access_log
       ADD COLUMN IF NOT EXISTS actor_name text NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE access_log
+      ADD COLUMN IF NOT EXISTS device_label text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS browser_label text NOT NULL DEFAULT '';
+  `);
   // Team-cabinet sessions, persisted so a container restart (redeploy) doesn't
   // log everyone out — the in-memory map in teamAuth.js is rebuilt from here
   // on boot (see teamAuth.restoreSessions). Stores the Mattermost session

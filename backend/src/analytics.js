@@ -24,18 +24,65 @@ const DEDUPE_WINDOW_MS = 20 * 60 * 1000; // ~ one "session" per visitor/role/pro
 const recent = new Map();
 let warned = false;
 
+// Распознаём из User-Agent всё, что в нём есть: тип устройства, браузер
+// (+версию), ОС и модель. Модель/«производитель» в UA встречаются в основном
+// у мобильных (iPhone/iPad и андроид-модели вида "SM-G991B"), для десктопа
+// остаётся ОС. Итог склеивается в читаемую строку deviceLabel (и аналогично
+// browserLabel) и кладётся в access_log — на /stat видно, сколько РАЗНЫХ
+// посетителей заходило с какого устройства/браузера.
 function uaInfo(ua) {
   const s = String(ua || '');
   let device = 'desktop';
   if (/iPad|Tablet/i.test(s)) device = 'tablet';
   else if (/Mobi|Android|iPhone/i.test(s)) device = 'mobile';
+
   let browser = 'другое';
   if (/Edg\//.test(s)) browser = 'Edge';
   else if (/OPR\/|Opera/i.test(s)) browser = 'Opera';
   else if (/Firefox\//.test(s)) browser = 'Firefox';
   else if (/Chrome\/|CriOS\//.test(s)) browser = 'Chrome';
   else if (/Safari\//.test(s)) browser = 'Safari';
-  return { device, browser };
+
+  let os = '';
+  if (/Windows NT 10\.0/.test(s)) os = 'Windows 10/11';
+  else if (/Windows NT 6\.3/.test(s)) os = 'Windows 8.1';
+  else if (/Windows NT/.test(s)) os = 'Windows';
+  else if (/CrOS/.test(s)) os = 'ChromeOS';
+  else if (/Mac OS X (\d+)[._](\d+)/.test(s)) os = 'macOS ' + s.match(/Mac OS X (\d+)[._](\d+)/).slice(1).join('.');
+  else if (/CPU (?:iPhone )?OS (\d+)[._](\d+)/.test(s)) os = 'iOS ' + s.match(/CPU (?:iPhone )?OS (\d+)[._](\d+)/).slice(1).join('.');
+  else if (/Android (\d+)/.test(s)) os = 'Android ' + s.match(/Android (\d+)/)[1];
+  else if (/Linux/.test(s)) os = 'Linux';
+
+  let model = '';
+  if (/iPhone/.test(s)) model = 'iPhone';
+  else if (/iPad/.test(s)) model = 'iPad';
+  else if (/Macintosh|Mac OS X/.test(s)) model = 'Mac';
+  else if (/Windows/.test(s)) model = 'PC';
+  else {
+    const m = s.match(/Android [\d.]+; ([^;)]+)/);
+    if (m) model = m[1].replace(/\sBuild\/.*$/, '').trim();
+  }
+
+  // Для десктопа "PC/Mac" не пишем — там модель не несёт смысла, хватает ОС.
+  const parts = [];
+  if (model && model !== 'Mac' && model !== 'PC') parts.push(model);
+  if (os) parts.push(os);
+  const deviceLabel = parts.join(' · ') || device;
+
+  let bver = '';
+  if (browser === 'Safari') {
+    const v = s.match(/Version\/([\d.]+)/);
+    if (v) bver = v[1];
+  } else {
+    const re = { Edge: /Edg\/([\d.]+)/, Opera: /OPR\/([\d.]+)/, Firefox: /Firefox\/([\d.]+)/, Chrome: /Chrome\/([\d.]+)/ }[browser];
+    if (re) {
+      const v = s.match(re);
+      if (v) bver = v[1];
+    }
+  }
+  const browserLabel = bver ? `${browser} ${bver}` : browser;
+
+  return { device, browser, deviceLabel, browserLabel };
 }
 
 function visitorId(req, res) {
@@ -89,7 +136,7 @@ function note(role, { project = '', actor = '', actorName = '', path = '' }, req
     return;
   }
   const ua = String(req.headers['user-agent'] || '');
-  const { device, browser } = uaInfo(ua);
+  const { device, browser, deviceLabel, browserLabel } = uaInfo(ua);
   const vid = visitorId(req, res);
   const key = `${vid}|${role}|${project || '-'}|${actor || '-'}|${path}`;
   const now = Date.now();
@@ -99,8 +146,8 @@ function note(role, { project = '', actor = '', actorName = '', path = '' }, req
   if (recent.size > 5000) recent.clear(); // keep the in-memory dedupe map bounded
   db.requirePool()
     .query(
-      'INSERT INTO access_log (role, visitor_id, project, actor, actor_name, path, device, browser, ua) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [role, vid, project, actor, actorName, path, device, browser, ua]
+      'INSERT INTO access_log (role, visitor_id, project, actor, actor_name, path, device, browser, device_label, browser_label, ua) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [role, vid, project, actor, actorName, path, device, browser, deviceLabel, browserLabel, ua]
     )
     .catch((err) => console.error('[analytics] failed to record:', err.message));
 }

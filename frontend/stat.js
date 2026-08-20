@@ -20,8 +20,11 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 3200);
 }
 
-// Горизонтальные полоски: name + count + трек, пропорциональный максимуму.
-function hbars(rows, labelKey, valueKey = 'events') {
+// Горизонтальные полоски: name + основное число + необязательная вторая
+// метрика. По умолчанию основное = события, подпись — число посетителей;
+// для устройств/браузеров наоборот: основное = посетители, подпись = заходы.
+function hbars(rows, labelKey, opts = {}) {
+  const { valueKey = 'events', subKey = 'visitors', subUnit = 'посетител(ей)' } = opts;
   if (!rows || !rows.length) return '<div class="muted">Нет данных.</div>';
   const max = Math.max(...rows.map((r) => r[valueKey] || 0), 1);
   return rows
@@ -29,7 +32,7 @@ function hbars(rows, labelKey, valueKey = 'events') {
       const v = r[valueKey] || 0;
       const w = Math.round((v / max) * 100);
       const name = r[labelKey] || '—';
-      const sub = r.visitors != null ? ` · ${r.visitors} посетител(ей)` : '';
+      const sub = r[subKey] != null ? ` · ${r[subKey]} ${subUnit}` : '';
       return `<div class="hb">
         <div class="hb-row"><span class="hb-name" title="${esc(name)}">${esc(name)}</span><span class="hb-val">${v}${esc(sub)}</span></div>
         <div class="hb-track"><div class="hb-fill" style="width:${w}%"></div></div>
@@ -103,8 +106,8 @@ function recentTable(rows) {
     .join('')}</tbody></table>`;
 }
 
-function section(title, body) {
-  return `<section class="stat-section"><h2>${esc(title)}</h2>${body}</section>`;
+function section(title, body, sub) {
+  return `<section class="stat-section"><h2>${esc(title)}</h2>${sub ? `<div class="stat-sub">${esc(sub)}</div>` : ''}${body}</section>`;
 }
 
 // Активность по проектам: проект + список устройств, заходивших в его
@@ -130,27 +133,27 @@ function projectDevicesTable(rows) {
 }
 
 // Общая тепловая карта: series = [{ label, cells: { 'YYYY-MM-DD': { v, tip } } }].
+// Без колонки дат — маленькие квадратики, дата и число всплывают при наведении.
 // Нет сессии — белый фон, максимум — зелёный.
 function heatmapTable(monthDays, series, rowLabel = 'Проект') {
   if (!monthDays.length || !series.length) return '<div class="muted">Нет данных за месяц.</div>';
   const max = Math.max(...series.flatMap((s) => Object.values(s.cells).map((c) => c.v)), 0);
   const weekend = monthDays.map((d) => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; });
-  const head = `<thead><tr><th>${esc(rowLabel)}</th>${monthDays.map((d, i) => `<th class="${weekend[i] ? 'hm-weekend' : ''}">${+d.slice(8)}</th>`).join('')}</tr></thead>`;
   const body = series
     .map((s) => {
       const tds = monthDays
         .map((d, i) => {
           const c = s.cells[d];
-          if (!c) return `<td class="hm-zero${weekend[i] ? ' hm-weekend' : ''}"></td>`;
+          if (!c) return `<td class="hm-zero${weekend[i] ? ' hm-weekend' : ''}" title="${esc(d)}: 0"></td>`;
           const alpha = max ? c.v / max : 0;
           const strong = alpha > 0.55;
           return `<td class="${strong ? 'hm-strong' : ''}${weekend[i] ? ' hm-weekend' : ''}" style="background:rgba(121,201,74,${alpha})" title="${esc(c.tip || '')}">${c.v}</td>`;
         })
         .join('');
-      return `<tr><td class="stat-actor" title="${esc(s.label)}">${esc(s.label)}</td>${tds}</tr>`;
+      return `<tr><td class="stat-actor hm-label" title="${esc(s.label)}">${esc(s.label)}</td>${tds}</tr>`;
     })
     .join('');
-  return `<div class="hm"><table class="stat-table hm-table">${head}<tbody>${body}</tbody></table><div class="hm-legend">нет сессий — белый · максимум — зелёный</div></div>`;
+  return `<div class="hm"><table class="stat-table hm-table"><tbody>${body}</tbody></table><div class="hm-legend">дата и число — при наведении · максимум — зелёный</div></div>`;
 }
 
 // Активность по проекту: строки — проекты, столбцы — даты текущего месяца,
@@ -205,10 +208,10 @@ function render(data, proj, team) {
     section(`Активность по проекту · ${proj.month}`, projectHeatmap(proj.monthDays, proj.projectDaily)),
     section(`Активность команды · ${team.month}`, teamHeatmap(team.monthDays, team.teamDaily)),
     section('За 30 дней', cards(data)),
-    section('Визиты по дням', dateChart(data.byDate)),
+    section('Посещения по дням', dateChart(data.byDate), 'все кабинеты (клиенты, команда, админка) · один заход на посетителя за 20 минут'),
     section('Заходы по проектам', hbars(data.byProject, 'project')),
-    section('Устройства', hbars(data.byDevice, 'device')),
-    section('Браузеры', hbars(data.byBrowser, 'browser')),
+    section('Устройства посетителей', hbars(data.byDevice, 'device_label', { valueKey: 'visitors', subKey: 'events', subUnit: 'заход(ов)' })),
+    section('Браузеры посетителей', hbars(data.byBrowser, 'browser_label', { valueKey: 'visitors', subKey: 'events', subUnit: 'заход(ов)' })),
     section('В какие проекты заходят работники', actorsByProjectTable(data.actorsByProject)),
     section('Недавние посещения', recentTable(data.recent)),
   ].join('');

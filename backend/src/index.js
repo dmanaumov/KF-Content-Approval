@@ -333,12 +333,16 @@ app.get('/api/analytics/summary', staffAuth, async (req, res) => {
          FROM access_log WHERE ts > now() - interval '30 days' AND project <> '' GROUP BY project ORDER BY events DESC LIMIT 50`
       ),
       pool.query(
-        `SELECT device, count(*)::int AS events
-         FROM access_log WHERE ts > now() - interval '30 days' AND device <> '' GROUP BY device ORDER BY events DESC`
+        `SELECT COALESCE(NULLIF(device_label,''), device) AS device_label,
+                count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
+         FROM access_log WHERE ts > now() - interval '30 days' AND device <> ''
+         GROUP BY device_label ORDER BY visitors DESC LIMIT 50`
       ),
       pool.query(
-        `SELECT browser, count(*)::int AS events
-         FROM access_log WHERE ts > now() - interval '30 days' AND browser <> '' GROUP BY browser ORDER BY events DESC`
+        `SELECT COALESCE(NULLIF(browser_label,''), browser) AS browser_label,
+                count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
+         FROM access_log WHERE ts > now() - interval '30 days' AND browser <> ''
+         GROUP BY browser_label ORDER BY visitors DESC LIMIT 50`
       ),
       pool.query(
         `SELECT actor, count(*)::int AS events
@@ -349,7 +353,8 @@ app.get('/api/analytics/summary', staffAuth, async (req, res) => {
          FROM access_log WHERE ts > now() - interval '30 days' AND actor <> '' AND project <> '' GROUP BY actor, project ORDER BY events DESC LIMIT 200`
       ),
       pool.query(
-        `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','DD.MM HH24:MI') AS ts, role, project, actor, path, device, browser
+        `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','DD.MM HH24:MI') AS ts, role, project, actor, path,
+                COALESCE(NULLIF(device_label,''), device) AS device, COALESCE(NULLIF(browser_label,''), browser) AS browser
          FROM access_log ORDER BY ts DESC LIMIT 200`
       ),
     ]);
@@ -425,7 +430,7 @@ app.get('/api/analytics/projects', staffAuth, async (req, res) => {
     }
     const [devices, daily] = await Promise.all([
       pool.query(
-        `SELECT project, device, count(*)::int AS events
+        `SELECT project, COALESCE(NULLIF(device_label,''), device) AS device, count(*)::int AS events
          FROM access_log
          WHERE project <> '' AND device <> '' AND ts >= $1 AND ts < $2
          GROUP BY project, device ORDER BY project, events DESC`,
