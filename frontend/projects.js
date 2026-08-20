@@ -80,7 +80,6 @@ let busyProjectId = null;
 // month, colored by the same status notation the client cabinet uses. A
 // hover tooltip shows the date + post title; too many posts collapse into a
 // "+N" bead so the strip never overflows.
-const MAX_BEADS = 12;
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 function formatBeadTip(p) {
   const m = (p.publishDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -96,19 +95,16 @@ function beadClass(p) {
 }
 // Each bead is a link into THIS project's client cabinet, deep-linked to the
 // post (?task=<cardId> — the cabinet scrolls to it, see focusTask in app.js).
+// Every planned post gets its own bead — the strip is allowed to wrap onto a
+// second line rather than collapsing extras into a "+N" placeholder.
 function beadsHtml(o) {
   const posts = o.posts || [];
   if (!posts.length) return '';
   const cabinet = clientLinkFor(o.token);
-  const shown = posts.slice(0, MAX_BEADS);
-  const rest = posts.length - shown.length;
-  const beads = shown
+  const beads = posts
     .map((p) => `<a class="proj-bead-wrap" href="${cabinet}?task=${encodeURIComponent(p.id)}" target="_blank" rel="noopener" data-tip="${esc(formatBeadTip(p))}"><i class="proj-bead ${beadClass(p)}"></i></a>`)
     .join('');
-  const more = rest > 0
-    ? `<a class="proj-bead-wrap" href="${cabinet}" target="_blank" rel="noopener" data-tip="ещё ${rest} ${plural(rest, 'пост', 'поста', 'постов')} в этом месяце — открыть кабинет"><i class="proj-bead more">+${rest}</i></a>`
-    : '';
-  return `<div class="proj-posts">${beads}${more}</div>`;
+  return `<div class="proj-posts">${beads}</div>`;
 }
 
 function render(filterText) {
