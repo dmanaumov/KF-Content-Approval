@@ -328,8 +328,13 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
 
   return {
     // status === null → "Статус" value isn't a client-facing one (internal
-    // production stage) → hidden. status === 'archived' → explicitly hidden.
-    tasks: tasks.filter((t) => t.status && t.status !== 'archived'),
+    // production stage) → hidden from the client cabinet. status === 'archived'
+    // → explicitly hidden. The staff page (GET /api/projects in index.js) can
+    // opt into seeing internal-stage posts too via opts.includeInternal — it
+    // needs them for the bead strip, but they must never reach the client.
+    tasks: opts.includeInternal
+      ? tasks.filter((t) => t.status !== 'archived')
+      : tasks.filter((t) => t.status && t.status !== 'archived'),
       meta: {
         approvalPropertyFound: !!approvalProp,
         publishDatePropertyFound: !!publishDateProp,

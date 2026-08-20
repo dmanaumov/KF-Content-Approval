@@ -3,6 +3,26 @@
    so this internal staff page matches the client cabinet's look. */
 .proj-search{width:100%;border:1px solid var(--line);background:#fff;border-radius:14px;padding:12px 14px;font-size:14px;margin:4px 0 16px;outline:none;font:inherit;color:var(--ink)}
 .proj-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+/* Staff header — the same .head card as the client cabinet, but richer: a
+   teal→purple gradient accent line on top, logo + two-line title with the
+   brand word gradient-highlighted, and a "team-only" live pill on the right.
+   (projects.html; the admin page, not shown to clients.) */
+.staff-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:20px 22px;overflow:hidden}
+.staff-head::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--accent),var(--ai))}
+.staff-head-main{display:flex;align-items:center;gap:14px;min-width:0}
+.staff-head-text{min-width:0;display:grid;gap:4px}
+.staff-title{margin:0;font-size:19px;font-weight:850;line-height:1.25;color:var(--ink)}
+.staff-title-brand{background:linear-gradient(90deg,var(--accent),var(--ai));-webkit-background-clip:text;background-clip:text;color:transparent}
+.staff-sub{margin:0;font-size:12.5px;color:var(--muted)}
+.staff-head-pill{flex:0 0 auto;display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:7px 12px;font-size:11px;font-weight:800;color:var(--muted);background:#FAFBFB}
+.staff-head-pill::before{content:"";width:8px;height:8px;border-radius:50%;background:#79C94A;box-shadow:0 0 0 3px rgba(121,201,74,.18)}
+@media(max-width:480px){
+  .staff-head{padding:16px}
+  .staff-head-main{gap:10px}
+  .staff-title{font-size:15.5px}
+  .staff-head-pill{display:none}
+  .kf img{width:56px}
+}
 .proj-list{display:grid;gap:12px}
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
 /* AI-project cards: full AI (all four prompts filled) gets the AI accent —
@@ -58,6 +78,53 @@
 @media (hover:none){
   .proj-kpi-dot[data-tip]::after{white-space:normal;max-width:180px}
   .proj-kpi-dot[data-tip]:active::after{opacity:1}
+}
+/* Beads-on-a-thread strip at the bottom of each project card — one bead per
+   post planned this month (see postsForMonth in backend/src/index.js). The
+   faint line underneath is the "thread" the beads sit on. Colors reuse the
+   client cabinet's calendar dots (app.css .cal-dot.*), so a bead means
+   exactly what the matching client-side post does: blue=опубликовано,
+   green=согласовано, gold=ждёт решения, red=есть правки. */
+.proj-posts{position:relative;display:flex;align-items:center;gap:7px;padding:2px 2px 1px}
+.proj-posts::before{content:"";position:absolute;left:5px;right:5px;top:50%;height:2px;border-radius:2px;background:linear-gradient(90deg,rgba(0,70,67,.05),rgba(0,70,67,.15) 8%,rgba(0,70,67,.15) 92%,rgba(0,70,67,.05));transform:translateY(-50%)}
+.proj-bead-wrap{position:relative;display:inline-flex;cursor:pointer;text-decoration:none}
+.proj-bead{width:9px;height:9px;border-radius:50%;background:#C9CFCD;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.22);z-index:1;transition:transform .12s ease}
+.proj-bead-wrap:hover .proj-bead{transform:scale(1.4)}
+.proj-bead.published{background:#3FA9F5}
+.proj-bead.approved{background:#79C94A}
+.proj-bead.waiting{background:#F5C518}
+.proj-bead.changes{background:#E64545}
+/* Post still in an internal production stage (not one of the client cabinet's
+   statuses): graphite outline + light-gray fill — visible to the staff here,
+   but the client cabinet doesn't show it (see buildTasks in taskMapper.js). */
+.proj-bead.internal{background:#EDEFEF;border-color:#4B5654}
+.proj-bead.more{width:auto;border:0;border-radius:999px;background:#EDEFEF;color:#4B5654;font-size:9px;font-weight:800;line-height:1;padding:3px 5px;box-shadow:none}
+/* Tooltip for a bead: dark pill below the row (same pattern as .proj-kpi-dot
+   above), but long post titles are allowed to wrap instead of overflowing. */
+.proj-bead-wrap[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:50%;
+  transform:translateX(-50%);
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+}
+.proj-bead-wrap[data-tip]:hover::after,
+.proj-bead-wrap[data-tip]:focus-visible::after{opacity:1}
+@media (hover:none){
+  .proj-bead-wrap[data-tip]::after{white-space:normal;max-width:200px}
+  .proj-bead-wrap[data-tip]:active::after{opacity:1}
 }
 .proj-logo img{width:100%;height:100%;object-fit:contain}
 .proj-logo-fallback{font-weight:800;font-size:18px;color:#fff}

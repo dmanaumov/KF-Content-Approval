@@ -562,6 +562,10 @@ async function loadTasks() {
     if (deepLinkTaskId) {
       const t = state.tasks.find((x) => x.id === deepLinkTaskId);
       if (t) activeWeek = t.weekStart;
+      // Clear the status filter so the linked card actually renders even if
+      // it's not "waiting" (same as focusTask does for attention-panel links).
+      activeFilter = '';
+      document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
     }
     render();
   } catch (err) {

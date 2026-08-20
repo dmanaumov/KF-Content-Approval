@@ -75,6 +75,42 @@ async function copyToClipboard(text) {
 let options = [];
 let busyProjectId = null;
 
+// Beads-on-a-thread strip at the bottom of each project card (see
+// postsForMonth in backend/src/index.js): one bead per post planned this
+// month, colored by the same status notation the client cabinet uses. A
+// hover tooltip shows the date + post title; too many posts collapse into a
+// "+N" bead so the strip never overflows.
+const MAX_BEADS = 12;
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+function formatBeadTip(p) {
+  const m = (p.publishDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const date = m ? `${+m[3]} ${MONTHS_SHORT[+m[2] - 1]}` : (p.publishDate || '—');
+  return `${date} · ${p.title}`;
+}
+// Known client-status posts get the cabinet's color; anything still in an
+// internal production stage gets the graphite outline + light-gray fill (the
+// staff page sees those posts, the client cabinet doesn't).
+const BEAD_CLASS = { published: 'published', approved: 'approved', waiting: 'waiting', changes: 'changes' };
+function beadClass(p) {
+  return BEAD_CLASS[p.status] || 'internal';
+}
+// Each bead is a link into THIS project's client cabinet, deep-linked to the
+// post (?task=<cardId> — the cabinet scrolls to it, see focusTask in app.js).
+function beadsHtml(o) {
+  const posts = o.posts || [];
+  if (!posts.length) return '';
+  const cabinet = clientLinkFor(o.token);
+  const shown = posts.slice(0, MAX_BEADS);
+  const rest = posts.length - shown.length;
+  const beads = shown
+    .map((p) => `<a class="proj-bead-wrap" href="${cabinet}?task=${encodeURIComponent(p.id)}" target="_blank" rel="noopener" data-tip="${esc(formatBeadTip(p))}"><i class="proj-bead ${beadClass(p)}"></i></a>`)
+    .join('');
+  const more = rest > 0
+    ? `<a class="proj-bead-wrap" href="${cabinet}" target="_blank" rel="noopener" data-tip="ещё ${rest} ${plural(rest, 'пост', 'поста', 'постов')} в этом месяце — открыть кабинет"><i class="proj-bead more">+${rest}</i></a>`
+    : '';
+  return `<div class="proj-posts">${beads}${more}</div>`;
+}
+
 function render(filterText) {
   // TODO (когда проектов станет >20): разделить ИИ-проекты и обычные через
   // закладки/фильтры — сейчас они вперемешку в одном списке.
@@ -125,6 +161,7 @@ function render(filterText) {
               </button>
             </div>
           </div>
+          ${beadsHtml(o)}
         </div>`;
       })
       .join('') || '<div class="empty">Ничего не найдено.</div>';
