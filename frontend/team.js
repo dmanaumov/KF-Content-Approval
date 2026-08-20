@@ -18,6 +18,23 @@ const norm = (s) => String(s || '').trim().toLowerCase();
 
 let currentTasks = [];
 let activeStatuses = null;
+const FILTERS_KEY = 'kf.team.filters.v1';
+
+function saveFilters() {
+  try { localStorage.setItem(FILTERS_KEY, JSON.stringify(activeStatuses ? [...activeStatuses] : [])); } catch (e) {}
+}
+
+// По умолчанию все статусы включены; выбранное пользователем запоминается и
+// восстанавливается после перезагрузки страницы. Новые статусы (которых ещё
+// не было при сохранении) включаются по умолчанию.
+function loadSavedFilters(allStatuses) {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || 'null'); } catch (e) {}
+  if (Array.isArray(saved) && saved.length) {
+    return new Set(allStatuses.filter((s) => saved.includes(s)));
+  }
+  return new Set(allStatuses);
+}
 
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -177,7 +194,7 @@ function renderChips() {
     const ib = PREFERRED_STATUS_ORDER.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
-  activeStatuses = new Set(seen.map(norm));
+  activeStatuses = loadSavedFilters(seen.map(norm));
   teamFilters.hidden = false;
   teamFilters.innerHTML = seen
     .map((s) => {
@@ -249,6 +266,7 @@ teamFilters.addEventListener('click', (e) => {
   if (activeStatuses.has(key)) activeStatuses.delete(key);
   else activeStatuses.add(key);
   btn.classList.toggle('active');
+  saveFilters();
   renderTasks();
 });
 

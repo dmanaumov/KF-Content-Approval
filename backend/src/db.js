@@ -97,6 +97,29 @@ async function initSchema() {
       published_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  // Access analytics — who/when/from-which-device-browser/into-which-project
+  // (see analytics.js). Written by this app only; the stats views that read
+  // it are a later phase.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS access_log (
+      id bigserial PRIMARY KEY,
+      ts timestamptz NOT NULL DEFAULT now(),
+      role text NOT NULL DEFAULT '',
+      visitor_id text NOT NULL DEFAULT '',
+      project text NOT NULL DEFAULT '',
+      actor text NOT NULL DEFAULT '',
+      path text NOT NULL DEFAULT '',
+      device text NOT NULL DEFAULT '',
+      browser text NOT NULL DEFAULT '',
+      ua text NOT NULL DEFAULT ''
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS access_log_ts_idx ON access_log (ts);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS access_log_role_idx ON access_log (role);`);
+  await pool.query(`
+    ALTER TABLE access_log
+      ADD COLUMN IF NOT EXISTS actor_name text NOT NULL DEFAULT '';
+  `);
   await ensureN8nRole();
 }
 

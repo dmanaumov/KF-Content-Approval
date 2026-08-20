@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>КФ — Статистика доступа</title>
+  <link rel="stylesheet" href="/app.css?v=7">
+  <link rel="stylesheet" href="/stat.css?v=2">
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div class="head-top">
+      <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+      <div class="head-right">
+        <div class="client-brand"><strong>Статистика доступа</strong></div>
+        <a class="cal-toggle" href="/admin" title="К админке" aria-label="К админке">←</a>
+      </div>
+    </div>
+  </header>
+
+  <div id="statLoading" class="loading">Загружаем статистику…</div>
+  <div id="statError" class="error-box stat-error" hidden></div>
+  <main id="statRoot" class="stat-root"></main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/stat.js?v=3"></script>
+</body>
+</html>

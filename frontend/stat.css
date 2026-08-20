@@ -1,0 +1,52 @@
+/* Access statistics page (frontend/stat.html/js) — cards, day chart,
+   horizontal bars and tables over the access_log data. Layered on app.css
+   (.status/.status.*, .loading, .error-box, .head, .toast). */
+
+.stat-error{margin:18px 12px}
+
+.stat-root{display:flex;flex-direction:column;gap:18px;padding:2px 12px 32px}
+
+.stat-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;text-align:center}
+.stat-card-num{font-size:26px;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
+.stat-card-label{font-size:12px;color:var(--muted);font-weight:700;margin-top:2px}
+
+.stat-section{background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px}
+.stat-section h2{font-size:14px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;color:var(--ink);margin:0 0 14px}
+
+.c-chart{display:flex;align-items:flex-end;gap:3px;overflow-x:auto;padding-bottom:4px}
+.c-bar{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;flex:0 0 auto;min-width:0}
+.c-bar-fill{width:16px;border-radius:5px 5px 0 0;background:linear-gradient(180deg,#6BD3C2,var(--accent))}
+.c-bar-label{font-size:10px;color:var(--muted);font-weight:700;margin-top:4px;white-space:nowrap}
+
+.hb{margin-bottom:12px}
+.hb:last-child{margin-bottom:0}
+.hb-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px}
+.hb-name{font-size:13px;font-weight:750;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hb-val{font-size:12px;color:var(--muted);font-weight:800;white-space:nowrap;flex:0 0 auto}
+.hb-track{height:8px;border-radius:999px;background:#EEF1F0;overflow:hidden}
+.hb-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#6BD3C2,var(--accent))}
+
+.stat-table{width:100%;border-collapse:collapse;font-size:13px}
+.stat-table th{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+.stat-table td{padding:8px;border-bottom:1px solid #F1F3F3;vertical-align:top}
+.stat-table tbody tr:last-child td{border-bottom:0}
+.stat-actor{font-weight:800;white-space:nowrap}
+.stat-nowrap{white-space:nowrap;color:var(--muted);font-weight:700}
+.stat-proj{display:inline-block;background:#F2F6F5;border:1px solid var(--line);border-radius:999px;padding:3px 9px;margin:0 6px 6px 0;font-size:12px}
+.stat-proj b{color:var(--ink)}
+.stat-dev{display:inline-block;background:#F2F6F5;border:1px solid var(--line);border-radius:999px;padding:3px 9px;margin:0 6px 6px 0;font-size:12px;color:#33413F}
+.stat-dev b{color:var(--ink);margin-left:4px}
+.muted{color:var(--muted);font-size:13px}
+
+/* Тепловая карта «проекты × дни месяца»: нет входов = белый, макс = зелёный. */
+.hm{overflow-x:auto}
+.hm-table{min-width:100%;border-collapse:collapse}
+.hm-table th,.hm-table td{border:1px solid var(--line);padding:5px 3px;text-align:center;min-width:32px;font-size:12px;font-weight:700;color:var(--ink)}
+.hm-table th{font-size:10px;text-transform:none;letter-spacing:0;padding:4px 2px;white-space:nowrap;border-bottom:1px solid var(--line)}
+.hm-table th:first-child,.hm-table td:first-child{text-align:left;min-width:130px;position:sticky;left:0;background:#fff}
+.hm-table th:first-child{background:#fff}
+.hm-weekend{background:#FAFBFA}
+.hm-zero{background:#fff;color:transparent}
+.hm-strong{color:#fff;font-weight:800}
+.hm-legend{margin-top:8px;font-size:11px;color:var(--muted);font-weight:650}

@@ -9,6 +9,7 @@ const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
 const teamAuth = require('./teamAuth');
 const mailer = require('./mailer');
+const analytics = require('./analytics');
 
 const app = express();
 app.use(express.json());
@@ -105,6 +106,15 @@ async function resolveDiskMediaKinds(tasks) {
   return tasks;
 }
 
+// Resolves a project option id (from a client cabinet ?project= query) to its
+// human-readable label for the access log — falls back to the raw id when the
+// property/option can't be found, so analytics never crash on a rename.
+function projectLabelFor(board, projectId) {
+  const prop = findPropertyDef(board, config.projectPropertyName);
+  const label = prop ? optionLabelById(prop, projectId) : '';
+  return label || String(projectId || '');
+}
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
@@ -128,6 +138,11 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
     }
     await resolveDiskMediaKinds(tasks);
     await mediaOrder.applyStoredOrder(req.params.boardId, tasks);
+    // Access analytics: the client (or a team member/staffer opening the
+    // cabinet via an admin link) loaded their tasks — record who/when/device/
+    // which project (see analytics.js; deduped to once per ~session).
+    const who = analytics.identify(req);
+    analytics.note(who.role, { project: projectLabelFor(board, req.query.project), actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
     res.json({
       board: { id: req.params.boardId, title: board.title || '' },
       tasks,
@@ -287,10 +302,149 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus, posts };
       })
     );
+    const who = analytics.identify(req);
+    analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
   } catch (err) {
     console.error('[api] GET projects failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// GET /api/analytics/summary — aggregated access statistics for the /stat page
+// (see frontend/stat.html/js): last 30 days, grouped by role/date/project/
+// device/browser/team-member, plus the most recent raw visits. Staff-gated
+// like the rest of the internal API. The byDate "day" labels are Moscow time.
+app.get('/api/analytics/summary', staffAuth, async (req, res) => {
+  try {
+    const pool = db.requirePool();
+    const [byRole, byDate, byProject, byDevice, byBrowser, byActor, actorsByProject, recent] = await Promise.all([
+      pool.query(
+        `SELECT role, count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
+         FROM access_log WHERE ts > now() - interval '30 days' GROUP BY role`
+      ),
+      pool.query(
+        `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD') AS day,
+                count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
+         FROM access_log WHERE ts > now() - interval '30 days' GROUP BY day ORDER BY day`
+      ),
+      pool.query(
+        `SELECT project, count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
+         FROM access_log WHERE ts > now() - interval '30 days' AND project <> '' GROUP BY project ORDER BY events DESC LIMIT 50`
+      ),
+      pool.query(
+        `SELECT device, count(*)::int AS events
+         FROM access_log WHERE ts > now() - interval '30 days' AND device <> '' GROUP BY device ORDER BY events DESC`
+      ),
+      pool.query(
+        `SELECT browser, count(*)::int AS events
+         FROM access_log WHERE ts > now() - interval '30 days' AND browser <> '' GROUP BY browser ORDER BY events DESC`
+      ),
+      pool.query(
+        `SELECT actor, count(*)::int AS events
+         FROM access_log WHERE ts > now() - interval '30 days' AND actor <> '' GROUP BY actor ORDER BY events DESC LIMIT 50`
+      ),
+      pool.query(
+        `SELECT actor, project, count(*)::int AS events
+         FROM access_log WHERE ts > now() - interval '30 days' AND actor <> '' AND project <> '' GROUP BY actor, project ORDER BY events DESC LIMIT 200`
+      ),
+      pool.query(
+        `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','DD.MM HH24:MI') AS ts, role, project, actor, path, device, browser
+         FROM access_log ORDER BY ts DESC LIMIT 200`
+      ),
+    ]);
+    res.json({
+      days: 30,
+      byRole: byRole.rows,
+      byDate: byDate.rows,
+      byProject: byProject.rows,
+      byDevice: byDevice.rows,
+      byBrowser: byBrowser.rows,
+      byActor: byActor.rows,
+      actorsByProject: actorsByProject.rows,
+      recent: recent.rows,
+    });
+  } catch (err) {
+    console.error('[api] analytics summary failed:', err.message);
+    res.status(500).json({ error: 'analytics_unavailable', message: err.message });
+  }
+});
+
+// GET /api/analytics/team — session heatmap data for the /stat "команда"
+// view: rows are team members (actor username + full name from actor_name),
+// columns are the days of the current Moscow month, cells = how many sessions
+// that person had that day (deduped to ~one per 20 minutes in analytics.js).
+app.get('/api/analytics/team', staffAuth, async (req, res) => {
+  try {
+    const pool = db.requirePool();
+    const moscowDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+    const [y, m] = moscowDay.slice(0, 7).split('-').map(Number);
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+    const monthStart = new Date(Date.UTC(y, m - 1, 0, 21));
+    const monthEnd = new Date(Date.UTC(nextY, nextM - 1, 0, 21));
+    const monthDays = [];
+    for (let d = new Date(monthStart.getTime()); d < monthEnd; d.setUTCDate(d.getUTCDate() + 1)) {
+      monthDays.push(new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10));
+    }
+    const daily = await pool.query(
+      `SELECT actor, max(actor_name) AS actor_name,
+              to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD') AS day,
+              count(*)::int AS sessions,
+              count(DISTINCT device)::int AS devices,
+              count(DISTINCT visitor_id)::int AS visitors
+       FROM access_log
+       WHERE role = 'team' AND actor <> '' AND ts >= $1 AND ts < $2
+       GROUP BY actor, day ORDER BY actor, day`,
+      [monthStart.toISOString(), monthEnd.toISOString()]
+    );
+    res.json({ month: `${String(m).padStart(2, '0')}.${y}`, monthDays, teamDaily: daily.rows });
+  } catch (err) {
+    console.error('[api] analytics team failed:', err.message);
+    res.status(500).json({ error: 'analytics_unavailable', message: err.message });
+  }
+});
+
+// GET /api/analytics/projects — the two project-activity views for /stat:
+// (a) per project, the devices that entered its approval cabinet, and
+// (b) a project × current-Moscow-month-day heatmap of entry counts (no
+// entries → white cell, max → green — see frontend/stat.js). "Московский
+// месяц" считается точно: день в МСК начинается в 21:00 UTC предыдущего.
+app.get('/api/analytics/projects', staffAuth, async (req, res) => {
+  try {
+    const pool = db.requirePool();
+    const moscowDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date()); // YYYY-MM-DD
+    const [y, m] = moscowDay.slice(0, 7).split('-').map(Number);
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+    const monthStart = new Date(Date.UTC(y, m - 1, 0, 21)); // 1-е число 00:00 МСК
+    const monthEnd = new Date(Date.UTC(nextY, nextM - 1, 0, 21)); // 1-е следующего 00:00 МСК
+    const monthDays = [];
+    for (let d = new Date(monthStart.getTime()); d < monthEnd; d.setUTCDate(d.getUTCDate() + 1)) {
+      monthDays.push(new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10));
+    }
+    const [devices, daily] = await Promise.all([
+      pool.query(
+        `SELECT project, device, count(*)::int AS events
+         FROM access_log
+         WHERE project <> '' AND device <> '' AND ts >= $1 AND ts < $2
+         GROUP BY project, device ORDER BY project, events DESC`,
+        [monthStart.toISOString(), monthEnd.toISOString()]
+      ),
+      pool.query(
+        `SELECT project, to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD') AS day,
+                count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors,
+                count(DISTINCT device)::int AS devices
+         FROM access_log
+         WHERE project <> '' AND ts >= $1 AND ts < $2
+         GROUP BY project, day ORDER BY project, day`,
+        [monthStart.toISOString(), monthEnd.toISOString()]
+      ),
+    ]);
+    res.json({ month: `${String(m).padStart(2, '0')}.${y}`, monthDays, projectDevices: devices.rows, projectDaily: daily.rows });
+  } catch (err) {
+    console.error('[api] analytics projects failed:', err.message);
+    res.status(500).json({ error: 'analytics_unavailable', message: err.message });
   }
 });
 
@@ -368,6 +522,7 @@ app.post('/api/team/login', async (req, res) => {
     const { token, user } = await mm.loginAs(login, password);
     const sessionId = teamAuth.createSession(token, user);
     teamAuth.setSessionCookie(res, sessionId);
+    analytics.note('team', { actor: user.username || login, actorName: [user.first_name, user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
     res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
   } catch (err) {
     // Wrong password, unknown user, Mattermost unreachable — all land here.
@@ -420,6 +575,7 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     const mine = tasks.filter((t) => t.assigneeId === myId);
     await resolveDiskMediaKinds(mine);
     await mediaOrder.applyStoredOrder(boardId, mine);
+    analytics.note('team', { actor: req.teamSession.user.username || '', actorName: [req.teamSession.user.first_name, req.teamSession.user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
     res.json({ tasks: mine });
   } catch (err) {
     console.error('[api] team tasks failed:', err.message);
@@ -769,6 +925,11 @@ app.get('/p/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'index.
 // displayed permanently — a redirect only hides the destination up to the
 // first click, not after; switched away from that on purpose.)
 app.get('/l/:token', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
+
+// GET /stat — access statistics page (tables + charts over the access_log
+// data, see frontend/stat.html/js). Staff-gated like the rest of the internal
+// pages; the data API behind it (/api/analytics/summary) is gated regardless.
+app.get('/stat', staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'stat.html')));
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns
