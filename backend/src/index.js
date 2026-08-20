@@ -318,7 +318,11 @@ app.get('/api/projects', staffAuth, async (req, res) => {
 app.get('/api/analytics/summary', staffAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
-    const [byRole, byDate, byProject, byDevice, byBrowser, byActor, actorsByProject, recent] = await Promise.all([
+    const [totalVisitors, byRole, byDate, byProject, byDevice, byBrowser, byActor, actorsByProject, recent] = await Promise.all([
+      pool.query(
+        `SELECT count(DISTINCT visitor_id)::int AS visitors
+         FROM access_log WHERE ts > now() - interval '30 days' AND visitor_id <> ''`
+      ),
       pool.query(
         `SELECT role, count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
          FROM access_log WHERE ts > now() - interval '30 days' GROUP BY role`
@@ -360,6 +364,7 @@ app.get('/api/analytics/summary', staffAuth, async (req, res) => {
     ]);
     res.json({
       days: 30,
+      totalVisitors: totalVisitors.rows[0].visitors,
       byRole: byRole.rows,
       byDate: byDate.rows,
       byProject: byProject.rows,
@@ -375,23 +380,44 @@ app.get('/api/analytics/summary', staffAuth, async (req, res) => {
   }
 });
 
+// Окно «московского месяца» для месячных аналитических вью: принимает
+// ?month=YYYY-MM (или текущий месяц в МСК), возвращает границы (МСК-день
+// начинается в 21:00 UTC предыдущего) и список дней месяца. Передвигаться
+// назад можно до сколь угодно — строки давнее RETENTION_DAYS и так
+// вычищаются pruneOldLogs.
+function monthWindow(raw) {
+  const moscowDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const [curY, curM] = moscowDay.slice(0, 7).split('-').map(Number);
+  let y = curY;
+  let m = curM;
+  const match = String(raw || '').match(/^(\d{4})-(\d{2})$/);
+  if (match) {
+    const yy = Number(match[1]);
+    const mm = Number(match[2]);
+    if (mm >= 1 && mm <= 12 && yy >= 2000 && yy <= 2100) {
+      y = yy;
+      m = mm;
+    }
+  }
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  const monthStart = new Date(Date.UTC(y, m - 1, 0, 21)); // 1-е число 00:00 МСК
+  const monthEnd = new Date(Date.UTC(nextY, nextM - 1, 0, 21)); // 1-е следующего 00:00 МСК
+  const monthDays = [];
+  for (let d = new Date(monthStart.getTime()); d < monthEnd; d.setUTCDate(d.getUTCDate() + 1)) {
+    monthDays.push(new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10));
+  }
+  return { y, m, monthStart, monthEnd, monthDays };
+}
+
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
 // view: rows are team members (actor username + full name from actor_name),
-// columns are the days of the current Moscow month, cells = how many sessions
+// columns are the days of the viewed Moscow month, cells = how many sessions
 // that person had that day (deduped to ~one per 20 minutes in analytics.js).
 app.get('/api/analytics/team', staffAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
-    const moscowDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
-    const [y, m] = moscowDay.slice(0, 7).split('-').map(Number);
-    const nextY = m === 12 ? y + 1 : y;
-    const nextM = m === 12 ? 1 : m + 1;
-    const monthStart = new Date(Date.UTC(y, m - 1, 0, 21));
-    const monthEnd = new Date(Date.UTC(nextY, nextM - 1, 0, 21));
-    const monthDays = [];
-    for (let d = new Date(monthStart.getTime()); d < monthEnd; d.setUTCDate(d.getUTCDate() + 1)) {
-      monthDays.push(new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10));
-    }
+    const { y, m, monthStart, monthEnd, monthDays } = monthWindow(req.query.month);
     const daily = await pool.query(
       `SELECT actor, max(actor_name) AS actor_name,
               to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD') AS day,
@@ -412,22 +438,13 @@ app.get('/api/analytics/team', staffAuth, async (req, res) => {
 
 // GET /api/analytics/projects — the two project-activity views for /stat:
 // (a) per project, the devices that entered its approval cabinet, and
-// (b) a project × current-Moscow-month-day heatmap of entry counts (no
-// entries → white cell, max → green — see frontend/stat.js). "Московский
-// месяц" считается точно: день в МСК начинается в 21:00 UTC предыдущего.
+// (b) a project × viewed-Moscow-month-day heatmap of entry counts (no
+// entries → white cell, max → green — see frontend/stat.js). Принимает
+// ?month=YYYY-MM, по умолчанию — текущий месяц в МСК.
 app.get('/api/analytics/projects', staffAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
-    const moscowDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date()); // YYYY-MM-DD
-    const [y, m] = moscowDay.slice(0, 7).split('-').map(Number);
-    const nextY = m === 12 ? y + 1 : y;
-    const nextM = m === 12 ? 1 : m + 1;
-    const monthStart = new Date(Date.UTC(y, m - 1, 0, 21)); // 1-е число 00:00 МСК
-    const monthEnd = new Date(Date.UTC(nextY, nextM - 1, 0, 21)); // 1-е следующего 00:00 МСК
-    const monthDays = [];
-    for (let d = new Date(monthStart.getTime()); d < monthEnd; d.setUTCDate(d.getUTCDate() + 1)) {
-      monthDays.push(new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10));
-    }
+    const { y, m, monthStart, monthEnd, monthDays } = monthWindow(req.query.month);
     const [devices, daily] = await Promise.all([
       pool.query(
         `SELECT project, COALESCE(NULLIF(device_label,''), device) AS device, count(*)::int AS events

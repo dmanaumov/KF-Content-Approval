@@ -129,10 +129,11 @@ function identify(req) {
   return { role: 'client', actor: '', actorName: '' };
 }
 
-// Удаляет строки access_log старше RETENTION_DAYS. Вызывается один раз на
-// старте (после initSchema — без отдельного cron-цикла, в стиле этого
-// проекта) и, как страховка на случай долгого аптайма без рестартов, раз в
-// ~PRUNE_EVERY_INSERTS записей из note(). Никогда не бросает исключение.
+// Удаляет строки access_log старше RETENTION_DAYS + мусорные «desktop»-строки.
+// Вызывается один раз на старте (после initSchema — без отдельного cron-цикла,
+// в стиле этого проекта) и, как страховка на случай долгого аптайма без
+// рестартов, раз в ~PRUNE_EVERY_INSERTS записей из note(). Никогда не бросает
+// исключение.
 async function pruneOldLogs() {
   if (!config.databaseUrl || !db.pool) return 0;
   try {
@@ -141,7 +142,16 @@ async function pruneOldLogs() {
       [RETENTION_DAYS]
     );
     if (rowCount > 0) console.log(`[analytics] pruned ${rowCount} access_log row(s) older than ${RETENTION_DAYS} days.`);
-    return rowCount;
+    // Строки с голым `device = 'desktop'` и без device_label — легаси от версий
+    // до подробного распознавания (см. uaInfo) — бесполезны и только мусорят
+    // список «Устройств». Новые десктопные строки всегда имеют device_label
+    // (например «macOS 14.5»), так что они под этот фильтр не попадают.
+    const { rowCount: desk } = await db.pool.query(
+      `DELETE FROM access_log
+       WHERE device = 'desktop' AND (device_label = '' OR device_label IS NULL)`
+    );
+    if (desk > 0) console.log(`[analytics] removed ${desk} legacy unlabeled "desktop" row(s).`);
+    return rowCount + desk;
   } catch (err) {
     console.error('[analytics] prune failed:', err.message);
     return 0;

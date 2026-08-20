@@ -32,7 +32,7 @@ async function createSession(mmToken, user) {
   if (db.pool) {
     try {
       await db.pool.query(
-        `INSERT INTO team_sessions (id, mm_token, user, expires_at)
+        `INSERT INTO team_sessions (id, mm_token, user_data, expires_at)
          VALUES ($1, $2, $3, to_timestamp($4 / 1000.0))
          ON CONFLICT (id) DO NOTHING`,
         [id, mmToken, JSON.stringify(user), expiresAt]
@@ -70,10 +70,10 @@ async function restoreSessions() {
   if (!db.pool) return;
   try {
     const { rows } = await db.pool.query(
-      'SELECT id, mm_token, user, expires_at FROM team_sessions WHERE expires_at > now()'
+      'SELECT id, mm_token, user_data, expires_at FROM team_sessions WHERE expires_at > now()'
     );
     rows.forEach((r) => {
-      sessions.set(r.id, { mmToken: r.mm_token, user: r.user, expiresAt: new Date(r.expires_at).getTime() });
+      sessions.set(r.id, { mmToken: r.mm_token, user: r.user_data, expiresAt: new Date(r.expires_at).getTime() });
     });
     await db.pool.query('DELETE FROM team_sessions WHERE expires_at <= now()');
     console.log(`[teamAuth] restored ${rows.length} team session(s) from Postgres.`);

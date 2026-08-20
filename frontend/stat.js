@@ -8,6 +8,38 @@ const errorBox = document.getElementById('statError');
 const ROLE_LABEL = { client: 'Клиент', team: 'Команда', staff: 'Админка' };
 const ROLE_CLASS = { client: 'waiting', team: 'approved', staff: 'internal' };
 
+const MONTH_NAMES = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+
+let summary = null; // данные «за 30 дней» — загружаются один раз
+let viewMonth = null; // { y, m } — московский месяц, который показываем в месячных вью
+
+function currentMoscowMonth() {
+  const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const [y, m] = d.slice(0, 7).split('-').map(Number);
+  return { y, m };
+}
+
+function shiftMonth(ym, delta) {
+  let m = ym.m + delta;
+  if (m < 1) return { y: ym.y - 1, m: 12 };
+  if (m > 12) return { y: ym.y + 1, m: 1 };
+  return { y: ym.y, m };
+}
+
+function monthQuery() {
+  return `?month=${String(viewMonth.y).padStart(4, '0')}-${String(viewMonth.m).padStart(2, '0')}`;
+}
+
+function monthNav() {
+  const cur = currentMoscowMonth();
+  const atCurrent = viewMonth.y === cur.y && viewMonth.m === cur.m;
+  return `<section class="stat-section month-nav">
+    <button id="monthPrev" class="month-btn" title="Предыдущий месяц" aria-label="Предыдущий месяц">←</button>
+    <span class="month-label">${MONTH_NAMES[viewMonth.m - 1]} ${viewMonth.y}</span>
+    <button id="monthNext" class="month-btn" title="Следующий месяц" aria-label="Следующий месяц" ${atCurrent ? 'disabled' : ''}>→</button>
+  </section>`;
+}
+
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -67,6 +99,7 @@ function cards(data) {
   const staff = byRole.staff || { events: 0, visitors: 0 };
   return `<div class="stat-cards">
     <div class="stat-card"><div class="stat-card-num">${total}</div><div class="stat-card-label">всего событий за 30 дней</div></div>
+    <div class="stat-card"><div class="stat-card-num">${data.totalVisitors || 0}</div><div class="stat-card-label">уникальных посетителей</div></div>
     <div class="stat-card"><div class="stat-card-num">${clients.visitors || 0}</div><div class="stat-card-label">уникальных клиентов</div></div>
     <div class="stat-card"><div class="stat-card-num">${clients.events || 0}</div><div class="stat-card-label">заходов клиентов</div></div>
     <div class="stat-card"><div class="stat-card-num">${team.events || 0}</div><div class="stat-card-label">действий команды</div></div>
@@ -204,6 +237,7 @@ function teamHeatmap(monthDays, daily) {
 
 function render(data, proj, team) {
   const html = [
+    monthNav(),
     section(`Активность по проектам · ${proj.month}`, projectDevicesTable(proj.projectDevices)),
     section(`Активность по проекту · ${proj.month}`, projectHeatmap(proj.monthDays, proj.projectDaily)),
     section(`Активность команды · ${team.month}`, teamHeatmap(team.monthDays, team.teamDaily)),
@@ -216,29 +250,57 @@ function render(data, proj, team) {
     section('Недавние посещения', recentTable(data.recent)),
   ].join('');
   root.innerHTML = html;
+  document.getElementById('monthPrev').addEventListener('click', () => {
+    viewMonth = shiftMonth(viewMonth, -1);
+    renderAll();
+  });
+  document.getElementById('monthNext').addEventListener('click', () => {
+    viewMonth = shiftMonth(viewMonth, 1);
+    renderAll();
+  });
 }
 
 async function load() {
   try {
-    const [sumRes, projRes, teamRes] = await Promise.all([
-      fetch('/api/analytics/summary'),
-      fetch('/api/analytics/projects'),
-      fetch('/api/analytics/team'),
-    ]);
-    if (sumRes.status === 401 || projRes.status === 401 || teamRes.status === 401) {
+    viewMonth = currentMoscowMonth();
+    const sumRes = await fetch('/api/analytics/summary');
+    if (sumRes.status === 401) {
       errorBox.textContent = 'Нужен доступ администратора (введите пароль от админки). Обновите страницу после входа.';
       errorBox.hidden = false;
       loading.hidden = true;
       return;
     }
-    const data = await sumRes.json();
+    summary = await sumRes.json();
+    if (!sumRes.ok) throw new Error(summary.message || 'Ошибка загрузки статистики');
+    await renderAll();
+  } catch (err) {
+    loading.hidden = true;
+    errorBox.textContent = 'Не удалось загрузить статистику: ' + err.message;
+    errorBox.hidden = false;
+  }
+}
+
+// Перезагружает месячные вью (проекты + команда) для viewMonth и рисует
+// страницу. Сводка «за 30 дней» кэшируется в summary и не дёргается при
+// листании месяцев.
+async function renderAll() {
+  try {
+    const [projRes, teamRes] = await Promise.all([
+      fetch('/api/analytics/projects' + monthQuery()),
+      fetch('/api/analytics/team' + monthQuery()),
+    ]);
+    if (projRes.status === 401 || teamRes.status === 401) {
+      errorBox.textContent = 'Нужен доступ администратора (введите пароль от админки). Обновите страницу после входа.';
+      errorBox.hidden = false;
+      return;
+    }
     const proj = await projRes.json();
     const team = await teamRes.json();
-    if (!sumRes.ok) throw new Error(data.message || 'Ошибка загрузки статистики');
     if (!projRes.ok) throw new Error(proj.message || 'Ошибка загрузки статистики');
     if (!teamRes.ok) throw new Error(team.message || 'Ошибка загрузки статистики');
     loading.hidden = true;
-    render(data, proj, team);
+    errorBox.hidden = true;
+    render(summary, proj, team);
   } catch (err) {
     loading.hidden = true;
     errorBox.textContent = 'Не удалось загрузить статистику: ' + err.message;

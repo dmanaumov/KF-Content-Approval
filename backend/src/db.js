@@ -129,14 +129,26 @@ async function initSchema() {
   // log everyone out — the in-memory map in teamAuth.js is rebuilt from here
   // on boot (see teamAuth.restoreSessions). Stores the Mattermost session
   // token + profile the /team APIs need for the session's lifetime (24h).
+  // NB: the profile column is user_data, NOT "user" — in Postgres bare `user`
+  // is a keyword alias for current_user(), so `SELECT user` silently returns
+  // the DB role name instead of the column. This burned us once: sessions were
+  // restored with a garbage "user", which looked like everyone was logged out.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS team_sessions (
       id text PRIMARY KEY,
       mm_token text NOT NULL,
-      user jsonb NOT NULL,
+      user_data jsonb NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       expires_at timestamptz NOT NULL
     );
+  `);
+  await pool.query(`
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'team_sessions' AND column_name = 'user') THEN
+        ALTER TABLE team_sessions RENAME COLUMN "user" TO user_data;
+      END IF;
+    END $$;
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS team_sessions_expires_idx ON team_sessions (expires_at);`);
   await ensureN8nRole();
