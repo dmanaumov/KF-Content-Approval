@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>КФ — CEO</title>
+  <link rel="stylesheet" href="/app.css?v=7">
+  <link rel="stylesheet" href="/stat.css?v=8">
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div class="head-top">
+      <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+      <div class="head-right">
+        <div class="client-brand"><strong>CEO — дашборд</strong></div>
+        <a class="cal-toggle" href="/team" title="К кабинету команды" aria-label="К кабинету команды">←</a>
+      </div>
+    </div>
+  </header>
+
+  <div id="ceoLoading" class="loading">Загружаем данные…</div>
+  <div id="ceoError" class="error-box stat-error" hidden></div>
+  <main id="ceoRoot" class="stat-root"></main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/ceo.js?v=1"></script>
+</body>
+</html>

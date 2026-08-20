@@ -179,6 +179,15 @@ module.exports = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 
+  // Comma-separated allowlist of Mattermost EMAILS allowed to open the /ceo
+  // dashboard (see teamAuth.requireCeoAuth) — the person authenticates via
+  // the /team cabinet with their own real Mattermost credentials, and this
+  // checks the email on that session's profile. Default: the owner's account.
+  ceoEmails: (process.env.CEO_EMAILS || 'dmitry.naumov@mail.ru')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
   // Plain SMTP for sending the forgot-password reminder above. Any provider
   // that supports SMTP + a password/app-password works (Yandex, Mail.ru,
   // Gmail, agency's own mail server, ...) — see .env.example for per-provider

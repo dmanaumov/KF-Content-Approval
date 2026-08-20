@@ -410,6 +410,72 @@ function monthWindow(raw) {
   return { y, m, monthStart, monthEnd, monthDays };
 }
 
+// "YYYY-MM" ключ предыдущего месяца (для сравнения месяц-к-месяцу).
+function previousMonthKey(y, m) {
+  if (m === 1) return `${y - 1}-12`;
+  return `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
+// GET /api/ceo/overview — CEO dashboard (frontend/ceo.html/js), owner-only:
+// project liveness (last visit, visits per 7d, visitors per 30d), month-over-
+// month visitors per project, and team activity over the last 30 days. All
+// from access_log — no board round-trips, so it's cheap.
+app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const pool = db.requirePool();
+    const cur = monthWindow();
+    const prev = monthWindow(previousMonthKey(cur.y, cur.m));
+    const [projects, mom, team, totals] = await Promise.all([
+      pool.query(
+        `SELECT project, max(ts) AS last_ts,
+                count(DISTINCT visitor_id) FILTER (WHERE ts > now() - interval '30 days')::int AS visitors30,
+                count(DISTINCT visitor_id) FILTER (WHERE ts > now() - interval '7 days')::int AS visitors7,
+                count(*) FILTER (WHERE ts > now() - interval '7 days')::int AS visits7
+         FROM access_log WHERE project <> ''
+         GROUP BY project ORDER BY last_ts DESC`
+      ),
+      pool.query(
+        `SELECT project,
+                count(DISTINCT visitor_id) FILTER (WHERE ts >= $1 AND ts < $2)::int AS cur_visitors,
+                count(DISTINCT visitor_id) FILTER (WHERE ts >= $3 AND ts < $4)::int AS prev_visitors,
+                count(*) FILTER (WHERE ts >= $1 AND ts < $2)::int AS cur_visits,
+                count(*) FILTER (WHERE ts >= $3 AND ts < $4)::int AS prev_visits
+         FROM access_log
+         WHERE project <> '' AND (ts >= $3 AND ts < $2)
+         GROUP BY project ORDER BY cur_visitors DESC, project`,
+        [cur.monthStart.toISOString(), cur.monthEnd.toISOString(), prev.monthStart.toISOString(), prev.monthEnd.toISOString()]
+      ),
+      pool.query(
+        `SELECT actor, max(actor_name) AS actor_name,
+                count(DISTINCT to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD'))::int AS active_days,
+                count(*)::int AS sessions,
+                count(DISTINCT visitor_id)::int AS visitors,
+                max(ts) AS last_ts
+         FROM access_log
+         WHERE role = 'team' AND actor <> '' AND ts > now() - interval '30 days'
+         GROUP BY actor ORDER BY active_days DESC, sessions DESC`
+      ),
+      pool.query(
+        `SELECT count(DISTINCT visitor_id) FILTER (WHERE ts > now() - interval '30 days')::int AS visitors30,
+                count(DISTINCT visitor_id) FILTER (WHERE ts > now() - interval '7 days')::int AS visitors7,
+                count(DISTINCT visitor_id) FILTER (WHERE ts > now() - interval '30 days' AND role = 'client')::int AS clients30
+         FROM access_log WHERE ts > now() - interval '30 days'`
+      ),
+    ]);
+    res.json({
+      curMonth: `${String(cur.m).padStart(2, '0')}.${cur.y}`,
+      prevMonth: `${String(prev.m).padStart(2, '0')}.${prev.y}`,
+      projects: projects.rows,
+      mom: mom.rows,
+      team: team.rows,
+      totals: totals.rows[0],
+    });
+  } catch (err) {
+    console.error('[api] ceo overview failed:', err.message);
+    res.status(500).json({ error: 'ceo_unavailable', message: err.message });
+  }
+});
+
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
 // view: rows are team members (actor username + full name from actor_name),
 // columns are the days of the viewed Moscow month, cells = how many sessions
@@ -952,6 +1018,12 @@ app.get('/l/:token', (req, res) => res.sendFile(path.join(frontendDir, 'index.ht
 // data, see frontend/stat.html/js). Staff-gated like the rest of the internal
 // pages; the data API behind it (/api/analytics/summary) is gated regardless.
 app.get('/stat', staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'stat.html')));
+
+// GET /ceo — owner-only dashboard (see teamAuth.requireCeoAuth). The HTML
+// shell is sent only to an authenticated /team session whose Mattermost email
+// is on config.ceoEmails; the data API (/api/ceo/overview) is gated the same
+// way regardless, so even the shell holds no data.
+app.get('/ceo', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'ceo.html')));
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns

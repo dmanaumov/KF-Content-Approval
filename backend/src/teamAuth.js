@@ -14,6 +14,7 @@
 // matches this app's "no cron loops" style.
 
 const crypto = require('crypto');
+const config = require('./config');
 const db = require('./db');
 
 const COOKIE_NAME = 'team_session';
@@ -126,6 +127,19 @@ function requireTeamAuth(req, res, next) {
   next();
 }
 
+// GET middleware for the /ceo dashboard — same /team session, but the email
+// on the session's Mattermost profile must be on config.ceoEmails. Anyone
+// else gets a 401 the frontend turns into "access denied / log into /team".
+function requireCeoAuth(req, res, next) {
+  const session = getSession(sessionIdFromRequest(req));
+  const email = session && session.user ? String(session.user.email || '').toLowerCase().trim() : '';
+  if (email && config.ceoEmails.includes(email)) {
+    req.ceoUser = session.user;
+    return next();
+  }
+  return res.status(401).json({ error: 'not_allowed', message: 'Доступ только владельцу.' });
+}
+
 module.exports = {
   createSession,
   getSession,
@@ -135,4 +149,5 @@ module.exports = {
   clearSessionCookie,
   sessionIdFromRequest,
   requireTeamAuth,
+  requireCeoAuth,
 };
