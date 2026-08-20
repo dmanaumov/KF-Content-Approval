@@ -97,9 +97,32 @@ function teamTable(rows) {
   );
 }
 
+function weekLabel(weekKey) {
+  const mon = new Date(weekKey + 'T00:00:00Z');
+  const sun = new Date(mon.getTime() + 6 * 86400000);
+  const f = (d) => new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(d);
+  return `${f(mon)}–${f(sun)}`;
+}
+
+function activityTable(rows) {
+  if (rows == null) return '<div class="muted">Активность борда сейчас недоступна.</div>';
+  if (!rows.length) return '<div class="muted">Нет данных.</div>';
+  return table(
+    ['Неделя', 'Создано карточек', 'Запланировано', 'Согласовано', 'Не опубликовано вовремя'],
+    rows.slice().reverse().map((r) => [
+      `<span class="stat-nowrap">${weekLabel(r.week)}</span>`,
+      r.created || 0,
+      r.planned || 0,
+      r.approved || 0,
+      (r.late || 0) > 0 ? `<span class="mom-down">${r.late}</span>` : (r.late || 0),
+    ])
+  );
+}
+
 function render(data) {
   const html = [
     section('Итоги за 30 дней', cards(data)),
+    section('Активность · по неделям', activityTable(data.activity)),
     section('Живость проектов', projectLiveness(data.projects)),
     section(`Динамика месяц-к-месяцу · ${data.curMonth} vs ${data.prevMonth}`, momTable(data.mom, data.curMonth, data.prevMonth)),
     section('Активность команды · 30 дней', teamTable(data.team)),

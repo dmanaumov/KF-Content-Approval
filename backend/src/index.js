@@ -154,22 +154,38 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
   }
 });
 
-// Optional HTTP Basic Auth gate for the internal staff page + its
-// /api/projects* API (see config.staffAuthUser/staffAuthPassword). A no-op
-// middleware when unset, so behavior is unchanged unless you opt in — see
-// .env.example for why this is now recommended (real publishing credentials
-// live behind this page, not just non-secret share links).
-function staffAuth(req, res, next) {
-  if (!config.staffAuthUser || !config.staffAuthPassword) return next();
-  const header = req.headers.authorization || '';
-  const [scheme, encoded] = header.split(' ');
-  if (scheme === 'Basic' && encoded) {
-    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-    const sep = decoded.indexOf(':');
-    const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
-    const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
-    if (user === config.staffAuthUser && pass === config.staffAuthPassword) return next();
+// Кто перед нами для внутренних страниц — разбор доступа:
+//   1) живая /team-сессия, чей Mattermost-email есть в одном из списков
+//      (adminEmails / statEmails / ceoEmails) — персональный доступ, это
+//      то, как теперь разграничиваются права «кому из команды разрешено»;
+//   2) общий HTTP Basic Auth (STAFF_AUTH_USER/PASSWORD) — полный админ,
+//      оставлен как fallback для тех, у кого нет аккаунта Mattermost.
+function currentAccess(req) {
+  const session = teamAuth.getSession(teamAuth.sessionIdFromRequest(req));
+  if (session && session.user) {
+    const role = teamAuth.roleFor(session.user);
+    if (role.admin || role.stat || role.ceo) return { source: 'team', ...role, user: session.user };
   }
+  if (config.staffAuthUser && config.staffAuthPassword) {
+    const header = req.headers.authorization || '';
+    const [scheme, encoded] = header.split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      const sep = decoded.indexOf(':');
+      const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
+      const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
+      if (user === config.staffAuthUser && pass === config.staffAuthPassword) {
+        return { source: 'basic', admin: true, stat: true, ceo: true, user: null };
+      }
+    }
+  }
+  return null;
+}
+
+// Админ-гейт: живая /team-сессия с ролью admin ИЛИ общий Basic Auth.
+function staffAuth(req, res, next) {
+  const access = currentAccess(req);
+  if (access && access.admin) return next();
   res.set('WWW-Authenticate', 'Basic realm="KF staff"');
   // The browser's native Basic Auth prompt covers this body until the user
   // cancels it — at that point this is what they see, so it's worth a link
@@ -177,9 +193,27 @@ function staffAuth(req, res, next) {
   res.status(401).type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Нужен вход</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto 0;padding:0 20px;text-align:center;color:#222">
-<h3>Нужны логин и пароль</h3>
-<p>Если вы их не помните — <a href="/forgot-password">восстановите доступ по почте</a>.</p>
+<h3>Нужен доступ</h3>
+<p>Войдите в <a href="/team">кабинет команды</a> под своим Mattermost-аккаунтом или введите пароль админки.</p>
 </body></html>`);
+}
+
+// Стат-гейт: /team-сессия с ролью stat (admin её получает автоматически)
+// ИЛИ общий Basic Auth. Без WWW-Authenticate намеренно — для тех, у кого
+// только статистика, браузер не должен показывать непонятный Basic-диалог:
+// вместо него отдаём понятное сообщение со ссылкой на /team.
+function requireStatAuth(req, res, next) {
+  const access = currentAccess(req);
+  if (access && access.stat) return next();
+  if (req.accepts('html')) {
+    return res.status(401).type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Нужен доступ</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto 0;padding:0 20px;text-align:center;color:#222">
+<h3>Нужен доступ к статистике</h3>
+<p>Войдите в <a href="/team">кабинет команды</a> под своим Mattermost-аккаунтом — если вам положен доступ, ссылка появится сама.</p>
+</body></html>`);
+  }
+  res.status(401).json({ error: 'not_allowed', message: 'Нужен доступ к статистике.' });
 }
 
 // Simple in-memory per-IP rate limit for the forgot-password endpoint below
@@ -315,7 +349,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
 // (see frontend/stat.html/js): last 30 days, grouped by role/date/project/
 // device/browser/team-member, plus the most recent raw visits. Staff-gated
 // like the rest of the internal API. The byDate "day" labels are Moscow time.
-app.get('/api/analytics/summary', staffAuth, async (req, res) => {
+app.get('/api/analytics/summary', requireStatAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
     const [totalVisitors, byRole, byDate, byProject, byDevice, byBrowser, byActor, actorsByProject, recent] = await Promise.all([
@@ -416,10 +450,59 @@ function previousMonthKey(y, m) {
   return `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
+// Еженедельная активность по карточкам для /ceo. Неделя = пн–вс по Москве
+// (ключ — дата понедельника). Считаем для каждого из последних `weeks`
+// недель (по умолчанию 12), включая текущую:
+//   created  — карточек создано в эту неделю (createAt карточки);
+//   planned  — публикаций запланировано на эту неделю (publishDate);
+//   approved — из запланированных те, что уже «Согласовано» или «Опубликовано»;
+//   late     — из запланированных те, чья неделя уже прошла, а карточка так и
+//              не опубликована (архив не считается опозданием — это закрытие).
+function moscowDateStr(ms) {
+  return new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function mondayOf(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const diff = d.getUTCDay() === 0 ? -6 : 1 - d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+function weeklyActivity(tasks, weeks = 12) {
+  const moscowToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const weekStartToday = mondayOf(moscowToday);
+  const cursor = new Date(weekStartToday + 'T00:00:00Z');
+  cursor.setUTCDate(cursor.getUTCDate() - (weeks - 1) * 7);
+  const keys = [];
+  for (let i = 0; i < weeks; i++) {
+    keys.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+  }
+  const bucket = Object.fromEntries(keys.map((k) => [k, { created: 0, planned: 0, approved: 0, late: 0 }]));
+  for (const t of tasks) {
+    if (t.createAt) {
+      const ck = mondayOf(moscowDateStr(t.createAt));
+      if (bucket[ck]) bucket[ck].created++;
+    }
+    if (!t.publishDate) continue;
+    const wk = mondayOf(t.publishDate);
+    if (!bucket[wk]) continue;
+    bucket[wk].planned++;
+    if (t.status === 'approved' || t.status === 'published') bucket[wk].approved++;
+    if (t.status !== 'published' && t.status !== 'archived') {
+      const weekEnd = new Date(wk + 'T00:00:00Z');
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
+      if (moscowToday > weekEnd.toISOString().slice(0, 10)) bucket[wk].late++;
+    }
+  }
+  return keys.map((k) => ({ week: k, ...bucket[k] }));
+}
+
 // GET /api/ceo/overview — CEO dashboard (frontend/ceo.html/js), owner-only:
 // project liveness (last visit, visits per 7d, visitors per 30d), month-over-
-// month visitors per project, and team activity over the last 30 days. All
-// from access_log — no board round-trips, so it's cheap.
+// month visitors per project, team activity over the last 30 days (all from
+// access_log) plus weekly card activity from the board (best-effort — if the
+// board is unreachable we return activity: null rather than failing).
 app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
@@ -462,6 +545,17 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
          FROM access_log WHERE ts > now() - interval '30 days'`
       ),
     ]);
+    // Weekly card activity — needs Mattermost (not just access_log), so it's
+    // best-effort: if the board is unreachable we still return everything else
+    // with activity: null and the CEO page shows a "недоступно" note.
+    let activity = null;
+    try {
+      const { board, cards, blocks } = await loadBoard(config.mattermostBoardId);
+      const { tasks } = buildTasks(board, cards, blocks, { includeAllStatuses: true });
+      activity = weeklyActivity(tasks, 12);
+    } catch (err) {
+      console.warn('[api] ceo weekly activity unavailable:', err.message);
+    }
     res.json({
       curMonth: `${String(cur.m).padStart(2, '0')}.${cur.y}`,
       prevMonth: `${String(prev.m).padStart(2, '0')}.${prev.y}`,
@@ -469,6 +563,7 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
       mom: mom.rows,
       team: team.rows,
       totals: totals.rows[0],
+      activity,
     });
   } catch (err) {
     console.error('[api] ceo overview failed:', err.message);
@@ -480,7 +575,7 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
 // view: rows are team members (actor username + full name from actor_name),
 // columns are the days of the viewed Moscow month, cells = how many sessions
 // that person had that day (deduped to ~one per 20 minutes in analytics.js).
-app.get('/api/analytics/team', staffAuth, async (req, res) => {
+app.get('/api/analytics/team', requireStatAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
     const { y, m, monthStart, monthEnd, monthDays } = monthWindow(req.query.month);
@@ -507,7 +602,7 @@ app.get('/api/analytics/team', staffAuth, async (req, res) => {
 // (b) a project × viewed-Moscow-month-day heatmap of entry counts (no
 // entries → white cell, max → green — see frontend/stat.js). Принимает
 // ?month=YYYY-MM, по умолчанию — текущий месяц в МСК.
-app.get('/api/analytics/projects', staffAuth, async (req, res) => {
+app.get('/api/analytics/projects', requireStatAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
     const { y, m, monthStart, monthEnd, monthDays } = monthWindow(req.query.month);
@@ -611,7 +706,7 @@ app.post('/api/team/login', async (req, res) => {
     const sessionId = await teamAuth.createSession(token, user);
     teamAuth.setSessionCookie(res, sessionId);
     analytics.note('team', { actor: user.username || login, actorName: [user.first_name, user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
-    res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
+    res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name }, access: teamAuth.roleFor(user) });
   } catch (err) {
     // Wrong password, unknown user, Mattermost unreachable — all land here.
     // 401 either way; the message (from mm.loginAs, Mattermost's own) is
@@ -628,9 +723,28 @@ app.post('/api/team/logout', (req, res) => {
 
 // GET /api/team/me — lets the frontend check "am I already logged in?" on
 // page load without re-submitting credentials (the session cookie is enough).
+// Also returns the user's access roles (admin/stat/ceo) so the cabinet can
+// show role-appropriate links (e.g. "Статистика" for those who may view it).
 app.get('/api/team/me', teamAuth.requireTeamAuth, (req, res) => {
   const { user } = req.teamSession;
-  res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
+  res.json({
+    user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name },
+    access: teamAuth.roleFor(user),
+  });
+});
+
+// GET /api/staff/me — what access the CURRENT viewer has on the internal
+// pages (team session with an allowlisted email, or the shared Basic Auth).
+// Used by the staff page to show role-appropriate links (stat/ceo buttons).
+// Open endpoint by design — it only tells a person their own role, which the
+// protected APIs enforce regardless.
+app.get('/api/staff/me', (req, res) => {
+  const access = currentAccess(req);
+  if (!access) return res.status(401).json({ error: 'not_allowed' });
+  const user = access.user
+    ? { id: access.user.id, username: access.user.username, firstName: access.user.first_name, lastName: access.user.last_name, email: access.user.email }
+    : null;
+  res.json({ access: { admin: access.admin, stat: access.stat, ceo: access.ceo }, user });
 });
 
 // GET /api/team/tasks — every card where "Исполнитель" == the logged-in
@@ -1017,7 +1131,7 @@ app.get('/l/:token', (req, res) => res.sendFile(path.join(frontendDir, 'index.ht
 // GET /stat — access statistics page (tables + charts over the access_log
 // data, see frontend/stat.html/js). Staff-gated like the rest of the internal
 // pages; the data API behind it (/api/analytics/summary) is gated regardless.
-app.get('/stat', staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'stat.html')));
+app.get('/stat', requireStatAuth, (req, res) => res.sendFile(path.join(frontendDir, 'stat.html')));
 
 // GET /ceo — owner-only dashboard (see teamAuth.requireCeoAuth). The HTML
 // shell is sent only to an authenticated /team session whose Mattermost email

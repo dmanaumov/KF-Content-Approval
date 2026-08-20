@@ -58,3 +58,7 @@
 .tm-close{position:absolute;top:12px;right:12px;border:0;background:#F2F4F4;border-radius:999px;width:32px;height:32px;font-size:14px;cursor:pointer;color:#33413F}
 .tm-close:active{background:#E4E8E8}
 .tm-title{font-size:17px;font-weight:800;line-height:1.35;letter-spacing:-.01em;padding-right:28px}
+
+/* Ссылка «Статистика» в шапке кабинета — видна тем, у кого есть доступ к /stat. */
+.head-link{display:inline-flex;align-items:center;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:800;color:var(--ink);text-decoration:none;background:#fff}
+.head-link:hover{background:#F2F6F5}

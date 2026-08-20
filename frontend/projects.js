@@ -196,6 +196,14 @@ async function load() {
   const loading = document.getElementById('loading');
   loading.hidden = false;
   try {
+    // Роль текущего зрителя (кто из команды перед нами) — показываем кнопку
+    // «CEO-дашборд» только тем, у кого есть доступ к /ceo («Статистика»
+    // доступна всем админам, она не скрывается).
+    const meRes = await fetch('/api/staff/me');
+    if (meRes.ok) {
+      const me = await meRes.json();
+      document.getElementById('ceoLink').hidden = !(me.access && me.access.ceo);
+    }
     const res = await fetch('/api/projects');
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');

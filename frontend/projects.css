@@ -264,3 +264,8 @@
 .fp-intro code{background:#FAFBFB;border:1px solid var(--line);border-radius:6px;padding:1px 5px;font-size:11px}
 .fp-submit{width:100%;margin-top:12px}
 .fp-result{margin-top:12px;font-size:13px;color:var(--ink);background:#FAFBFB;border:1px solid var(--line);border-radius:12px;padding:10px 12px;line-height:1.5}
+
+/* Ссылки «Статистика»/«CEO-дашборд» в шапке админки. */
+.staff-links{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.head-link{display:inline-flex;align-items:center;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:800;color:var(--ink);text-decoration:none;background:#fff}
+.head-link:hover{background:#F2F6F5}

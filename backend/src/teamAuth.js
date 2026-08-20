@@ -127,13 +127,25 @@ function requireTeamAuth(req, res, next) {
   next();
 }
 
+// Access tiers, decided by the session's Mattermost email against the
+// allowlists in config (adminEmails / statEmails / ceoEmails) — "кому именно
+// из команды разрешён доступ". admins get /stat automatically; statEmails
+// are the people who only get the stats.
+function roleFor(user) {
+  const email = user && user.email ? String(user.email).toLowerCase().trim() : '';
+  const admin = email && config.adminEmails.includes(email);
+  const stat = admin || (email && config.statEmails.includes(email));
+  const ceo = email && config.ceoEmails.includes(email);
+  return { admin, stat, ceo };
+}
+
 // GET middleware for the /ceo dashboard — same /team session, but the email
 // on the session's Mattermost profile must be on config.ceoEmails. Anyone
 // else gets a 401 the frontend turns into "access denied / log into /team".
 function requireCeoAuth(req, res, next) {
   const session = getSession(sessionIdFromRequest(req));
-  const email = session && session.user ? String(session.user.email || '').toLowerCase().trim() : '';
-  if (email && config.ceoEmails.includes(email)) {
+  const role = session && session.user ? roleFor(session.user) : null;
+  if (role && role.ceo) {
     req.ceoUser = session.user;
     return next();
   }
@@ -150,4 +162,5 @@ module.exports = {
   sessionIdFromRequest,
   requireTeamAuth,
   requireCeoAuth,
+  roleFor,
 };

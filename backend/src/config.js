@@ -188,6 +188,24 @@ module.exports = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 
+  // Comma-separated allowlist of Mattermost EMAILS with FULL internal access:
+  // the staff page (/projects + its API + the social-credentials editor) and
+  // /stat. These people still log in through /team (own Mattermost
+  // credentials, never shared) — the email on the session decides the role.
+  // CEO + his deputy. Default: the owner.
+  adminEmails: (process.env.ADMIN_EMAILS || 'dmitry.naumov@mail.ru')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
+  // Emails allowed to view /stat (access analytics) but NOT the staff page.
+  // Admins from adminEmails get /stat automatically; list here everyone who
+  // only gets the stats (e.g. the analyst). Default: empty.
+  statEmails: (process.env.STAT_EMAILS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
   // Plain SMTP for sending the forgot-password reminder above. Any provider
   // that supports SMTP + a password/app-password works (Yandex, Mail.ru,
   // Gmail, agency's own mail server, ...) — see .env.example for per-provider

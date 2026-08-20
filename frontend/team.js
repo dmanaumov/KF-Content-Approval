@@ -55,6 +55,7 @@ const loginPassword = document.getElementById('loginPassword');
 const loginSubmit = document.getElementById('loginSubmit');
 const loginError = document.getElementById('loginError');
 const teamUserName = document.getElementById('teamUserName');
+const statLink = document.getElementById('statLink');
 const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
@@ -67,10 +68,11 @@ function showLogin() {
   teamApp.hidden = true;
 }
 
-function showApp(user) {
+function showApp(user, access) {
   loginApp.hidden = true;
   teamApp.hidden = false;
   teamUserName.textContent = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Команда';
+  statLink.hidden = !(access && access.stat);
 }
 
 async function login() {
@@ -94,7 +96,7 @@ async function login() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || 'Не удалось войти');
     loginPassword.value = '';
-    showApp(data.user);
+    showApp(data.user, data.access);
     loadTasks();
   } catch (err) {
     loginError.textContent = err.message;
@@ -248,7 +250,7 @@ async function init() {
       return;
     }
     const data = await res.json();
-    showApp(data.user);
+    showApp(data.user, data.access);
     loadTasks();
   } catch (err) {
     showLogin();
