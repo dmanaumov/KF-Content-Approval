@@ -371,7 +371,7 @@ app.get('/api/team/me', teamAuth.requireTeamAuth, (req, res) => {
   res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
 });
 
-// GET /api/team/tasks — every card where "Ответственный" == the logged-in
+// GET /api/team/tasks — every card where "Исполнитель" == the logged-in
 // person, across ALL projects (unlike the client cabinet, deliberately NOT
 // project-filtered — a team member's work usually spans several clients) and
 // in ANY status (unlike the client cabinet, which only shows the 5

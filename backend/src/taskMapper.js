@@ -272,7 +272,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       format = formatProp.type === 'select' ? optionLabelById(formatProp, rawFormat) : rawFormat;
     }
 
-    // "Ответственный" (person-type property) — powers the /team cabinet's
+    // "Исполнитель" (person-type property) — powers the /team cabinet's
     // "my tasks" filter (see index.js's assignee-filtered task list). Not
     // used by the client cabinet at all. Focalboard "person" properties have
     // been observed elsewhere in this project (n8n automation, see

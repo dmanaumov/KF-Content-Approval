@@ -53,9 +53,12 @@ module.exports = {
   urlPropertyName: process.env.MM_URL_PROPERTY_NAME || 'URL',
   // Name of the person-type property that assigns a card to a team member —
   // powers the /team cabinet's "my tasks" list (see teamAuth.js/taskMapper.js).
-  // Default matches the real board's "Ответственный" property (already used,
-  // read-only so far, by the n8n publishing automation — see docs/N8N_AUTOMATION.md).
-  assigneePropertyName: process.env.MM_ASSIGNEE_PROPERTY_NAME || 'Ответственный',
+  // CONFIRMED live against the real board (2026-08-20): the person-type
+  // property is actually named "Исполнитель", NOT "Ответственный" — an
+  // earlier project note (see docs/) called it "Ответственный" but that
+  // turned out to be wrong/stale, caught via /team returning
+  // assignee_property_not_found with the board's real property list.
+  assigneePropertyName: process.env.MM_ASSIGNEE_PROPERTY_NAME || 'Исполнитель',
 
   // Only comments authored by this Mattermost username are shown to the
   // client as "правки"/feedback (resolved to a user id once via the core
@@ -153,7 +156,7 @@ module.exports = {
   // URL path of the team cabinet (see teamAuth.js) — team members log in
   // with their own real Mattermost username/password (checked live against
   // Mattermost itself, never stored) and see only cards where they're the
-  // "Ответственный" (assignee). Configurable for the same obscurity reason
+  // "Исполнитель" (assignee). Configurable for the same obscurity reason
   // as staffProjectsPath above.
   teamCabinetPath: process.env.TEAM_CABINET_PATH || '/team',
 
