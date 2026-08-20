@@ -345,7 +345,7 @@ app.get('/api/analytics/summary', staffAuth, async (req, res) => {
          FROM access_log WHERE ts > now() - interval '30 days' AND actor <> '' GROUP BY actor ORDER BY events DESC LIMIT 50`
       ),
       pool.query(
-        `SELECT actor, project, count(*)::int AS events
+        `SELECT actor, max(actor_name) AS actor_name, project, count(*)::int AS events
          FROM access_log WHERE ts > now() - interval '30 days' AND actor <> '' AND project <> '' GROUP BY actor, project ORDER BY events DESC LIMIT 200`
       ),
       pool.query(
@@ -520,7 +520,7 @@ app.post('/api/team/login', async (req, res) => {
   if (!login || !password) return res.status(400).json({ error: 'credentials_required' });
   try {
     const { token, user } = await mm.loginAs(login, password);
-    const sessionId = teamAuth.createSession(token, user);
+    const sessionId = await teamAuth.createSession(token, user);
     teamAuth.setSessionCookie(res, sessionId);
     analytics.note('team', { actor: user.username || login, actorName: [user.first_name, user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
     res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
@@ -1043,6 +1043,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
 (async () => {
   try {
     await waitForDb();
+    await teamAuth.restoreSessions();
     await projectSettings.importLegacyFileTokens();
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);

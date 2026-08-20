@@ -120,6 +120,20 @@ async function initSchema() {
     ALTER TABLE access_log
       ADD COLUMN IF NOT EXISTS actor_name text NOT NULL DEFAULT '';
   `);
+  // Team-cabinet sessions, persisted so a container restart (redeploy) doesn't
+  // log everyone out — the in-memory map in teamAuth.js is rebuilt from here
+  // on boot (see teamAuth.restoreSessions). Stores the Mattermost session
+  // token + profile the /team APIs need for the session's lifetime (24h).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS team_sessions (
+      id text PRIMARY KEY,
+      mm_token text NOT NULL,
+      user jsonb NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      expires_at timestamptz NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS team_sessions_expires_idx ON team_sessions (expires_at);`);
   await ensureN8nRole();
 }
 

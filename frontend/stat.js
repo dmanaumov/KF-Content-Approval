@@ -38,16 +38,19 @@ function hbars(rows, labelKey, valueKey = 'events') {
     .join('');
 }
 
-// График по дням — колонки пропорциональны максимуму.
+// График по дням — колонки с числом визитов и датой (DD.MM), в подсказке —
+// полная дата и число посетителей.
 function dateChart(rows) {
   if (!rows || !rows.length) return '<div class="muted">Нет данных за период.</div>';
   const max = Math.max(...rows.map((r) => r.events || 0), 1);
   return `<div class="c-chart">${rows
     .map((r) => {
-      const h = Math.max(3, Math.round((r.events / max) * 130));
-      return `<div class="c-bar" title="${esc(r.day)}: ${r.events} событ(ий), ${r.visitors} посетител(ей)">
+      const h = Math.max(4, Math.round((r.events / max) * 110));
+      const label = r.day.slice(5).split('-').reverse().join('.');
+      return `<div class="c-bar" title="${esc(r.day)}: ${r.events} визит(ов), ${r.visitors} посетител(ей)">
+        <div class="c-bar-val">${r.events}</div>
         <div class="c-bar-fill" style="height:${h}px"></div>
-        <div class="c-bar-label">${esc(r.day.slice(5))}</div>
+        <div class="c-bar-label">${esc(label)}</div>
       </div>`;
     })
     .join('')}</div>`;
@@ -72,13 +75,13 @@ function actorsByProjectTable(rows) {
   if (!rows || !rows.length) return '<div class="muted">Нет данных.</div>';
   const grouped = new Map();
   rows.forEach((r) => {
-    if (!grouped.has(r.actor)) grouped.set(r.actor, []);
-    grouped.get(r.actor).push(r);
+    if (!grouped.has(r.actor)) grouped.set(r.actor, { label: r.actor_name || r.actor, items: [] });
+    grouped.get(r.actor).items.push(r);
   });
-  return `<table class="stat-table"><thead><tr><th>Работник</th><th>Проекты (заходы)</th></tr></thead><tbody>${[...grouped.entries()]
-    .map(([actor, items]) => {
-      const projs = items.map((i) => `<span class="stat-proj"><b>${esc(i.project)}</b> ${i.events}</span>`).join('');
-      return `<tr><td class="stat-actor">${esc(actor)}</td><td>${projs}</td></tr>`;
+  return `<table class="stat-table"><thead><tr><th>Работник</th><th>Проекты (заходы)</th></tr></thead><tbody>${[...grouped.values()]
+    .map((g) => {
+      const projs = g.items.map((i) => `<span class="stat-proj"><b>${esc(i.project)}</b> ${i.events}</span>`).join('');
+      return `<tr><td class="stat-actor">${esc(g.label)}</td><td>${projs}</td></tr>`;
     })
     .join('')}</tbody></table>`;
 }
@@ -144,7 +147,7 @@ function heatmapTable(monthDays, series, rowLabel = 'Проект') {
           return `<td class="${strong ? 'hm-strong' : ''}${weekend[i] ? ' hm-weekend' : ''}" style="background:rgba(121,201,74,${alpha})" title="${esc(c.tip || '')}">${c.v}</td>`;
         })
         .join('');
-      return `<tr><td class="stat-actor">${esc(s.label)}</td>${tds}</tr>`;
+      return `<tr><td class="stat-actor" title="${esc(s.label)}">${esc(s.label)}</td>${tds}</tr>`;
     })
     .join('');
   return `<div class="hm"><table class="stat-table hm-table">${head}<tbody>${body}</tbody></table><div class="hm-legend">нет сессий — белый · максимум — зелёный</div></div>`;

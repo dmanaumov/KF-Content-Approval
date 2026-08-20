@@ -3,16 +3,18 @@
 // Unlike everything else in this app, a team member logs in with their OWN
 // real Mattermost username/password — checked live against Mattermost on
 // every login (mattermostClient.loginAs), never stored anywhere by this app.
-// What IS stored, in memory only (same philosophy as mattermostClient.js's
-// own bot session — no database, a container restart just means everyone
-// re-logs in), is a short-lived mapping from an opaque cookie value to that
+// What IS stored is a short-lived mapping from an opaque cookie value to that
 // person's Mattermost session token + profile.
 //
-// No express-session/cookie-parser dependency — this is a handful of lines,
-// not worth a new npm install (and this app's package.json has stayed
-// deliberately small).
+// Sessions live in the in-memory Map as the runtime source of truth AND are
+// mirrored into Postgres (team_sessions table, see db.js) so a container
+// restart / redeploy doesn't log everyone out — restoreSessions() rebuilds
+// the map from Postgres on boot. Without DATABASE_URL the app falls back to
+// memory-only (current behavior). Lazy expiry, no background sweep timer —
+// matches this app's "no cron loops" style.
 
 const crypto = require('crypto');
+const db = require('./db');
 
 const COOKIE_NAME = 'team_session';
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h — re-login is just typing MM creds again, low friction
@@ -23,28 +25,61 @@ function newSessionId() {
   return crypto.randomBytes(24).toString('base64url');
 }
 
-function createSession(mmToken, user) {
+async function createSession(mmToken, user) {
   const id = newSessionId();
-  sessions.set(id, { mmToken, user, expiresAt: Date.now() + SESSION_TTL_MS });
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+  sessions.set(id, { mmToken, user, expiresAt });
+  if (db.pool) {
+    try {
+      await db.pool.query(
+        `INSERT INTO team_sessions (id, mm_token, user, expires_at)
+         VALUES ($1, $2, $3, to_timestamp($4 / 1000.0))
+         ON CONFLICT (id) DO NOTHING`,
+        [id, mmToken, JSON.stringify(user), expiresAt]
+      );
+    } catch (err) {
+      console.error('[teamAuth] failed to persist session:', err.message);
+    }
+  }
   return id;
 }
 
 // Lazy expiry — no background sweep timer (matches this app's existing
-// "no cron loops" style, see loadBoard()'s own lazy TTL cache). A small
-// team's session count is trivial memory either way.
+// "no cron loops" style, see loadBoard()'s own lazy TTL cache).
 function getSession(id) {
   if (!id) return null;
   const entry = sessions.get(id);
   if (!entry) return null;
   if (entry.expiresAt < Date.now()) {
     sessions.delete(id);
+    if (db.pool) db.pool.query('DELETE FROM team_sessions WHERE id = $1', [id]).catch(() => {});
     return null;
   }
   return entry;
 }
 
 function destroySession(id) {
-  if (id) sessions.delete(id);
+  if (!id) return;
+  sessions.delete(id);
+  if (db.pool) db.pool.query('DELETE FROM team_sessions WHERE id = $1', [id]).catch(() => {});
+}
+
+// Rebuild the in-memory session map from Postgres on boot (called once after
+// initSchema). Expired rows are dropped at the same time.
+async function restoreSessions() {
+  if (!db.pool) return;
+  try {
+    const { rows } = await db.pool.query(
+      'SELECT id, mm_token, user, expires_at FROM team_sessions WHERE expires_at > now()'
+    );
+    rows.forEach((r) => {
+      sessions.set(r.id, { mmToken: r.mm_token, user: r.user, expiresAt: new Date(r.expires_at).getTime() });
+    });
+    await db.pool.query('DELETE FROM team_sessions WHERE expires_at <= now()');
+    console.log(`[teamAuth] restored ${rows.length} team session(s) from Postgres.`);
+  } catch (err) {
+    console.error('[teamAuth] failed to restore sessions:', err.message);
+  }
 }
 
 function parseCookies(req) {
@@ -95,6 +130,7 @@ module.exports = {
   createSession,
   getSession,
   destroySession,
+  restoreSessions,
   setSessionCookie,
   clearSessionCookie,
   sessionIdFromRequest,
