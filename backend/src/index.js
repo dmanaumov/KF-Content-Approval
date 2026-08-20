@@ -232,6 +232,21 @@ function requireStaffBoardId(res) {
   return config.mattermostBoardId;
 }
 
+// "Бусинки" on the staff project card — one bead per post planned THIS month
+// (same Moscow-current-month set as computeScheduleStatus above, so the KPI
+// traffic-light and the beads always tell the same story). Sorted soonest-
+// first. The staff page colors each bead by the same status notation the
+// client cabinet uses (published/approved/waiting/changes) and shows the
+// date + post title on hover — see frontend/projects.js + projects.css.
+function postsForMonth(tasks) {
+  const moscowToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const monthPrefix = moscowToday.slice(0, 7);
+  return tasks
+    .filter((t) => t.publishDate && t.publishDate.startsWith(monthPrefix))
+    .map((t) => ({ id: t.id, title: t.title, publishDate: t.publishDate, status: t.status }))
+    .sort((a, b) => (a.publishDate || '').localeCompare(b.publishDate || ''));
+}
+
 // GET /api/projects — every option of the "Проект" property, for the
 // internal staff page that lists all client cabinet links (see
 // frontend/projects.html). Deliberately does NOT take boardId from the URL
@@ -261,11 +276,15 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // buildTasks() is pure computation over the board/cards/blocks
         // already fetched above — re-filtering per project here costs no
         // extra Mattermost calls, just re-running an in-memory filter once
-        // per project that actually has a KPI set.
-        const scheduleStatus = postsPerMonth
-          ? computeScheduleStatus(buildTasks(board, cards, blocks, { projectFilter: o.id }).tasks, postsPerMonth)
-          : null;
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus };
+        // per project (see computeScheduleStatus/postsForMonth below). The
+        // KPI uses the client-facing set; the bead strip additionally wants
+        // posts still in internal production stages (status null), hence the
+        // second includeAllStatuses pass (same option the /team cabinet uses).
+        const clientTasks = buildTasks(board, cards, blocks, { projectFilter: o.id }).tasks;
+        const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
+        const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
+        const posts = postsForMonth(allTasks);
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus, posts };
       })
     );
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
