@@ -7,6 +7,7 @@ const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./dis
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
+const teamAuth = require('./teamAuth');
 const mailer = require('./mailer');
 
 const app = express();
@@ -220,21 +221,6 @@ function computeScheduleStatus(tasks, kpiTargetRaw) {
   return { tier, target, planned, late };
 }
 
-// "Бусинки" on the staff project card — one bead per post planned THIS month
-// (same Moscow-current-month set as computeScheduleStatus above, so the KPI
-// traffic-light and the beads always tell the same story). Sorted soonest-
-// first. The staff page colors each bead by the same status notation the
-// client cabinet uses (published/approved/waiting/changes) and shows the
-// date + post title on hover — see frontend/projects.js + projects.css.
-function postsForMonth(tasks) {
-  const moscowToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
-  const monthPrefix = moscowToday.slice(0, 7);
-  return tasks
-    .filter((t) => t.publishDate && t.publishDate.startsWith(monthPrefix))
-    .map((t) => ({ id: t.id, title: t.title, publishDate: t.publishDate, status: t.status }))
-    .sort((a, b) => (a.publishDate || '').localeCompare(b.publishDate || ''));
-}
-
 function requireStaffBoardId(res) {
   if (!config.mattermostBoardId) {
     res.status(500).json({
@@ -275,15 +261,11 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // buildTasks() is pure computation over the board/cards/blocks
         // already fetched above — re-filtering per project here costs no
         // extra Mattermost calls, just re-running an in-memory filter once
-        // per project (see computeScheduleStatus/postsForMonth below). The
-        // KPI uses the client-facing set; the bead strip additionally wants
-        // posts still in internal production stages (status null), hence the
-        // second includeInternal pass.
-        const clientTasks = buildTasks(board, cards, blocks, { projectFilter: o.id }).tasks;
-        const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
-        const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeInternal: true }).tasks;
-        const posts = postsForMonth(allTasks);
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus, posts };
+        // per project that actually has a KPI set.
+        const scheduleStatus = postsPerMonth
+          ? computeScheduleStatus(buildTasks(board, cards, blocks, { projectFilter: o.id }).tasks, postsPerMonth)
+          : null;
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus };
       })
     );
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
@@ -345,6 +327,80 @@ app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   } catch (err) {
     console.error('[api] PUT project settings failed:', err.message);
     res.status(400).json({ error: 'invalid_settings', message: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Team cabinet (config.teamCabinetPath, default /team) — internal staff, one
+// account each, real Mattermost login. Separate from staffAuth above (single
+// shared Basic Auth login for the /projects list) — see teamAuth.js for why.
+// ---------------------------------------------------------------------------
+
+// POST /api/team/login — body: { login, password }. `login` is whatever
+// Mattermost itself accepts as login_id (username OR email). Credentials are
+// checked live against Mattermost and never stored — only the resulting
+// session token (see teamAuth.js) is kept, in memory, keyed by an opaque
+// cookie value this endpoint sets.
+app.post('/api/team/login', async (req, res) => {
+  const login = String((req.body && req.body.login) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  if (!login || !password) return res.status(400).json({ error: 'credentials_required' });
+  try {
+    const { token, user } = await mm.loginAs(login, password);
+    const sessionId = teamAuth.createSession(token, user);
+    teamAuth.setSessionCookie(res, sessionId);
+    res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
+  } catch (err) {
+    // Wrong password, unknown user, Mattermost unreachable — all land here.
+    // 401 either way; the message (from mm.loginAs, Mattermost's own) is
+    // safe to show directly in the login form.
+    res.status(401).json({ error: 'login_failed', message: err.message });
+  }
+});
+
+app.post('/api/team/logout', (req, res) => {
+  teamAuth.destroySession(teamAuth.sessionIdFromRequest(req));
+  teamAuth.clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// GET /api/team/me — lets the frontend check "am I already logged in?" on
+// page load without re-submitting credentials (the session cookie is enough).
+app.get('/api/team/me', teamAuth.requireTeamAuth, (req, res) => {
+  const { user } = req.teamSession;
+  res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name } });
+});
+
+// GET /api/team/tasks — every card where "Ответственный" == the logged-in
+// person, across ALL projects (unlike the client cabinet, deliberately NOT
+// project-filtered — a team member's work usually spans several clients) and
+// in ANY status (unlike the client cabinet, which only shows the 5
+// client-facing states — see buildTasks' opts.includeAllStatuses).
+app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId);
+    const feedbackAuthorUserId = await getFeedbackAuthorId();
+    const { tasks, meta } = buildTasks(board, cards, blocks, {
+      skipProjectFilter: true,
+      includeAllStatuses: true,
+      feedbackAuthorUserId,
+    });
+    if (!meta.assigneePropertyFound) {
+      return res.status(500).json({
+        error: 'assignee_property_not_found',
+        message: `Свойство "${config.assigneePropertyName}" не найдено на борде — см. MM_ASSIGNEE_PROPERTY_NAME в .env.`,
+      });
+    }
+    const myId = req.teamSession.user.id;
+    const mine = tasks.filter((t) => t.assigneeId === myId);
+    await resolveDiskMediaKinds(mine);
+    await mediaOrder.applyStoredOrder(boardId, mine);
+    res.json({ tasks: mine });
+  } catch (err) {
+    console.error('[api] team tasks failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
   }
 });
 
@@ -460,7 +516,7 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   // of reporting false success back to the client.
   if (updated.status !== statusKey) {
     throw new Error(
-      `Производственная система КонтетФермы приняла запрос на изменение статуса (PATCH вернул успех), но после повторного чтения ` +
+      `Mattermost принял запрос на изменение статуса (PATCH вернул успех), но после повторного чтения ` +
         `карточки ${taskId} статус остался "${updated.statusLabel || '(нет)'}", а не "${targetLabel}". ` +
         `Похоже, PATCH на этом сервере не применяется по факту — либо аккаунт, от имени которого идёт ` +
         `запрос (см. MATTERMOST_LOGIN_ID/MATTERMOST_TOKEN), не имеет прав редактировать эту карточку/борд, ` +
@@ -719,17 +775,18 @@ app.get('/api/links/:token', async (req, res) => {
 
 // Internal staff page listing every client's cabinet link, in the same
 // visual style as the client cabinet — see frontend/projects.html. Path is
-// configurable (config.staffProjectsPath, default "/admin") specifically
+// configurable (config.staffProjectsPath, default "/projects") specifically
 // so it doesn't have to reveal anything (like a board id) in a fixed,
 // guessable URL. NOT for clients: no board/task data, just the list of
 // ready-made links (same info a staffer would otherwise hand-assemble from
 // the "Проект" property options).
 app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'projects.html')));
 
-// Team landing page — placeholder for now (frontend/team.html); the team
-// dashboard will replace it later. Public on purpose: it's a stub with no
-// board/task data, just the shared header so the URL exists and works.
-app.get('/team', (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
+// Team cabinet page (config.teamCabinetPath, default /team) — the page itself
+// is static; team.js does its own login check against GET /api/team/me on
+// load and shows either the login form or the task list. No staffAuth here —
+// real per-person Mattermost login (see teamAuth.js) is the actual gate.
+app.get(config.teamCabinetPath, (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
 
 // "Забыли пароль" recovery for the staff Basic Auth above. Deliberately
 // public (no staffAuth — that would be circular) but gated by a

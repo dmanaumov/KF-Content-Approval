@@ -107,6 +107,51 @@ async function login() {
   return token;
 }
 
+// Logs in with ARBITRARY credentials — separate from the module-level
+// `session` above, which is only ever the fixed bot account from config.
+// Used by teamAuth.js for the /team cabinet, where each team member
+// authenticates with their own real Mattermost username/password (checked
+// live against Mattermost on every login, never stored by this app).
+// Returns the session token AND the logged-in user's own profile —
+// Mattermost's login response body IS the User object itself, so no extra
+// request is needed to find out who just logged in.
+async function loginAs(loginId, password) {
+  const res = await fetchWithTimeout(`${config.mattermostUrl}/api/v4/users/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login_id: loginId, password }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    // Mattermost returns 401 with a JSON body ({message: "..."}) on bad
+    // credentials — surface THAT message (it's meant to be user-facing),
+    // not a raw HTTP status, since this one goes straight into a login form.
+    let message = `HTTP ${res.status}`;
+    try {
+      message = JSON.parse(text).message || message;
+    } catch (e) {
+      // not JSON, keep the HTTP-status fallback
+    }
+    throw new Error(message);
+  }
+  const token = res.headers.get('token') || extractAuthTokenFromCookies(res);
+  if (!token) {
+    throw new Error(
+      'Mattermost вернул успешный логин, но не выдал сессионный токен — см. docs/MATTERMOST_INTEGRATION.md.'
+    );
+  }
+  let user = null;
+  try {
+    user = JSON.parse(text);
+  } catch (e) {
+    // fall through, user stays null → handled below
+  }
+  if (!user || !user.id) {
+    throw new Error('Mattermost вернул успешный логин, но тело ответа не похоже на профиль пользователя.');
+  }
+  return { token, user };
+}
+
 async function getBearerToken({ forceRelogin = false } = {}) {
   if (!usingSessionLogin()) return config.mattermostToken;
   if (forceRelogin || !session.token) await login();
@@ -382,4 +427,5 @@ module.exports = {
   addBlocks,
   fetchFileStream,
   getUserIdByUsername,
+  loginAs,
 };

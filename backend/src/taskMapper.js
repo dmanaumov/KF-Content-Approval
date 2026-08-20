@@ -169,6 +169,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const formatProp = findPropertyDef(board, config.formatPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   const urlProp = findPropertyDef(board, config.urlPropertyName);
+  const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
 
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
   const projectFilterMatched = !projectProp || !!projectOptionId;
@@ -258,10 +259,39 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       caption = stripDiskLinks(caption, validatedCaptionDiskLinks.map((l) => l.raw));
     }
 
+    // Which client this card belongs to — not needed by the client cabinet
+    // (a client's own link is already filtered to one project, see
+    // projectOptionId above) but IS needed by the /team cabinet, which spans
+    // every project a person works across and has to label each card.
+    const projectId = projectProp ? properties[projectProp.id] || null : null;
+    const projectLabel = projectProp ? optionLabelById(projectProp, projectId) : null;
+
     let format = null;
     if (formatProp) {
       const rawFormat = properties[formatProp.id];
       format = formatProp.type === 'select' ? optionLabelById(formatProp, rawFormat) : rawFormat;
+    }
+
+    // "Ответственный" (person-type property) — powers the /team cabinet's
+    // "my tasks" filter (see index.js's assignee-filtered task list). Not
+    // used by the client cabinet at all. Focalboard "person" properties have
+    // been observed elsewhere in this project (n8n automation, see
+    // docs/N8N_AUTOMATION.md) storing a single Mattermost user id as a plain
+    // string — handled defensively here in case a given card instead has a
+    // JSON array (multi-assign) or is simply unset, rather than assuming the
+    // single-string shape is the only one that can occur.
+    let assigneeId = null;
+    if (assigneeProp) {
+      const raw = properties[assigneeProp.id];
+      if (Array.isArray(raw)) assigneeId = raw[0] || null;
+      else if (typeof raw === 'string' && raw.trim()) {
+        try {
+          const parsed = JSON.parse(raw);
+          assigneeId = Array.isArray(parsed) ? parsed[0] || null : raw;
+        } catch (e) {
+          assigneeId = raw; // plain string, not JSON — the common case
+        }
+      }
     }
 
     let url = urlProp ? String(properties[urlProp.id] || '').trim() : '';
@@ -315,6 +345,9 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       media,
       feedback,
       url,
+      assigneeId,
+      projectId,
+      projectLabel,
       createAt: card.createAt || 0,
     };
   });
@@ -326,21 +359,29 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     return b.createAt - a.createAt;
   });
 
+  // opts.includeAllStatuses (used by the /team cabinet's "my tasks" list —
+  // see index.js) — a team member's own work includes plenty of cards still
+  // in an internal-only production stage ("В процессе", "ТЗ РАЙТЕРУ", ...)
+  // that statusEnumFromLabel() deliberately maps to null (not one of the 5
+  // client-facing states) because the CLIENT cabinet must never show those.
+  // The team cabinet has the opposite need — show everything that's theirs,
+  // whatever stage it's in — so this bypasses that exclusion and keeps the
+  // raw statusLabel instead. "АРХИВ" is still excluded either way (dropped,
+  // not "my active work" in either cabinet).
+  const archivedLabel = normLabel(config.statusOptionLabels.archived);
+  const visibleTasks = opts.includeAllStatuses
+    ? tasks.filter((t) => normLabel(t.statusLabel) !== archivedLabel)
+    : tasks.filter((t) => t.status && t.status !== 'archived');
+
   return {
-    // status === null → "Статус" value isn't a client-facing one (internal
-    // production stage) → hidden from the client cabinet. status === 'archived'
-    // → explicitly hidden. The staff page (GET /api/projects in index.js) can
-    // opt into seeing internal-stage posts too via opts.includeInternal — it
-    // needs them for the bead strip, but they must never reach the client.
-    tasks: opts.includeInternal
-      ? tasks.filter((t) => t.status !== 'archived')
-      : tasks.filter((t) => t.status && t.status !== 'archived'),
-      meta: {
-        approvalPropertyFound: !!approvalProp,
-        publishDatePropertyFound: !!publishDateProp,
-        urlPropertyFound: !!urlProp,
-        projectPropertyFound: !!projectProp,
-        projectFilterMatched,
+    tasks: visibleTasks,
+    meta: {
+      approvalPropertyFound: !!approvalProp,
+      publishDatePropertyFound: !!publishDateProp,
+      urlPropertyFound: !!urlProp,
+      projectPropertyFound: !!projectProp,
+      assigneePropertyFound: !!assigneeProp,
+      projectFilterMatched,
     },
   };
 }

@@ -51,6 +51,11 @@ module.exports = {
   // Only meaningful once a card reaches the "published" status below, but
   // rendered whenever it's non-empty regardless of status.
   urlPropertyName: process.env.MM_URL_PROPERTY_NAME || 'URL',
+  // Name of the person-type property that assigns a card to a team member —
+  // powers the /team cabinet's "my tasks" list (see teamAuth.js/taskMapper.js).
+  // Default matches the real board's "Ответственный" property (already used,
+  // read-only so far, by the n8n publishing automation — see docs/N8N_AUTOMATION.md).
+  assigneePropertyName: process.env.MM_ASSIGNEE_PROPERTY_NAME || 'Ответственный',
 
   // Only comments authored by this Mattermost username are shown to the
   // client as "правки"/feedback (resolved to a user id once via the core
@@ -139,11 +144,18 @@ module.exports = {
   mattermostBoardId: process.env.MATTERMOST_BOARD_ID || '',
 
   // URL PATH of the internal staff page (list of clients + their rotatable
-  // links). Deliberately configurable rather than a fixed "/admin" — the
+  // links). Deliberately configurable rather than a fixed "/projects" — the
   // agency didn't want a guessable, identity-revealing path here. This is
   // still only obscurity (same security model as the rest of this app — see
   // README), not real access control; pick something not easily guessed.
-  staffProjectsPath: process.env.STAFF_PROJECTS_PATH || '/admin',
+  staffProjectsPath: process.env.STAFF_PROJECTS_PATH || '/projects',
+
+  // URL path of the team cabinet (see teamAuth.js) — team members log in
+  // with their own real Mattermost username/password (checked live against
+  // Mattermost itself, never stored) and see only cards where they're the
+  // "Ответственный" (assignee). Configurable for the same obscurity reason
+  // as staffProjectsPath above.
+  teamCabinetPath: process.env.TEAM_CABINET_PATH || '/team',
 
   // Dedicated, least-privilege Postgres role created (and kept up to date)
   // for the n8n publishing automation — see db.js's ensureN8nRole(). n8n

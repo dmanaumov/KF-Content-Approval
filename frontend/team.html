@@ -3,28 +3,57 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>КФ — Команда</title>
-  <link rel="stylesheet" href="/app.css?v=4">
+  <title>КФ — Кабинет команды</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/projects.css">
+  <link rel="stylesheet" href="/team.css">
 </head>
 <body>
 <div class="page">
-  <div id="app">
+  <div id="loginApp">
     <header class="head">
       <div class="head-top">
         <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
         <div class="client-brand">
-          <strong>Команда</strong>
+          <strong>Кабинет команды</strong>
         </div>
       </div>
     </header>
-    <main id="stack" class="stack">
-      <div class="team-coming">
-        <img class="team-coming-mascot" src="/mascot.png" alt="КРАСАВА">
-        <div class="team-coming-title">Здесь скоро что-то будет!</div>
-        <div class="team-coming-sub">Раздел команды в разработке — заглядывайте позже.</div>
+
+    <div class="fp-box team-login-box">
+      <p class="fp-intro">Войдите под своим логином и паролем от Mattermost — увидите только свои задачи.</p>
+      <label class="field-label" for="loginLogin">Логин или email</label>
+      <input id="loginLogin" class="field-input" type="text" autocomplete="username" placeholder="ваш логин в Mattermost">
+      <label class="field-label" for="loginPassword">Пароль</label>
+      <input id="loginPassword" class="field-input" type="password" autocomplete="current-password">
+      <button id="loginSubmit" class="btn approve fp-submit">Войти</button>
+      <div id="loginError" class="error-box team-login-error" hidden></div>
+    </div>
+  </div>
+
+  <div id="teamApp" hidden>
+    <header class="head">
+      <div class="head-top">
+        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+        <div class="head-right">
+          <div class="client-brand">
+            <strong id="teamUserName">…</strong>
+          </div>
+          <button id="logoutBtn" class="cal-toggle" type="button" title="Выйти" aria-label="Выйти">
+            <span aria-hidden="true">⎋</span>
+          </button>
+        </div>
       </div>
-    </main>
+    </header>
+
+    <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
+    <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
+    <main id="teamList" class="team-list"></main>
   </div>
 </div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/team.js"></script>
 </body>
 </html>
