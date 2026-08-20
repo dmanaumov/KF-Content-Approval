@@ -1,11 +1,23 @@
 // Team cabinet — phase 1: Mattermost login + read-only "my tasks" list
-// (filtered server-side by the "Ответственный" property, see
+// (filtered server-side by the "Исполнитель" property, see
 // backend/src/index.js's GET /api/team/tasks). Editing (date/status/text),
 // post creation, media upload, and comments are later phases — this file
 // intentionally only renders what's already real.
 
 const STATUS_LABELS = { waiting: 'На согласовании', approved: 'Согласовано', changes: 'Правки', published: 'Опубликовано' };
 const STATUS_CLASS = { waiting: 'waiting', approved: 'approved', changes: 'changes', published: 'published' };
+
+// Статусы, где нужны действия ответственного — подсвечиваются (чипы и бейджи
+// тёплым цветом); остальные (НА СОГЛАСОВАНИИ, СДАЛИ, ЗАПЛАНИРОВАНО и т.п.)
+// показываются серым.
+const ACTIVE_STATUSES = ['В ПРОЦЕССЕ', 'КОРРЕКТИРОВКА'];
+const GRAY_STATUSES = ['НА СОГЛАСОВАНИИ', 'СДАЛИ', 'ЗАПЛАНИРОВАНО'];
+const PREFERRED_STATUS_ORDER = [...ACTIVE_STATUSES, ...GRAY_STATUSES];
+
+const norm = (s) => String(s || '').trim().toLowerCase();
+
+let currentTasks = [];
+let activeStatuses = null;
 
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -29,6 +41,9 @@ const teamUserName = document.getElementById('teamUserName');
 const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
+const teamFilters = document.getElementById('teamFilters');
+const taskModal = document.getElementById('taskModal');
+const tmTitle = document.getElementById('tmTitle');
 
 function showLogin() {
   loginApp.hidden = false;
@@ -82,20 +97,55 @@ async function logout() {
   showLogin();
 }
 
+function daysUntil(publishDate) {
+  const m = String(publishDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const target = new Date(+m[1], +m[2] - 1, +m[3]);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
+// "Горит" — задача, требующая действий ответственного (В ПРОЦЕССЕ /
+// КОРРЕКТИРОВКА), с дедлайном на 3 дня ближе или уже просроченным — по
+// аналогии с "горящими согласованиями" в кабинете клиента.
+function isUrgentTask(task) {
+  if (!task.publishDate) return false;
+  if (!ACTIVE_STATUSES.some((s) => norm(s) === norm(task.statusLabel))) return false;
+  const d = daysUntil(task.publishDate);
+  return d !== null && d < 3;
+}
+
+// Самые срочные сверху — по мере приближения дедлайна (ближайшая дата первая,
+// задачи без даты — в конец).
+function byDeadline(a, b) {
+  if (!a.publishDate) return b.publishDate ? 1 : 0;
+  if (!b.publishDate) return -1;
+  return a.publishDate.localeCompare(b.publishDate);
+}
+
 function statusBadgeHtml(task) {
+  const label = (task.statusLabel || '').trim();
+  if (!label) return '';
+  if (ACTIVE_STATUSES.some((s) => norm(s) === norm(label))) {
+    return `<span class="status active">${esc(label)}</span>`;
+  }
+  if (GRAY_STATUSES.some((s) => norm(s) === norm(label))) {
+    return `<span class="status internal">${esc(label)}</span>`;
+  }
   if (task.status && STATUS_LABELS[task.status]) {
     return `<span class="status ${STATUS_CLASS[task.status]}">${STATUS_LABELS[task.status]}</span>`;
   }
-  // Internal-only production stage (not one of the 5 client-facing states) —
-  // still worth showing, just without a dedicated color.
   return task.statusLabel ? `<span class="status internal">${esc(task.statusLabel)}</span>` : '';
 }
 
 function taskRowHtml(task) {
+  const urgent = isUrgentTask(task);
   const dateBadge = task.publishDate
-    ? `<span class="status date">${esc(task.publishDate.split('-').reverse().join('.'))}</span>`
+    ? `<div class="team-task-date">${esc(task.publishDate.split('-').reverse().join('.'))}</div>`
     : '';
-  return `<div class="team-task" data-task-id="${esc(task.id)}">
+  const urgentBadge = urgent ? '<span class="status urgent">🔥 ГОРИТ!</span>' : '';
+  return `<div class="team-task${urgent ? ' urgent' : ''}" data-task-id="${esc(task.id)}">
     <div class="team-task-top">
       <div>
         ${task.projectLabel ? `<div class="team-task-project">${esc(task.projectLabel)}</div>` : ''}
@@ -103,10 +153,52 @@ function taskRowHtml(task) {
       </div>
     </div>
     <div class="team-task-bottom">
-      ${statusBadgeHtml(task)}
-      ${dateBadge}
+      <div class="team-task-meta">
+        <div class="team-task-status">${statusBadgeHtml(task)}${urgentBadge}</div>
+        ${dateBadge}
+      </div>
     </div>
   </div>`;
+}
+
+function renderChips() {
+  const seen = [];
+  currentTasks.forEach((t) => {
+    const s = (t.statusLabel || '').trim();
+    if (s && !seen.includes(s)) seen.push(s);
+  });
+  if (!seen.length) {
+    teamFilters.hidden = true;
+    activeStatuses = null;
+    return;
+  }
+  seen.sort((a, b) => {
+    const ia = PREFERRED_STATUS_ORDER.indexOf(a);
+    const ib = PREFERRED_STATUS_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  activeStatuses = new Set(seen.map(norm));
+  teamFilters.hidden = false;
+  teamFilters.innerHTML = seen
+    .map((s) => {
+      const need = ACTIVE_STATUSES.some((x) => norm(x) === norm(s));
+      return `<button type="button" class="chip ${need ? 'need' : 'wait'} active" data-status="${esc(s)}">${esc(s)}</button>`;
+    })
+    .join('');
+}
+
+function renderTasks() {
+  const visible = activeStatuses
+    ? currentTasks.filter((t) => activeStatuses.has(norm(t.statusLabel)))
+    : currentTasks;
+  if (!visible.length) {
+    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами.' : 'На вас пока нет ни одной задачи.';
+    teamEmpty.hidden = false;
+    teamList.innerHTML = '';
+    return;
+  }
+  teamEmpty.hidden = true;
+  teamList.innerHTML = visible.map(taskRowHtml).join('');
 }
 
 async function loadTasks() {
@@ -122,11 +214,9 @@ async function loadTasks() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || 'Не удалось загрузить задачи');
     teamLoading.hidden = true;
-    if (!data.tasks.length) {
-      teamEmpty.hidden = false;
-      return;
-    }
-    teamList.innerHTML = data.tasks.map(taskRowHtml).join('');
+    currentTasks = (data.tasks || []).slice().sort(byDeadline);
+    renderChips();
+    renderTasks();
   } catch (err) {
     teamLoading.hidden = true;
     toast('Не удалось загрузить задачи: ' + err.message);
@@ -151,5 +241,28 @@ async function init() {
 loginSubmit.addEventListener('click', login);
 [loginLogin, loginPassword].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); }));
 document.getElementById('logoutBtn').addEventListener('click', logout);
+
+teamFilters.addEventListener('click', (e) => {
+  const btn = e.target.closest('.chip');
+  if (!btn || !activeStatuses) return;
+  const key = norm(btn.dataset.status);
+  if (activeStatuses.has(key)) activeStatuses.delete(key);
+  else activeStatuses.add(key);
+  btn.classList.toggle('active');
+  renderTasks();
+});
+
+teamList.addEventListener('click', (e) => {
+  const row = e.target.closest('.team-task');
+  if (!row) return;
+  const t = currentTasks.find((x) => x.id === row.dataset.taskId);
+  if (!t) return;
+  tmTitle.textContent = t.title || '(без названия)';
+  taskModal.hidden = false;
+});
+
+taskModal.addEventListener('click', (e) => {
+  if (e.target.closest('#tmClose') || !e.target.closest('.tm-card')) taskModal.hidden = true;
+});
 
 init();

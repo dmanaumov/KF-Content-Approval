@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>КФ — Кабинет команды</title>
-  <link rel="stylesheet" href="/app.css?v=4">
-  <link rel="stylesheet" href="/projects.css?v=4">
-  <link rel="stylesheet" href="/team.css?v=4">
+  <link rel="stylesheet" href="/app.css?v=5">
+  <link rel="stylesheet" href="/projects.css?v=5">
+  <link rel="stylesheet" href="/team.css?v=5">
 </head>
 <body>
 <div class="page">
@@ -46,14 +46,23 @@
       </div>
     </header>
 
+    <div id="teamFilters" class="team-filters" hidden></div>
     <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
     <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
     <main id="teamList" class="team-list"></main>
   </div>
 </div>
 
+<div id="taskModal" class="tm-modal" hidden>
+  <div class="tm-backdrop"></div>
+  <div class="tm-card">
+    <button id="tmClose" class="tm-close" type="button" aria-label="Закрыть">✕</button>
+    <div id="tmTitle" class="tm-title"></div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=4"></script>
+<script src="/team.js?v=5"></script>
 </body>
 </html>
