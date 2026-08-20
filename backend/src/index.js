@@ -388,9 +388,13 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       feedbackAuthorUserId,
     });
     if (!meta.assigneePropertyFound) {
+      // Self-diagnosing on purpose — list what's actually on the board right
+      // in the error, instead of sending whoever hits this to dig through
+      // DEBUG_MATTERMOST=true + /api/debug/... just to find the real name.
+      const available = (board.cardProperties || []).map((p) => `«${p.name}»`).join(', ') || '(не удалось получить список свойств)';
       return res.status(500).json({
         error: 'assignee_property_not_found',
-        message: `Свойство "${config.assigneePropertyName}" не найдено на борде — см. MM_ASSIGNEE_PROPERTY_NAME в .env.`,
+        message: `Свойство "${config.assigneePropertyName}" не найдено на борде. Реальные свойства борда: ${available}. Задайте точное имя через MM_ASSIGNEE_PROPERTY_NAME в .env.`,
       });
     }
     const myId = req.teamSession.user.id;
