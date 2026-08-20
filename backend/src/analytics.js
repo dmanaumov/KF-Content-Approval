@@ -20,9 +20,12 @@ const teamAuth = require('./teamAuth');
 const VISITOR_COOKIE = 'kf_vid';
 const VISITOR_COOKIE_MAX_AGE = 365 * 24 * 3600; // 1 year, so return visits stay the same visitor
 const DEDUPE_WINDOW_MS = 20 * 60 * 1000; // ~ one "session" per visitor/role/project
+const RETENTION_DAYS = 90; // access_log keeps this many days of history, then gets pruned
+const PRUNE_EVERY_INSERTS = 1000; // sanity cap: prune in-note() once per ~1000 rows even without restarts
 
 const recent = new Map();
 let warned = false;
+let insertsSincePrune = 0;
 
 // Распознаём из User-Agent всё, что в нём есть: тип устройства, браузер
 // (+версию), ОС и модель. Модель/«производитель» в UA встречаются в основном
@@ -126,6 +129,25 @@ function identify(req) {
   return { role: 'client', actor: '', actorName: '' };
 }
 
+// Удаляет строки access_log старше RETENTION_DAYS. Вызывается один раз на
+// старте (после initSchema — без отдельного cron-цикла, в стиле этого
+// проекта) и, как страховка на случай долгого аптайма без рестартов, раз в
+// ~PRUNE_EVERY_INSERTS записей из note(). Никогда не бросает исключение.
+async function pruneOldLogs() {
+  if (!config.databaseUrl || !db.pool) return 0;
+  try {
+    const { rowCount } = await db.pool.query(
+      'DELETE FROM access_log WHERE ts < now() - make_interval(days => $1)',
+      [RETENTION_DAYS]
+    );
+    if (rowCount > 0) console.log(`[analytics] pruned ${rowCount} access_log row(s) older than ${RETENTION_DAYS} days.`);
+    return rowCount;
+  } catch (err) {
+    console.error('[analytics] prune failed:', err.message);
+    return 0;
+  }
+}
+
 // Fire-and-forget: never blocks the response, never throws into the caller.
 function note(role, { project = '', actor = '', actorName = '', path = '' }, req, res) {
   if (!config.databaseUrl) {
@@ -150,6 +172,10 @@ function note(role, { project = '', actor = '', actorName = '', path = '' }, req
       [role, vid, project, actor, actorName, path, device, browser, deviceLabel, browserLabel, ua]
     )
     .catch((err) => console.error('[analytics] failed to record:', err.message));
+  if (++insertsSincePrune >= PRUNE_EVERY_INSERTS) {
+    insertsSincePrune = 0;
+    pruneOldLogs(); // fire-and-forget, guarded inside
+  }
 }
 
-module.exports = { note, identify };
+module.exports = { note, identify, pruneOldLogs };

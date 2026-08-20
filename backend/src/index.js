@@ -336,13 +336,13 @@ app.get('/api/analytics/summary', staffAuth, async (req, res) => {
         `SELECT COALESCE(NULLIF(device_label,''), device) AS device_label,
                 count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
          FROM access_log WHERE ts > now() - interval '30 days' AND device <> ''
-         GROUP BY device_label ORDER BY visitors DESC LIMIT 50`
+         GROUP BY 1 ORDER BY visitors DESC LIMIT 50`
       ),
       pool.query(
         `SELECT COALESCE(NULLIF(browser_label,''), browser) AS browser_label,
                 count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
          FROM access_log WHERE ts > now() - interval '30 days' AND browser <> ''
-         GROUP BY browser_label ORDER BY visitors DESC LIMIT 50`
+         GROUP BY 1 ORDER BY visitors DESC LIMIT 50`
       ),
       pool.query(
         `SELECT actor, count(*)::int AS events
@@ -433,7 +433,7 @@ app.get('/api/analytics/projects', staffAuth, async (req, res) => {
         `SELECT project, COALESCE(NULLIF(device_label,''), device) AS device, count(*)::int AS events
          FROM access_log
          WHERE project <> '' AND device <> '' AND ts >= $1 AND ts < $2
-         GROUP BY project, device ORDER BY project, events DESC`,
+         GROUP BY 1, 2 ORDER BY project, events DESC`,
         [monthStart.toISOString(), monthEnd.toISOString()]
       ),
       pool.query(
@@ -1049,6 +1049,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
   try {
     await waitForDb();
     await teamAuth.restoreSessions();
+    await analytics.pruneOldLogs();
     await projectSettings.importLegacyFileTokens();
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
