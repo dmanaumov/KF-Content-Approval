@@ -971,13 +971,24 @@ tmBody.addEventListener('click', async (e) => {
   }
 });
 
-// Клик вне пилюль/попапов/аватара ИИ закрывает все открытые попапы.
+// Клик вне пилюль/попапов/аватара ИИ закрывает все открытые попапы. Capture
+// phase (3-й аргумент true), а не bubble — намеренно: действия ВНУТРИ
+// попапов (выбор статуса, дата, стрелки календаря вперёд/назад) сами
+// перерисовывают innerHTML своего контейнера в ответ на этот же клик, а
+// перерисовка отключает кликнутый элемент от документа. На bubble-фазе,
+// когда событие добралось бы досюда, e.target уже был бы отсоединён и
+// closest() всегда возвращал бы null — читалось бы как "клик снаружи" и
+// закрывало бы popover сразу после того, как он сам себя обновил (например,
+// после клика по стрелке месяца). На capture-фазе этот обработчик срабатывает
+// ПЕРВЫМ, раньше любых обработчиков на самих элементах модалки — до того,
+// как что-либо успеет перерисоваться, так что e.target здесь всегда ещё
+// живой узел.
 document.addEventListener('click', (e) => {
   if (taskModal.hidden) return;
   if (!e.target.closest('.tm-pill-wrap') && !e.target.closest('.tm-ai-avatar') && !e.target.closest('.tm-ai-pop')) {
     closeAllPopovers();
   }
-});
+}, true);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !taskModal.hidden) closeTaskModal();
@@ -1006,8 +1017,20 @@ teamList.addEventListener('click', (e) => {
   openTaskModal(row.dataset.taskId);
 });
 
-taskModal.addEventListener('click', (e) => {
-  if (e.target.closest('#tmClose') || !e.target.closest('.tm-card')) closeTaskModal();
-});
+// Bound directly to the backdrop and the close button — NOT a delegated
+// "closest('.tm-card') failed → must be outside" check on #taskModal as a
+// whole. Reason: almost every action inside the card (tab switch, title
+// save, status/date/network pick, reorder toggle, ...) re-renders its
+// container's innerHTML in response to the very click that's still
+// bubbling. That detaches the clicked element from the document before the
+// event reaches an ancestor listener, so closest() on e.target there always
+// comes back null — which used to read as "click was outside the card" and
+// closed the modal on every single interaction. Listening on the backdrop
+// itself (a stable element no render function ever touches) sidesteps the
+// whole class of bug: a click can only ever reach it by literally landing
+// on the backdrop. Matches how app.js's own modals (feedbackModal etc.)
+// close — a dedicated button/element, not a wrapper-level inference.
+document.querySelector('#taskModal .tm-backdrop').addEventListener('click', closeTaskModal);
+document.getElementById('tmClose').addEventListener('click', closeTaskModal);
 
 init();
