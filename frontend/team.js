@@ -779,21 +779,47 @@ function formatDateTime(ms) {
   }
 }
 
+// Вложение в чате (скрин клиента или картинка от агентства): маркерный
+// комментарий несёт ссылку на диск отдельной строкой — вынимаем её и рисуем
+// превью через тот же прокси, что и медиа поста; остаток текста — подпись.
+const CHAT_FILE_URL_RE = /https:\/\/disk\.kontentferma\.[a-z]{2,10}\/s\/[A-Za-z0-9]+/i;
+
+function chatMsgAttachment(text) {
+  const urls = String(text || '').match(new RegExp(CHAT_FILE_URL_RE.source, 'gi')) || [];
+  if (!urls.length) return { imgs: '', caption: text };
+  let caption = String(text || '');
+  let imgs = '';
+  for (const url of urls) {
+    caption = caption.split(url).join('');
+    imgs += `<img class="tm-chat-img" src="${esc(mediaFileUrl({ source: 'disk', shareUrl: url }))}" alt="Вложение" loading="lazy">`;
+  }
+  return { imgs, caption: caption.trim() };
+}
+
 function clientCommentHtml(c) {
-  if (c.kind === 'feedback') {
-    return `<div class="tm-chat-msg">
-      <div class="tm-chat-msg-author">Клиент</div>
-      <div class="tm-chat-msg-text">${esc(c.text)}</div>
+  const bubble = (author, bodyHtml) => `<div class="tm-chat-msg">
+      <div class="tm-chat-msg-author">${esc(author)}</div>
+      ${bodyHtml}
       <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
     </div>`;
+  // Файл клиента («ФАЙЛ ОТ КЛИЕНТА») — пузырь с превью.
+  if (c.kind === 'client-file') {
+    const { imgs, caption } = chatMsgAttachment(c.text);
+    return bubble('Клиент · файл', `${imgs}${caption ? `<div class="tm-chat-msg-text">${esc(caption)}</div>` : ''}`);
   }
-  // 'agency' — сообщение, отправленное командой отсюда же (см. compose box
-  // ниже) — показываем как "своё" сообщение (справа), чат с клиентом
-  // читается в обе стороны, а не только его правки.
+  if (c.kind === 'feedback' || c.kind === 'client-msg') {
+    const { imgs, caption } = chatMsgAttachment(c.text);
+    return bubble(
+      'Клиент',
+      `${imgs}${caption ? `<div class="tm-chat-msg-text">${esc(caption)}</div>` : ''}`
+    );
+  }
+  // 'agency' — сообщение/картинка от команды отсюда же — «своё» (справа).
   if (c.kind === 'agency') {
+    const { imgs, caption } = chatMsgAttachment(c.text);
     return `<div class="tm-chat-msg mine">
       <div class="tm-chat-msg-author">Агентство</div>
-      <div class="tm-chat-msg-text">${esc(c.text)}</div>
+      ${imgs}${caption ? `<div class="tm-chat-msg-text">${esc(caption)}</div>` : ''}
       <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
     </div>`;
   }
@@ -808,10 +834,14 @@ function renderClientPane(t) {
     : `<div class="tm-chat-empty">Переписки пока нет — можно написать клиенту первым.</div>`;
   // В отличие от предыдущей read-only версии — сюда всегда можно написать,
   // независимо от того, оставлял ли клиент что-то сам (реальная переписка
-  // из карточки Mattermost, не только приём его правок).
+  // из карточки Mattermost, не только приём его правок). Скрепка — картинка
+  // для клиента: тот же диск SMM/<клиент>/ClientMedia, в чат попадает
+  // превью, в Mattermost — только ссылка (см. /client-media в index.js).
   return `<div class="tm-chat">
     ${list}
     <div class="tm-chat-compose">
+      <input type="file" accept="image/*" hidden data-client-chat-file="${esc(t.id)}">
+      <button type="button" class="tm-chat-attach" data-action="client-chat-attach" aria-label="Приложить изображение" title="Приложить изображение">📎</button>
       <textarea id="tmClientComposeInput" placeholder="Написать клиенту…"></textarea>
       <button type="button" class="tm-chat-send" data-action="send-client-message" aria-label="Отправить">➤</button>
     </div>
@@ -1075,7 +1105,42 @@ tmBody.addEventListener('click', async (e) => {
     }
     return;
   }
+  if (action === 'client-chat-attach') {
+    const input = document.querySelector('#tmBody input[data-client-chat-file]');
+    if (input) input.click();
+    return;
+  }
 });
+
+// Картинка для клиента из «Чата с клиентом» — тот же путь, что у клиента
+// (диск SMM/<клиент>/ClientMedia + ссылка в маркерном комментарии), только
+// маркер «СООБЩЕНИЕ (Имя)» — клиент увидит пузырь «Агентство» с превью.
+async function uploadClientChatMedia(t, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const compose = document.querySelector('#tmBody .tm-chat-compose');
+  const attachBtn = compose && compose.querySelector('.tm-chat-attach');
+  const textarea = document.getElementById('tmClientComposeInput');
+  if (attachBtn) attachBtn.disabled = true;
+  if (textarea) textarea.placeholder = 'Загружаем изображение…';
+  try {
+    // Подпись: то, что сотрудник успел набрать в поле до выбора файла.
+    const form = new FormData();
+    form.append('file', file);
+    if (textarea && textarea.value.trim()) form.append('caption', textarea.value.trim());
+    const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/client-media`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
+    applyUpdatedTask(data.task);
+    toast('Изображение отправлено клиенту');
+  } catch (err) {
+    if (textarea) textarea.placeholder = 'Написать клиенту…';
+    if (attachBtn) attachBtn.disabled = false;
+    toast('Не удалось прикрепить: ' + err.message);
+  } finally {
+    if (input) input.value = '';
+  }
+}
 
 // Реальная загрузка файла — перетащить в #tmDropzone или выбрать через
 // скрытый <input type="file"> внутри него (клик по зоне landing прямо на
@@ -1116,9 +1181,16 @@ async function uploadMediaFile(t, file) {
 }
 
 tmBody.addEventListener('change', (e) => {
+  const t = currentModalTask();
+  // Картинка для клиента из «Чата с клиентом».
+  const chatInput = e.target.closest('input[data-client-chat-file]');
+  if (chatInput) {
+    if (t) uploadClientChatMedia(t, chatInput);
+    else chatInput.value = '';
+    return;
+  }
   const fileInput = e.target.closest('#tmFileInput');
   if (!fileInput) return;
-  const t = currentModalTask();
   const file = fileInput.files && fileInput.files[0];
   fileInput.value = ''; // позволяет выбрать тот же файл повторно в будущем
   if (t && file) uploadMediaFile(t, file);

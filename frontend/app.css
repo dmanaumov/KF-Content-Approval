@@ -233,6 +233,19 @@ button{cursor:pointer}
    вкладка «Чат с клиентом». Свёрнут по умолчанию до последнего сообщения;
    .expanded показывает всю переписку (toggle-dialog в app.js). */
 .client-dialog{margin:10px 17px 0;display:flex;flex-direction:column;gap:6px}
+/* Кнопка «Приложить медиа» в чате — фото/скрины клиента, только в чат,
+   не в пост (файл падает в SMM/<клиент>/ClientMedia на диске). */
+.client-chat-row{display:flex;margin:8px 17px 0}
+.client-chat-attach{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer}
+.client-chat-attach:active{background:#F1F4F3}
+.client-chat-attach:disabled{opacity:.55;cursor:default}
+.client-chat-img-link{display:block;max-width:78%}
+.client-chat-img{display:block;width:100%;max-width:220px;border-radius:12px}
+/* Пузырь с картинкой = сама картинка (как в мессенджерах), без подложки */
+.client-chat-msg:has(.client-chat-img){background:transparent;padding:0;color:var(--ink)}
+.client-chat-msg.theirs:has(.client-chat-img){align-self:flex-start}
+.client-chat-msg.mine:has(.client-chat-img){align-self:flex-end}
+.client-chat-caption{display:block;margin-top:3px}
 .client-chat-msg{max-width:85%;padding:10px 12px;border-radius:15px;font-size:13px;line-height:1.4;word-break:break-word}
 .client-chat-msg.hidden-msg{display:none}
 .client-chat-msg.theirs{align-self:flex-start;background:#EAF3F1;color:#17322E;border-bottom-left-radius:4px}

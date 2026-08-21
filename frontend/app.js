@@ -205,30 +205,59 @@ function mediaFileUrl(m) {
 }
 
 // Two-sided dialog between the client and the agency team, built from
-// taskMapper.js's clientComments: 'feedback' (client's own ПРАВКИ text) and
-// 'agency' (team messages sent from the /team cabinet's "Чат с клиентом"
-// tab) are real written messages, so they render as chat bubbles — client
-// on the right ('mine', since this is the client's own cabinet), agency on
-// the left ('theirs'). 'approved'/'correction' are system-style notices
-// (card approved / media reordered etc.), not conversation, so they're left
-// out here — they're already reflected elsewhere on the card (status badge,
-// media order itself).
+// taskMapper.js's clientComments: 'feedback'/'client-msg' (client's own
+// text) and 'client-file' (photo/screenshot the client attached in the chat)
+// are the client's side ('mine'), 'agency' (team messages from the /team
+// cabinet's "Чат с клиентом" tab) is 'theirs'. All three render as chat
+// bubbles; 'approved'/'correction' are system-style notices (card approved /
+// media reordered etc.), not conversation, so they're left out here —
+// they're already reflected elsewhere on the card (status badge, media order
+// itself).
 //
 // Collapsed by default to just the latest message with a toggle arrow —
 // see expandedDialogIds — so a returning client immediately sees what's
 // new without the whole history pushing the card's action buttons down.
+
+// Ссылка на диск в тексте сообщения-вложения: маркерный комментарий несёт
+// shareUrl отдельной строкой (см. chat-media в index.js) — здесь и в кабинете
+// команды этот URL вынимается и превращается в превью-картинку.
+const CHAT_FILE_URL_RE = /https:\/\/disk\.kontentferma\.[a-z]{2,10}\/s\/[A-Za-z0-9]+/i;
+
+function clientChatBubbleHtml(c, extraClass = '') {
+  const CHAT_SIDE = { feedback: 'mine', 'client-msg': 'mine', 'client-file': 'mine', agency: 'theirs' };
+  const side = CHAT_SIDE[c.kind];
+  if (!side) return '';
+  const label = side === 'theirs' ? '<span class="client-chat-label">Агентство</span>' : '';
+  let inner = '';
+  // Вложение (скрин от клиента или картинка от агентства): маркерный
+  // комментарий несёт ссылку на диск — превращаем её в превью через наш
+  // прокси /api/disk-embed, остальной текст становится подписью.
+  const urlMatches = String(c.text || '').match(new RegExp(CHAT_FILE_URL_RE.source, 'gi')) || [];
+  if (urlMatches.length) {
+    let caption = String(c.text || '');
+    for (const url of urlMatches) {
+      caption = caption.split(url).join('');
+      const src = mediaFileUrl({ source: 'disk', shareUrl: url });
+      inner += `<a class="client-chat-img-link" href="${esc(url)}" target="_blank" rel="noopener"><img class="client-chat-img" src="${src}" alt="Вложение" loading="lazy"></a>`;
+    }
+    caption = caption.trim();
+    if (caption) inner += `<span class="client-chat-caption">${esc(caption)}</span>`;
+  } else {
+    inner = esc(c.text);
+  }
+  return `<div class="client-chat-msg ${side}${extraClass}">${label}${inner}</div>`;
+}
+
 function clientDialogHtml(task) {
-  const CHAT_SIDE = { feedback: 'mine', agency: 'theirs' };
+  const CHAT_SIDE = { feedback: 'mine', 'client-msg': 'mine', 'client-file': 'mine', agency: 'theirs' };
   const messages = (task.clientComments || []).filter((c) => CHAT_SIDE[c.kind]);
   if (!messages.length) return '';
   const expanded = expandedDialogIds.has(task.id);
   const lastIndex = messages.length - 1;
   const bubbles = messages
     .map((c, i) => {
-      const side = CHAT_SIDE[c.kind];
-      const label = side === 'theirs' ? '<span class="client-chat-label">Агентство</span>' : '';
       const hidden = !expanded && i !== lastIndex ? ' hidden-msg' : '';
-      return `<div class="client-chat-msg ${side}${hidden}">${label}${esc(c.text)}</div>`;
+      return clientChatBubbleHtml(c, hidden);
     })
     .join('');
   const toggle = messages.length > 1
@@ -238,6 +267,48 @@ function clientDialogHtml(task) {
       </button>`
     : '';
   return `<div class="client-dialog${expanded ? ' expanded' : ''}">${bubbles}${toggle}</div>`;
+}
+
+// Кнопка «Приложить медиа» в чате — видна ВСЕГДА (и когда переписки ещё
+// нет тоже), чтобы способ отправить скрин был очевиден без объяснений.
+// Сам <input type=file> скрыт; клик по кнопке открывает системный пикер,
+// выбор файла уходит в uploadChatMedia(). Только картинки: фото/скрины,
+// никакой загрузки в пост — файл ложится в SMM/<клиент>/ClientMedia на диске.
+function chatAttachRow(task) {
+  const busy = busyTaskId === task.id;
+  return `<div class="client-chat-row">
+    <input type="file" accept="image/*" hidden data-chat-file="${esc(task.id)}">
+    <button type="button" class="client-chat-attach" data-action="chat-attach" data-id="${esc(task.id)}" ${busy ? 'disabled' : ''}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" width="14" height="14"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.9a3.7 3.7 0 015.2 5.2L10 18.3a1.8 1.8 0 01-2.6-2.6l7.8-7.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      ${busy ? 'Загружаем…' : 'Приложить медиа'}
+    </button>
+  </div>`;
+}
+
+async function uploadChatMedia(taskId, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  busyTaskId = taskId;
+  render();
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/tasks/${encodeURIComponent(taskId)}/chat-media`, {
+      method: 'POST',
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
+    state.tasks = state.tasks.map((t) => (t.id === taskId ? data.task : t));
+    toast('Изображение отправлено в чат');
+    // Разворачиваем переписку, чтобы клиент сразу увидел своё вложение.
+    expandedDialogIds.add(taskId);
+  } catch (err) {
+    toast('Не удалось прикрепить: ' + err.message);
+  } finally {
+    busyTaskId = null;
+    render();
+  }
 }
 
 function mediaHtml(task, canReorder) {
@@ -353,6 +424,7 @@ function cardHtml(task) {
     ${captionBlock}
     ${urlLink}
     ${clientDialogHtml(task)}
+    ${chatAttachRow(task)}
     ${actions}
     ${aiDisclaimer}
   </article>`;
@@ -855,9 +927,14 @@ function finishSwipe() {
   }, 240);
 }
 
-function tryStartSwipe(card, x, y) {
-  if (swipe || busyTaskId) return false;
+function tryStartSwipe(card, x, y, sourceEl) {
+  if (swipe || busyTaskId || carSwipe) return false;
   if (!card || !swipeWrapOf(card)) return false;
+  // Жест, начавшийся в медиа-блоке карточки с 2+ фото, — это ЛИСТАНИЕ
+  // карусели, а не свайп карточки (иначе оба жеста дерутся и клиент не
+  // может посмотреть второе фото). На одиночном фото / без медиа свайп
+  // карточки по-прежнему работает по всей площади.
+  if (sourceEl && sourceEl.closest('.media') && card.querySelectorAll('.slide').length > 1) return false;
   swipe = {
     card, wrap: swipeWrapOf(card),
     startX: x, startY: y,
@@ -909,38 +986,122 @@ function cancelSwipe() {
 // stealing the drag into a scroll once horizontal intent is confirmed.
 // touch-action stays pan-y so vertical page scrolling over cards still works.
 const stackEl = document.getElementById('stack');
+
+// --- Листание карусели фото vs свайп карточки ---
+// Два горизонтальных жеста на одной карточке. Разводим по ЗОНЕ СТАРТА:
+// жест в .media многофото-карточки крутит карусель, жест где угодно ещё —
+// свайп карточки. Родной горизонтальный скролл карусели не работает
+// (touch-action:pan-y на .card наследуется и запрещает pan-x), поэтому
+// катаем scrollLeft руками: лок «горизонтальность» → preventDefault →
+// scrollLeft = start - dx; на отпускании — снап к ближайшему слайду.
+// Вертикальное намерение всегда отдаём странице (скролл списка).
+let carSwipe = null; // активный жест карусели (взаимоисключаем с swipe)
+
+function slideStepOf(car) {
+  const s = car.querySelector('.slide');
+  return s ? s.getBoundingClientRect().width : car.clientWidth;
+}
+
+function snapCarousel(car) {
+  const step = slideStepOf(car);
+  if (!step) return;
+  const max = car.scrollWidth - car.clientWidth;
+  const target = Math.min(max, Math.max(0, Math.round(car.scrollLeft / step) * step));
+  car.scrollTo({ left: target, behavior: 'smooth' });
+}
+
+function tryStartCarSwipe(target, x, y) {
+  if (carSwipe || swipe) return false;
+  const car = target.closest('.media') && target.closest('.carousel');
+  if (!car || car.querySelectorAll('.slide').length < 2) return false;
+  carSwipe = { el: car, startX: x, startY: y, startLeft: car.scrollLeft, locked: false, touchId: null, ptPointerId: null };
+  return true;
+}
+
+function moveCarSwipe(x, y) {
+  if (!carSwipe) return false;
+  const dx = x - carSwipe.startX;
+  const dy = y - carSwipe.startY;
+  if (!carSwipe.locked) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return false;
+    if (Math.abs(dy) > Math.abs(dx) * 1.2) { carSwipe = null; return false; }
+    carSwipe.locked = true;
+    // scroll-behavior:smooth из CSS сделал бы каждый шаг драга «ленивым» —
+    // на время жеста выключаем, вернём перед снапом.
+    carSwipe.el.style.scrollBehavior = 'auto';
+  }
+  carSwipe.el.scrollLeft = carSwipe.startLeft - dx;
+  return true;
+}
+
+function endCarSwipe() {
+  if (!carSwipe) return;
+  const car = carSwipe.el;
+  if (carSwipe.locked) {
+    car.style.scrollBehavior = '';
+    snapCarousel(car);
+  }
+  carSwipe = null;
+}
+
 stackEl.addEventListener('touchstart', (e) => {
   if (e.touches.length !== 1) return;
   const t = e.touches[0];
+  if (t.target.closest('button, a, input, textarea, select')) return;
+  // Карусель имеет приоритет: старт в медиа многофото-карточки — это фото.
+  if (tryStartCarSwipe(t.target, t.clientX, t.clientY)) {
+    carSwipe.touchId = t.identifier;
+    return;
+  }
   const card = t.target.closest('.card.swipeable');
   if (!card) return;
-  if (t.target.closest('button, a, input, textarea, select')) return;
-  if (!tryStartSwipe(card, t.clientX, t.clientY)) return;
+  if (!tryStartSwipe(card, t.clientX, t.clientY, t.target)) return;
   swipe.touchId = t.identifier;
 }, { passive: true });
-stackEl.addEventListener('touchmove', (e) => {
-  if (!swipe || swipe.touchId == null) return;
-  let t = null;
+
+function changedTouch(e, id) {
   for (let i = 0; i < e.changedTouches.length; i++) {
-    if (e.changedTouches[i].identifier === swipe.touchId) { t = e.changedTouches[i]; break; }
+    if (e.changedTouches[i].identifier === id) return e.changedTouches[i];
   }
-  if (!t) return;
-  if (moveSwipe(t.clientX, t.clientY) && e.cancelable) e.preventDefault();
+  return null;
+}
+
+stackEl.addEventListener('touchmove', (e) => {
+  if (swipe && swipe.touchId != null) {
+    const t = changedTouch(e, swipe.touchId);
+    if (t && moveSwipe(t.clientX, t.clientY) && e.cancelable) e.preventDefault();
+    return;
+  }
+  if (carSwipe && carSwipe.touchId != null) {
+    const t = changedTouch(e, carSwipe.touchId);
+    if (t && moveCarSwipe(t.clientX, t.clientY) && e.cancelable) e.preventDefault();
+  }
 }, { passive: false });
+
 stackEl.addEventListener('touchend', (e) => {
-  if (!swipe || swipe.touchId == null) return;
-  for (let i = 0; i < e.changedTouches.length; i++) {
-    if (e.changedTouches[i].identifier === swipe.touchId) {
+  if (swipe && swipe.touchId != null) {
+    if (changedTouch(e, swipe.touchId)) {
       swipe.touchId = null;
       endSwipe();
-      return;
     }
+    return;
+  }
+  if (carSwipe && carSwipe.touchId != null && changedTouch(e, carSwipe.touchId)) {
+    carSwipe.touchId = null;
+    endCarSwipe();
   }
 }, { passive: true });
+
 stackEl.addEventListener('touchcancel', (e) => {
-  if (!swipe || swipe.touchId == null) return;
-  swipe.touchId = null;
-  cancelSwipe();
+  if (swipe && swipe.touchId != null) {
+    swipe.touchId = null;
+    cancelSwipe();
+    return;
+  }
+  if (carSwipe && carSwipe.touchId != null) {
+    carSwipe.touchId = null;
+    endCarSwipe(); // жест украли — просто снапим к ближайшему слайду
+  }
 }, { passive: true });
 
 // Mouse/trackpad: pointer events. Touch pointer events are ignored here —
@@ -948,21 +1109,46 @@ stackEl.addEventListener('touchcancel', (e) => {
 stackEl.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch') return;
   if (e.button !== 0) return;
+  if (e.target.closest('button, a, input, textarea, select')) return;
+  if (tryStartCarSwipe(e.target, e.clientX, e.clientY)) {
+    carSwipe.ptPointerId = e.pointerId;
+    return;
+  }
   const card = e.target.closest('.card.swipeable');
   if (!card) return;
-  if (e.target.closest('button, a, input, textarea, select')) return;
-  if (!tryStartSwipe(card, e.clientX, e.clientY)) return;
+  if (!tryStartSwipe(card, e.clientX, e.clientY, e.target)) return;
   swipe.ptPointerId = e.pointerId;
 });
 stackEl.addEventListener('pointermove', (e) => {
-  if (!swipe || swipe.ptPointerId == null || swipe.ptPointerId !== e.pointerId) return;
-  if (moveSwipe(e.clientX, e.clientY)) {
-    if (e.cancelable) e.preventDefault();
-    try { swipe.card.setPointerCapture(e.pointerId); } catch (_) {}
+  if (swipe && swipe.ptPointerId != null && swipe.ptPointerId === e.pointerId) {
+    if (moveSwipe(e.clientX, e.clientY)) {
+      if (e.cancelable) e.preventDefault();
+      try { swipe.card.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    return;
+  }
+  if (carSwipe && carSwipe.ptPointerId != null && carSwipe.ptPointerId === e.pointerId) {
+    if (moveCarSwipe(e.clientX, e.clientY)) {
+      if (e.cancelable) e.preventDefault();
+      try { carSwipe.el.setPointerCapture(e.pointerId); } catch (_) {}
+    }
   }
 });
-stackEl.addEventListener('pointerup', endSwipe);
-stackEl.addEventListener('pointercancel', cancelSwipe);
+stackEl.addEventListener('pointerup', () => { endSwipe(); endCarSwipe(); });
+stackEl.addEventListener('pointercancel', () => { cancelSwipe(); endCarSwipe(); });
+
+// Живой счётчик «N / Всего» при листании карусели: scroll не всплывает,
+// поэтому ловим его на #stack в фазе захвата.
+stackEl.addEventListener('scroll', (e) => {
+  const car = e.target instanceof Element ? e.target.closest('.carousel') : null;
+  if (!car) return;
+  const dots = car.parentElement && car.parentElement.querySelector('.dots');
+  const total = parseInt(car.dataset.count || '0', 10);
+  if (!dots || !total) return;
+  const step = slideStepOf(car) || 1;
+  const idx = Math.min(total, Math.max(1, Math.round(car.scrollLeft / step) + 1));
+  if (dots.textContent !== `${idx} / ${total}`) dots.textContent = `${idx} / ${total}`;
+}, { capture: true, passive: true });
 
 document.getElementById('stack').addEventListener('click', (e) => {
   if (suppressClick) return;
@@ -971,6 +1157,12 @@ document.getElementById('stack').addEventListener('click', (e) => {
   const id = btn.dataset.id;
   if (btn.dataset.action === 'approve') approve(id);
   if (btn.dataset.action === 'open-feedback') openFeedbackFor(id);
+  // «Приложить медиа» — открываем системный пикер; сам файл уходит через
+  // change-обработчик ниже (input[type=file][data-chat-file]).
+  if (btn.dataset.action === 'chat-attach') {
+    const input = document.querySelector(`[data-chat-file="${id}"]`);
+    if (input && !btn.disabled) input.click();
+  }
   if (btn.dataset.action === 'edit-text') {
     editingTextTaskId = id;
     render();
@@ -998,6 +1190,14 @@ document.getElementById('stack').addEventListener('click', (e) => {
 
 document.querySelector('[data-action="close-feedback"]').addEventListener('click', () => {
   document.getElementById('feedbackModal').classList.remove('show');
+});
+
+// Выбор файла в пикере «Приложить медиа» → загрузка на диск + сообщение в чат.
+document.getElementById('stack').addEventListener('change', (e) => {
+  const input = e.target.closest('input[data-chat-file]');
+  if (!input || !input.files || !input.files[0]) return;
+  uploadChatMedia(input.dataset.chatFile, input);
+  input.value = ''; // повторный выбор того же файла тоже должен срабатывать
 });
 
 document.querySelector('[data-action="send-feedback"]').addEventListener('click', () => {

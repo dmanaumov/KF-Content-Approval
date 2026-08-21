@@ -141,7 +141,10 @@ async function uploadAndShare(opts) {
     throw err;
   }
   const root = config.diskUploadRootPath || 'SMM';
-  const relDir = root + '/' + sanitizeSegment(folderName);
+  // folderName может быть вложенным ("Клиент/ClientMedia" — чат-вложения
+  // клиента лежат рядом с материалами поста, но в своей подпапке) — каждый
+  // сегмент чистим отдельно, слэши-разделители сохраняем.
+  const relDir = root + '/' + folderName.split('/').filter(Boolean).map(sanitizeSegment).join('/');
   await ensureRemoteDir(relDir);
   const filename = await findFreeFileName(relDir, sanitizeSegment(baseName), ext);
   const relFile = relDir + '/' + filename;
