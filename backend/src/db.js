@@ -151,6 +151,25 @@ async function initSchema() {
     END $$;
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS team_sessions_expires_idx ON team_sessions (expires_at);`);
+  // Internal team discussion on a post — deliberately NOT stored as
+  // Mattermost card comments: those are reserved for the client-feedback
+  // convention taskMapper.js already relies on (feedbackAuthorUsername +
+  // status==='changes' gating, see index.js buildTasks callers). Mixing
+  // team chatter into the same comment stream would both leak into that
+  // client-facing surface and make "which comment is client feedback"
+  // ambiguous. Team-only, own table, own read/write path (teamComments.js).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_team_comments (
+      id bigserial PRIMARY KEY,
+      board_id text NOT NULL,
+      task_id text NOT NULL,
+      author_id text NOT NULL DEFAULT '',
+      author_name text NOT NULL DEFAULT '',
+      text text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS task_team_comments_task_idx ON task_team_comments (board_id, task_id);`);
   await ensureN8nRole();
 }
 

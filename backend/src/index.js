@@ -7,6 +7,7 @@ const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./dis
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
+const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
 const mailer = require('./mailer');
 const analytics = require('./analytics');
@@ -778,10 +779,262 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     await resolveDiskMediaKinds(mine);
     await mediaOrder.applyStoredOrder(boardId, mine);
     analytics.note('team', { actor: req.teamSession.user.username || '', actorName: [req.teamSession.user.first_name, req.teamSession.user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
-    res.json({ tasks: mine });
+    // statusOptions: every raw option on "Статус" — powers the card's status
+    // picker (frontend/team.js), which lets team members move a card into
+    // ANY production stage, not just the 5 client-facing ones. keywordsFound
+    // lets the frontend hide the "Ключевые слова/мысли" field cleanly instead
+    // of showing an always-empty box if that property isn't on this board.
+    // boardId: the /team cabinet's OWN routes deliberately never take it as
+    // a URL param (see teamAuth/requireStaffBoardId's comment — resolved
+    // server-side, kept out of this cabinet's bookmarkable URLs). But media
+    // thumbnails still have to load through the pre-existing, unauthenticated
+    // /api/files/:boardId/:fileId proxy the CLIENT cabinet already relies on
+    // (same "obscure, not secret" model there), so the frontend needs the
+    // value once to build those <img>/<video> src attributes — sent here,
+    // not as a route param anywhere under /api/team/.
+    res.json({ tasks: mine, statusOptions: meta.statusOptions, keywordsPropertyFound: meta.keywordsPropertyFound, boardId });
   } catch (err) {
     console.error('[api] team tasks failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// Loose whitespace-normalizing label compare — mirrors taskMapper.js's
+// internal normLabel (not exported), used here only to verify a status
+// write actually took (see setStatusByRawLabel below).
+function normLabelLoose(s) {
+  return (s == null ? '' : String(s)).trim().replace(/\s+/g, ' ');
+}
+
+// Re-reads one task the way the /team cabinet needs it (every status, not
+// just the 5 client-facing ones) — shared by every /api/team/tasks/:id/*
+// write route below, right after it changes something.
+async function refetchTeamTask(boardId, taskId) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+  const updated = tasks.find((t) => t.id === taskId);
+  if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
+  await resolveDiskMediaKinds([updated]);
+  await mediaOrder.applyStoredOrder(boardId, [updated]);
+  return updated;
+}
+
+function teamActorName(req) {
+  const u = req.teamSession.user;
+  return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'команда';
+}
+
+// POST /api/team/tasks/:taskId/status — body: { status: <raw label> }.
+// Unlike setApprovalStatus (client-facing, only the 5 statusOptionLabels
+// keys), this accepts ANY option on the "Статус" property — a team member
+// moves a card through internal production stages too ("В процессе",
+// "Сдали", ...), not just the client-visible ones.
+app.post('/api/team/tasks/:taskId/status', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const status = String((req.body && req.body.status) || '').trim();
+  if (!status) return res.status(400).json({ error: 'status_required' });
+  try {
+    const updated = await setStatusByRawLabel(boardId, req.params.taskId, status, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team status update failed:', err.message);
+    res.status(502).json({ error: 'status_update_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/text — body: { text }. Same card description
+// updateTaskText (client route) edits, but doesn't flip status to "changes"
+// or leave a "ЗАКАЗЧИК СКОРРЕКТИРОВАЛ..." marker — this is the team editing
+// their own draft, not a client-submitted correction.
+app.post('/api/team/tasks/:taskId/text', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '').replace(/\r\n/g, '\n');
+  if (!text.trim()) return res.status(400).json({ error: 'text_required' });
+  try {
+    const updated = await updateTaskTextTeam(boardId, req.params.taskId, text, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team text update failed:', err.message);
+    res.status(502).json({ error: 'text_update_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/keywords — body: { text }. The
+// "Ключевые слова/мысли" brief property — team-only, never shown to clients.
+app.post('/api/team/tasks/:taskId/keywords', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '');
+  try {
+    const updated = await updateTaskKeywords(boardId, req.params.taskId, text);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team keywords update failed:', err.message);
+    res.status(502).json({ error: 'keywords_update_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/media-order — same permutation contract as
+// the client-facing route below, but doesn't flip status to "changes" (see
+// updateTaskMediaOrderTeam) and logs a distinct marker comment.
+app.post('/api/team/tasks/:taskId/media-order', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const order = Array.isArray(req.body && req.body.order) ? req.body.order.map(String) : null;
+  if (!order || !order.length) return res.status(400).json({ error: 'order_required' });
+  try {
+    const updated = await updateTaskMediaOrderTeam(boardId, req.params.taskId, order, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team media order update failed:', err.message);
+    const status = err.code === 'stale_media_order' ? 409 : 502;
+    res.status(status).json({ error: err.code || 'media_order_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/media-link — body: { url }. Attaches an
+// EXISTING disk.kontentferma share link to the card (validated the same way
+// /api/disk-embed validates one before proxying it — see diskEmbeds.js).
+// This is deliberately NOT a file upload: real drag-and-drop upload needs
+// WebDAV/API credentials for disk.kontentferma this app doesn't have yet
+// (see frontend/team.js) — until then, staff create the share link on the
+// Disk itself (as already done for existing cards) and attach it here
+// instead of hand-editing the Mattermost card. The link is stored as its
+// own text child block (see addTeamMediaLink) — never mixed into the same
+// block as the caption — so a later caption edit can never delete it.
+app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const shareUrl = parseAndValidateShareUrl(String((req.body && req.body.url) || '').trim());
+  if (!shareUrl) {
+    return res.status(400).json({ error: 'invalid_disk_url', message: 'Это не похоже на ссылку с disk.kontentferma — проверьте адрес.' });
+  }
+  try {
+    const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team media link add failed:', err.message);
+    res.status(502).json({ error: 'media_link_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/title — body: { title }. The human-readable
+// part only — see updateTaskTitle for how the ig:/tg:/... prefix survives.
+app.post('/api/team/tasks/:taskId/title', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const title = String((req.body && req.body.title) || '').trim();
+  if (!title) return res.status(400).json({ error: 'title_required' });
+  try {
+    const updated = await updateTaskTitle(boardId, req.params.taskId, title, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team title update failed:', err.message);
+    res.status(502).json({ error: 'title_update_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/network — body: { network: 'ig'|'tg'|'vk'|'ok'|'max'|'' }.
+// Which platform this post is going out to — was missing a UI for it
+// entirely before this; see updateTaskNetwork for why this is a title
+// prefix, not a card property. Empty string clears the prefix.
+app.post('/api/team/tasks/:taskId/network', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const network = String((req.body && req.body.network) || '').trim();
+  try {
+    const updated = await updateTaskNetwork(boardId, req.params.taskId, network, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team network update failed:', err.message);
+    res.status(502).json({ error: 'network_update_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/date — body: { date: 'YYYY-MM-DD' }. Moves
+// the publish date — the month-calendar picker in the /team cabinet's card
+// header (see also GET /api/team/schedule below, which feeds that picker's
+// "this day is already busy" markers).
+app.post('/api/team/tasks/:taskId/date', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const dateStr = String((req.body && req.body.date) || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return res.status(400).json({ error: 'invalid_date', message: 'Ожидался формат YYYY-MM-DD.' });
+  }
+  try {
+    const updated = await updateTaskDate(boardId, req.params.taskId, dateStr);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team date update failed:', err.message);
+    res.status(502).json({ error: 'date_update_failed', message: err.message });
+  }
+});
+
+// GET /api/team/schedule?month=YYYY-MM — board-wide (not just "my tasks")
+// count of posts scheduled per day, for the month-calendar date picker to
+// mark days that already have other activity on them ("чтобы не получилось
+// что все посты в один день"). Deliberately just counts + a short label
+// list, not full task objects — this is a lightweight adjacency signal, not
+// a second copy of GET /api/team/tasks.
+app.get('/api/team/schedule', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const month = String(req.query.month || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ error: 'invalid_month', message: 'Ожидался формат YYYY-MM.' });
+  }
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const byDay = {};
+    for (const t of tasks) {
+      // publishDate is already a plain 'YYYY-MM-DD' string (see
+      // parsePropertyDate in taskMapper.js) — no Date() round-trip needed,
+      // and none of the timezone-shift risk that would come with one.
+      if (!t.publishDate || !t.publishDate.startsWith(month)) continue;
+      const key = t.publishDate;
+      if (!byDay[key]) byDay[key] = { count: 0, titles: [] };
+      byDay[key].count += 1;
+      if (byDay[key].titles.length < 5) byDay[key].titles.push(t.title);
+    }
+    res.json({ month, days: byDay });
+  } catch (err) {
+    console.error('[api] team schedule failed:', err.message);
+    res.status(502).json({ error: 'schedule_unavailable', message: err.message });
+  }
+});
+
+// GET/POST /api/team/tasks/:taskId/comments — internal team discussion, see
+// teamComments.js. Deliberately separate from the client-facing "правки"
+// comments (which live on the Mattermost card itself).
+app.get('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const comments = await teamComments.listComments(boardId, req.params.taskId);
+    res.json({ comments });
+  } catch (err) {
+    console.error('[api] team comments list failed:', err.message);
+    res.status(500).json({ error: 'comments_unavailable', message: err.message });
+  }
+});
+
+app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text_required' });
+  try {
+    const user = req.teamSession.user;
+    const comment = await teamComments.addComment(boardId, req.params.taskId, { id: user.id, name: teamActorName(req) }, text);
+    res.json({ comment });
+  } catch (err) {
+    console.error('[api] team comment add failed:', err.message);
+    res.status(500).json({ error: 'comment_failed', message: err.message });
   }
 });
 
@@ -909,21 +1162,29 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
   return updated;
 }
 
-async function updateTaskText(boardId, taskId, text) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before text update.`);
+// Text-type child blocks that consist ONLY of a disk.kontentferma share link
+// (see diskEmbeds.js) are MEDIA, not prose — added by the /team media-link
+// route (see addTeamMediaLink) or hand-pasted by staff directly in
+// Mattermost. saveDescriptionText below must never touch/delete these, or
+// saving the caption would silently drop whatever media was attached.
+function isPureDiskLinkBlock(block) {
+  const title = String(block.title || (block.fields && block.fields.text) || '').trim();
+  return !!(title && parseAndValidateShareUrl(title));
+}
 
-  const textBlocks = (blocks || [])
+// Shared by updateTaskText (client) and updateTaskTextTeam (team): rewrites
+// the card's PROSE description, leaving any pure-disk-link blocks (media)
+// completely alone. `blocks` must already be fresh (caller loads it).
+async function saveDescriptionText(boardId, taskId, blocks, text) {
+  const allTextBlocks = (blocks || [])
     .filter((b) => b.parentId === taskId && !b.deleteAt && b.type === 'text')
     .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
+  const proseBlocks = allTextBlocks.filter((b) => !isPureDiskLinkBlock(b));
 
   const nowMs = Date.now();
-  if (textBlocks.length) {
-    await mm.patchBlock(boardId, textBlocks[0].id, {
-      title: text,
-    });
-    for (const extra of textBlocks.slice(1)) {
+  if (proseBlocks.length) {
+    await mm.patchBlock(boardId, proseBlocks[0].id, { title: text });
+    for (const extra of proseBlocks.slice(1)) {
       await mm.deleteBlock(boardId, extra.id);
     }
   } else {
@@ -941,7 +1202,14 @@ async function updateTaskText(boardId, taskId, text) {
       },
     ], 'addDescriptionBlock');
   }
+}
 
+async function updateTaskText(boardId, taskId, text) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before text update.`);
+
+  await saveDescriptionText(boardId, taskId, blocks, text);
   await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ЗАКАЗЧИК СКОРРЕКТИРОВАЛ ТЕКСТ. ОБНОВЛЕНА ВЕРСИЯ`);
   await setApprovalStatus(boardId, taskId, 'changes');
 
@@ -956,16 +1224,31 @@ async function updateTaskText(boardId, taskId, text) {
   return updated;
 }
 
-// Reorders a task's media (photos/videos) per a client-submitted list of
-// media ids, then flips status to 'changes' exactly like updateTaskText —
-// the client corrected something about how the post reads, staff should
-// re-review before publishing. Leaves a comment naming which items moved
-// and where, not just a generic "changed" marker, so staff can tell at a
-// glance whether it's worth reopening the card in Mattermost.
-async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
+// Team's own version of updateTaskText: same description rewrite, but no
+// "flip to changes"/client-facing marker comment — a team member editing
+// their own draft isn't a client correction.
+async function updateTaskTextTeam(boardId, taskId, text, actorName) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before text update.`);
+
+  await saveDescriptionText(boardId, taskId, blocks, text);
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ТЕКСТ ОБНОВЛЁН (${actorName || 'команда'})`);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Shared reorder core for updateTaskMediaOrder (client) and
+// updateTaskMediaOrderTeam below — computes the new order, validates it's a
+// permutation of the task's CURRENT media, persists it, and returns which
+// items moved (for the marker comment each caller writes differently).
+// includeAllStatuses:true so a team member can reorder media on a card
+// that's still in an internal-only production stage, not just the 5
+// client-facing ones.
+async function reorderTaskMedia(boardId, taskId, newOrderIds) {
   const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
   const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, feedbackAuthorUserId });
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
   const task = tasks.find((t) => t.id === taskId);
   if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before media reorder.`);
   await resolveDiskMediaKinds([task]);
@@ -997,7 +1280,17 @@ async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
     });
 
   await mediaOrder.setMediaOrder(boardId, taskId, newOrderIds);
+  return { moved };
+}
 
+// Reorders a task's media (photos/videos) per a client-submitted list of
+// media ids, then flips status to 'changes' — the client corrected
+// something about how the post reads, staff should re-review before
+// publishing. Leaves a comment naming which items moved and where, not just
+// a generic "changed" marker, so staff can tell at a glance whether it's
+// worth reopening the card in Mattermost.
+async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
+  const { moved } = await reorderTaskMedia(boardId, taskId, newOrderIds);
   if (moved.length) {
     await mm.addCardComment(
       boardId,
@@ -1006,6 +1299,174 @@ async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
     );
   }
   return setApprovalStatus(boardId, taskId, 'changes');
+}
+
+// Team's own version — same reorder, but no "flip to changes" (the team
+// isn't correcting a client-approved post, just organizing a draft) and a
+// distinct marker comment.
+async function updateTaskMediaOrderTeam(boardId, taskId, newOrderIds, actorName) {
+  const { moved } = await reorderTaskMedia(boardId, taskId, newOrderIds);
+  if (moved.length) {
+    await mm.addCardComment(
+      boardId,
+      taskId,
+      `${formatMoscowTimestamp()} ПОРЯДОК МЕДИА ИЗМЕНЁН (${actorName || 'команда'}):\n${moved.map((l) => `• ${l}`).join('\n')}`
+    );
+  }
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Sets the "Статус" property to ANY raw option label — unlike
+// setApprovalStatus (client-facing, restricted to the 5 statusOptionLabels
+// keys), used by the team status picker which can move a card through
+// internal production stages too. Verifies the write actually took by
+// re-reading the card (same "PATCH can 200 without changing anything"
+// caution as setApprovalStatus).
+async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
+  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const approvalProp = findPropertyDef(board, config.approvalPropertyName);
+  if (!approvalProp) {
+    throw new Error(`Card property "${config.approvalPropertyName}" not found on board ${boardId}.`);
+  }
+  const optionId = optionIdByLabel(approvalProp, rawLabel);
+  if (!optionId) {
+    const available = (approvalProp.options || []).map((o) => `«${o.value}»`).join(', ') || '(нет опций)';
+    throw new Error(`Опция "${rawLabel}" не найдена в свойстве "${config.approvalPropertyName}". Доступные опции: ${available}.`);
+  }
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before status update.`);
+  const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: optionId };
+  await mm.patchCardProperty(boardId, taskId, mergedProperties);
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СТАТУС ИЗМЕНЁН (${actorName || 'команда'}): ${rawLabel}`);
+  invalidate(boardId);
+  const updated = await refetchTeamTask(boardId, taskId);
+  if (normLabelLoose(updated.statusLabel) !== normLabelLoose(rawLabel)) {
+    throw new Error(
+      `Mattermost принял запрос на изменение статуса, но после повторного чтения карточки ${taskId} статус ` +
+        `остался "${updated.statusLabel || '(нет)'}", а не "${rawLabel}". Проверьте права аккаунта, от имени которого работает приложение.`
+    );
+  }
+  return updated;
+}
+
+// Sets an arbitrary free-text property (currently just "Ключевые
+// слова/мысли") — team-only, never shown to clients, so no marker comment.
+async function updateTaskKeywords(boardId, taskId, text) {
+  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
+  if (!keywordsProp) {
+    const available = (board.cardProperties || []).map((p) => `«${p.name}»`).join(', ') || '(не удалось получить список свойств)';
+    throw new Error(`Свойство "${config.keywordsPropertyName}" не найдено на борде. Реальные свойства борда: ${available}.`);
+  }
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before keywords update.`);
+  const mergedProperties = { ...(card.properties || {}), [keywordsProp.id]: text };
+  await mm.patchCardProperty(boardId, taskId, mergedProperties);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Which social network a post is for is NOT a Mattermost property at all —
+// it's a title-prefix convention frontend/app.js already reads for real
+// (SOCIAL_MAP/SOCIAL_PREFIX_RE/detectSocial there) to render the colored
+// IG/TG/VK/OK/MAX badge on client-facing cards. config.formatPropertyName
+// is a different, separate (and in practice unconfigured — empty by
+// default) free-text "format" field — writing the network there would
+// change nothing the client actually sees. So this writes the SAME prefix
+// convention the client cabinet already reads, via the card's own title
+// (a block field, patched the same way saveDescriptionText patches a text
+// child block's title — see mm.patchBlock). Keep this regex/map in sync
+// with SOCIAL_MAP/SOCIAL_PREFIX_RE in frontend/app.js and frontend/team.js.
+const SOCIAL_LABELS = { ig: 'Instagram', tg: 'Telegram', vk: 'ВКонтакте', ok: 'Одноклассники', max: 'MAX' };
+const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max)\b[\s:\-–—]*/i;
+
+async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {
+  const key = String(networkKey || '').trim().toLowerCase();
+  if (key && !SOCIAL_LABELS[key]) {
+    throw new Error(`Неизвестная соцсеть "${networkKey}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
+  }
+  const { cards } = await loadBoard(boardId, { fresh: true });
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before network update.`);
+  // AI_TAG_RE ('[ai]', see app.js) is never anchored at the very start of a
+  // real title the way the social prefix is, so it's untouched here — no
+  // need to strip/reinsert it the way stripAiTag does for display.
+  const bareTitle = String(card.title || '').replace(SOCIAL_PREFIX_RE, '');
+  const newTitle = key ? `${key}: ${bareTitle}` : bareTitle;
+  await mm.patchBlock(boardId, taskId, { title: newTitle });
+  await mm.addCardComment(
+    boardId,
+    taskId,
+    `${formatMoscowTimestamp()} СОЦСЕТЬ ИЗМЕНЕНА (${actorName || 'команда'}): ${key ? SOCIAL_LABELS[key] : '—'}`
+  );
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Renames a card, preserving whatever social prefix updateTaskNetwork put on
+// it — the /team cabinet's title field only ever edits the human-readable
+// part, never the ig:/tg:/... tag, so this strips the existing prefix, keeps
+// it aside, and re-applies it to the new text instead of asking the caller
+// to know about the convention at all.
+async function updateTaskTitle(boardId, taskId, newBareTitle, actorName) {
+  const trimmed = String(newBareTitle || '').trim();
+  if (!trimmed) throw new Error('Название не может быть пустым.');
+  const { cards } = await loadBoard(boardId, { fresh: true });
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before title update.`);
+  const existingPrefix = String(card.title || '').match(SOCIAL_PREFIX_RE);
+  const newTitle = existingPrefix ? `${existingPrefix[0]}${trimmed}` : trimmed;
+  await mm.patchBlock(boardId, taskId, { title: newTitle });
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} НАЗВАНИЕ ИЗМЕНЕНО (${actorName || 'команда'})`);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Sets the publish-date property. Written as {"from": epochMs} — the first
+// (and, per parsePropertyDate in taskMapper.js, preferred) of the three
+// shapes real Focalboard date values have shown up in; the other two
+// (bare epoch-ms string, plain "YYYY-MM-DD") are read-compatibility only,
+// never something this app itself needs to write.
+async function updateTaskDate(boardId, taskId, dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    throw new Error(`Некорректная дата "${dateStr}" — ожидался формат YYYY-MM-DD.`);
+  }
+  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const dateProp = findPropertyDef(board, config.publishDatePropertyName);
+  if (!dateProp) {
+    throw new Error(`Свойство "${config.publishDatePropertyName}" не найдено на борде ${boardId}.`);
+  }
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before date update.`);
+  const epochMs = Date.parse(`${dateStr}T00:00:00.000Z`);
+  const mergedProperties = { ...(card.properties || {}), [dateProp.id]: JSON.stringify({ from: epochMs }) };
+  await mm.patchCardProperty(boardId, taskId, mergedProperties);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Adds an already-existing disk.kontentferma share link to a card as its own
+// dedicated text block (see isPureDiskLinkBlock) — never mixed into the
+// prose caption block, so a later caption edit can never delete it.
+async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
+  const nowMs = Date.now();
+  await mm.addBlocks(boardId, [
+    {
+      id: `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+      boardId,
+      parentId: taskId,
+      type: 'text',
+      title: shareUrl,
+      schema: 1,
+      createAt: nowMs,
+      updateAt: nowMs,
+      fields: {},
+    },
+  ], 'addTeamMediaLink');
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ДОБАВЛЕН МАТЕРИАЛ (${actorName || 'команда'}): ${shareUrl}`);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
 }
 
 // GET /api/files/:boardId/:fileId — proxies media bytes from Mattermost with

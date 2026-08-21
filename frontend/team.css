@@ -34,7 +34,7 @@
   gap:6px;
 }
 .team-task-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-.team-task-title{font-size:15px;font-weight:800;letter-spacing:-.02em;line-height:1.3;min-width:0}
+.team-task-title{font-size:15px;font-weight:800;letter-spacing:-.02em;line-height:1.3;min-width:0;display:flex;align-items:flex-start;gap:6px}
 .team-task-project{font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.02em;text-transform:uppercase}
 .team-task-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
 /* Статус — над датой, прижато к правому краю карточки. */
@@ -51,13 +51,139 @@
    (e.g. "В процессе", "ТЗ РАЙТЕРУ") without inventing a whole new palette. */
 .status.internal{background:#EDEFEF;color:#4B5654}
 
-/* Модалка — пока просто заголовок задачи. */
-.tm-modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
+/* Модалка — полноценная карточка поста: шапка (статус/дата/соцсеть) +
+   вкладки (Медиа/Текст/ЧАТ КОМАНДЫ/Чат с клиентом/Предпросмотр поста). */
+.tm-modal{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;padding:0}
 .tm-backdrop{position:absolute;inset:0;background:rgba(15,25,24,.45)}
-.tm-card{position:relative;background:#fff;border-radius:20px;padding:22px 20px;max-width:420px;width:100%;box-shadow:0 18px 50px rgba(15,25,24,.25)}
-.tm-close{position:absolute;top:12px;right:12px;border:0;background:#F2F4F4;border-radius:999px;width:32px;height:32px;font-size:14px;cursor:pointer;color:#33413F}
+.tm-card{position:relative;background:#fff;border-radius:26px 26px 0 0;max-width:640px;width:100%;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 -16px 50px rgba(15,25,24,.25)}
+@media(min-width:700px){
+  .tm-modal{align-items:center;padding:20px}
+  .tm-card{border-radius:26px;max-height:88vh}
+}
+.tm-close{position:absolute;top:14px;right:14px;z-index:2;border:0;background:#F2F4F4;border-radius:999px;width:32px;height:32px;font-size:14px;cursor:pointer;color:#33413F}
 .tm-close:active{background:#E4E8E8}
-.tm-title{font-size:17px;font-weight:800;line-height:1.35;letter-spacing:-.01em;padding-right:28px}
+
+/* --- Шапка: проект, название (+карандаш), пилюли статуса/даты/соцсети --- */
+.tm-head{padding:18px 52px 14px 20px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.tm-project{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.02em;text-transform:uppercase;margin-bottom:4px}
+.tm-title-row{display:flex;align-items:flex-start;gap:8px;margin-bottom:12px}
+.tm-title{font-size:18px;font-weight:850;line-height:1.3;letter-spacing:-.01em;flex:1;min-width:0}
+.tm-title-edit-btn{flex:0 0 auto;border:0;background:#F2F4F4;border-radius:999px;width:28px;height:28px;font-size:12px;color:#33413F;margin-top:1px}
+.tm-title-editor{display:flex;gap:8px;align-items:flex-start}
+.tm-title-editor textarea{flex:1;border:1px solid var(--line);border-radius:12px;padding:9px 11px;font:inherit;font-size:15px;font-weight:750;resize:vertical;min-height:44px;outline:none}
+.tm-title-editor textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.tm-title-editor .tm-mini-btn{flex:0 0 auto}
+
+.tm-pills{display:flex;flex-wrap:wrap;gap:8px}
+.tm-pill-wrap{position:relative}
+.tm-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800;color:var(--ink);white-space:nowrap}
+.tm-pill .tm-pill-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+.tm-pill.tm-status-pill.need{background:#FFE8E2;border-color:#F0C4BF;color:#C94F2E}
+.tm-pill.tm-status-pill.need .tm-pill-dot{background:#C94F2E}
+.tm-pill.tm-status-pill.wait{background:#EDEFEF;border-color:#DDE1E1;color:#4B5654}
+.tm-pill.tm-status-pill.wait .tm-pill-dot{background:#4B5654}
+.tm-pill.tm-network-pill.empty{color:var(--muted)}
+
+.tm-popover{position:absolute;top:calc(100% + 6px);left:0;z-index:5;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 14px 34px rgba(15,25,24,.16);padding:8px;min-width:210px;max-height:60vh;overflow:auto}
+.tm-pop-option{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;border-radius:10px;padding:8px 9px;font-size:13px;font-weight:700;color:var(--ink)}
+.tm-pop-option:hover,.tm-pop-option:active{background:#F2F4F4}
+.tm-pop-option .tm-pill-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.tm-pop-option.selected{background:#EAF3F1;color:var(--accent)}
+
+/* --- Пилюля даты: попап содержит мини-календарь на месяц --- */
+.tm-cal-pop{min-width:260px;padding:12px}
+.tm-cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.tm-cal-nav-btn{border:1px solid var(--line);background:#fff;border-radius:9px;width:26px;height:26px;font-size:14px;font-weight:800;line-height:1}
+.tm-cal-title{font-weight:850;font-size:12.5px}
+.tm-cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:4px;font-size:9.5px;font-weight:800;color:var(--muted);text-align:center}
+.tm-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.tm-cal-day{position:relative;border:1px solid transparent;background:#F7F8F8;border-radius:8px;height:32px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:750;color:var(--ink)}
+.tm-cal-day.other-month{opacity:.35}
+.tm-cal-day.today{border-color:var(--accent)}
+.tm-cal-day.selected{background:var(--accent);color:#fff}
+.tm-cal-day.busy:not(.selected)::after{content:"";position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:var(--urgent)}
+.tm-cal-day:disabled{opacity:.3;cursor:default}
+.tm-cal-legend{margin-top:8px;font-size:10.5px;color:var(--muted);display:flex;align-items:center;gap:5px}
+.tm-cal-legend .dot{width:5px;height:5px;border-radius:50%;background:var(--urgent);display:inline-block}
+
+/* --- Вкладки + аватар ИИ-генератора на том же уровне --- */
+.tm-tabbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex:0 0 auto;position:relative}
+.tm-tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+.tm-tabs::-webkit-scrollbar{display:none}
+.tm-tab{flex:0 0 auto;border:0;background:transparent;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
+.tm-tab.active{background:var(--ink);color:#fff}
+.tm-ai-avatar{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:2px solid var(--ai);padding:0;overflow:hidden;box-shadow:0 4px 12px rgba(155,90,246,.28)}
+.tm-ai-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.tm-ai-pop{position:absolute;top:calc(100% - 4px);right:14px;z-index:6;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 14px 34px rgba(15,25,24,.16);padding:12px;width:250px}
+.tm-ai-pop-title{font-size:12.5px;font-weight:850;margin-bottom:8px}
+.tm-ai-pop-option{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px;font-size:12.5px;font-weight:750;color:var(--ink);margin-bottom:7px}
+.tm-ai-pop-option:last-child{margin-bottom:0}
+.tm-ai-pop-option:active{background:#F7F5FF}
+.tm-ai-pop-icon{font-size:16px}
+
+/* --- Тело: прокручиваемая область с панелями вкладок --- */
+.tm-body{overflow-y:auto;padding:16px 20px 20px;flex:1;min-height:0}
+.tm-pane{display:grid;gap:14px}
+
+/* Медиа */
+.tm-media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tm-media-thumb{position:relative;aspect-ratio:1;border-radius:14px;overflow:hidden;background:#F2F4F4;border:1px solid var(--line)}
+.tm-media-thumb img,.tm-media-thumb video{width:100%;height:100%;object-fit:cover;display:block}
+.tm-media-pos{position:absolute;top:5px;left:5px;background:rgba(23,32,31,.65);color:#fff;font-size:10px;font-weight:800;border-radius:999px;width:18px;height:18px;display:flex;align-items:center;justify-content:center}
+.tm-media-kind{position:absolute;bottom:5px;right:5px;background:rgba(23,32,31,.65);color:#fff;font-size:9px;font-weight:800;border-radius:6px;padding:2px 5px}
+.tm-media-link-badge{position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.92);border:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#33413F;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+.tm-media-link-badge.copied{background:var(--accent);color:#fff}
+.tm-media-empty{grid-column:1/-1;background:#F7F8F8;border:1px dashed #C7CECD;border-radius:16px;padding:26px 14px;text-align:center;color:var(--muted);font-size:12.5px}
+.tm-media-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tm-media-toolbar-title{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
+.tm-reorder-toggle{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-size:11.5px;font-weight:800;color:var(--ink)}
+.tm-reorder-list{display:grid;gap:6px}
+.tm-reorder-row{display:flex;align-items:center;gap:8px;background:#F7F8F8;border-radius:12px;padding:6px 8px}
+.tm-reorder-thumb{width:38px;height:38px;border-radius:8px;overflow:hidden;flex:0 0 auto;background:#E9ECEB}
+.tm-reorder-thumb img,.tm-reorder-thumb video{width:100%;height:100%;object-fit:cover}
+.tm-reorder-name{flex:1;min-width:0;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-reorder-btns{display:flex;gap:4px}
+.tm-mini-btn{border:1px solid var(--line);background:#fff;border-radius:8px;width:26px;height:26px;font-size:12px;color:var(--ink)}
+.tm-mini-btn:disabled{opacity:.35}
+.tm-attach-box{background:#F7F8F8;border:1px dashed #C7CECD;border-radius:16px;padding:14px}
+.tm-attach-hint{font-size:11.5px;color:var(--muted);line-height:1.45;margin-bottom:9px}
+.tm-attach-row{display:flex;gap:8px}
+.tm-attach-row input{flex:1;border:1px solid var(--line);border-radius:11px;padding:9px 11px;font-size:12.5px;outline:none;font:inherit}
+.tm-attach-row input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.tm-attach-row button{flex:0 0 auto;border:0;background:var(--accent);color:#fff;border-radius:11px;padding:0 14px;font-size:12.5px;font-weight:800}
+
+/* Текст + ключевые слова */
+.tm-field-label{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.02em;margin-bottom:6px}
+.tm-textarea{width:100%;border:1px solid var(--line);border-radius:14px;padding:12px 13px;font:inherit;font-size:13.5px;line-height:1.5;resize:vertical;min-height:120px;outline:none}
+.tm-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.tm-keywords-textarea{min-height:70px}
+.tm-save-row{display:flex;justify-content:flex-end;gap:8px}
+.tm-save-row .btn{padding:9px 16px;font-size:12.5px;border-radius:11px}
+
+/* Чаты (команда / клиент) */
+.tm-chat{display:flex;flex-direction:column;gap:10px}
+.tm-chat-empty{color:var(--muted);font-size:12.5px;text-align:center;padding:18px 0}
+.tm-chat-msg{background:#F7F8F8;border-radius:14px;padding:9px 12px;max-width:88%}
+.tm-chat-msg.mine{background:#EAF3F1;align-self:flex-end}
+.tm-chat-msg-author{font-size:10.5px;font-weight:800;color:var(--muted);margin-bottom:2px}
+.tm-chat-msg-text{font-size:13px;line-height:1.45;white-space:pre-wrap}
+.tm-chat-msg-time{font-size:9.5px;color:var(--muted);margin-top:3px}
+.tm-chat-msg.system{background:transparent;align-self:center;max-width:100%;text-align:center;color:var(--muted);font-size:11px;padding:2px 0}
+.tm-chat-compose{display:flex;gap:8px;align-items:flex-end}
+.tm-chat-compose textarea{flex:1;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;font-size:13px;resize:none;min-height:40px;max-height:120px;outline:none}
+.tm-chat-compose textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.tm-chat-send{flex:0 0 auto;border:0;background:var(--accent);color:#fff;border-radius:12px;width:40px;height:40px;font-size:15px}
+.tm-client-readonly-note{font-size:11px;color:var(--muted);text-align:center}
+
+/* Предпросмотр поста */
+.tm-preview-phone{background:#0F1917;border-radius:22px;padding:12px;max-width:320px;margin:0 auto}
+.tm-preview-inner{background:#fff;border-radius:16px;overflow:hidden}
+.tm-preview-media{aspect-ratio:1;background:#F2F4F4}
+.tm-preview-media img,.tm-preview-media video{width:100%;height:100%;object-fit:cover;display:block}
+.tm-preview-text{padding:12px}
+.tm-preview-social{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#fff;border-radius:999px;padding:3px 8px;margin-bottom:7px}
+.tm-preview-caption{font-size:12.5px;line-height:1.5;white-space:pre-wrap}
+.tm-preview-empty{color:var(--muted);font-size:12px;text-align:center}
 
 /* Ссылка «Статистика» в шапке кабинета — видна тем, у кого есть доступ к /stat. */
 .head-link{display:inline-flex;align-items:center;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:800;color:var(--ink);text-decoration:none;background:#fff}

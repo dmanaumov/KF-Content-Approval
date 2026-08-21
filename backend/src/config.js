@@ -60,6 +60,12 @@ module.exports = {
   // assignee_property_not_found with the board's real property list.
   assigneePropertyName: process.env.MM_ASSIGNEE_PROPERTY_NAME || 'Исполнитель',
 
+  // Name of the free-text property that carries the copywriter's brief for
+  // a post ("Ключевые слова/мысли" on the real board) — shown/editable in
+  // the /team cabinet's "Текст" tab, and meant as the input material for the
+  // AI text/image generator there once it's wired to a real provider.
+  keywordsPropertyName: process.env.MM_KEYWORDS_PROPERTY_NAME || 'Ключевые слова/мысли',
+
   // Only comments authored by this Mattermost username are shown to the
   // client as "правки"/feedback (resolved to a user id once via the core
   // API and cached — see mattermostClient.getUserIdByUsername). This is the

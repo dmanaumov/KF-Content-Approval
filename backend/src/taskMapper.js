@@ -170,6 +170,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   const urlProp = findPropertyDef(board, config.urlPropertyName);
   const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
+  const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
 
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
   const projectFilterMatched = !projectProp || !!projectOptionId;
@@ -228,6 +229,35 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
         (authorNeedle && String(b.title || '').toLowerCase().includes(authorNeedle))
     );
     const feedback = status === 'changes' && comments.length ? comments[0].title : null;
+
+    // Full client-correspondence timeline for the /team cabinet's "Чат с
+    // клиентом" tab (see index.js's refetchTeamTask/GET /api/team/tasks).
+    // `comments` above is every comment posted under our own app's shared
+    // account — but that account ALSO posts TEAM-cabinet system markers
+    // ("ТЕКСТ ОБНОВЛЁН (Имя)", "СТАТУС ИЗМЕНЁН (Имя): ...", etc., see
+    // index.js's updateTaskTextTeam/setStatusByRawLabel/updateTaskNetwork/
+    // addTeamMediaLink/updateTaskMediaOrderTeam) under that SAME account, so
+    // naive "any comment from this account" would show internal team
+    // activity to this client-facing timeline as if the client said it.
+    // Only these three marker words are ever written by an actual CLIENT
+    // action (approve / submit feedback / edit text or media order from the
+    // client cabinet — see setApprovalStatus, POST .../feedback,
+    // updateTaskText, updateTaskMediaOrder) — every team-cabinet marker
+    // always has a "(actorName)" tag instead, which none of these three do.
+    // `kind` lets the /team cabinet render this as a chat bubble (actual
+    // client-written text, 'feedback') vs. a plain system line ('approved'/
+    // 'correction' — these carry no free text of their own, just the marker).
+    const CLIENT_MARKER_RE = /^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+(СОГЛАСОВАНО|ПРАВКИ|ЗАКАЗЧИК)/;
+    const clientComments = comments
+      .filter((b) => CLIENT_MARKER_RE.test(String(b.title || '')))
+      .map((b) => {
+        const title = String(b.title || '');
+        const marker = title.match(CLIENT_MARKER_RE)[1];
+        const kind = marker === 'СОГЛАСОВАНО' ? 'approved' : marker === 'ПРАВКИ' ? 'feedback' : 'correction';
+        const text = kind === 'feedback' ? title.replace(/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+ПРАВКИ\n\n/, '') : title;
+        return { id: b.id, kind, text, createdAt: b.createAt || 0 };
+      })
+      .sort((a, b) => a.createdAt - b.createdAt);
 
     const rawPublishDate = publishDateProp ? properties[publishDateProp.id] : null;
     const publishDate = parsePropertyDate(rawPublishDate);
@@ -332,6 +362,12 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     }));
     const media = [...cardMedia, ...diskMedia];
 
+    // "Ключевые слова/мысли" — free-text brief for the copywriter, only
+    // shown/edited in the /team cabinet (see index.js's keywords route).
+    // Text-type property, so the raw value is already the plain string —
+    // no option-id lookup like the select properties above.
+    const keywords = keywordsProp ? String(properties[keywordsProp.id] || '') : '';
+
     return {
       id: card.id,
       title: card.title || '(без названия)',
@@ -342,8 +378,10 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       weekStart,
       weekLabel: weekLabel(weekStart),
       caption,
+      keywords,
       media,
       feedback,
+      clientComments,
       url,
       assigneeId,
       projectId,
@@ -381,7 +419,13 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       urlPropertyFound: !!urlProp,
       projectPropertyFound: !!projectProp,
       assigneePropertyFound: !!assigneeProp,
+      keywordsPropertyFound: !!keywordsProp,
       projectFilterMatched,
+      // Every raw option on the "Статус" property, for the /team cabinet's
+      // status picker — team members can move a card into ANY production
+      // stage, not just the 5 client-facing ones statusOptionLabels covers
+      // (see index.js's /api/team/tasks/:id/status).
+      statusOptions: approvalProp ? (approvalProp.options || []).map((o) => ({ id: o.id, label: o.value })) : [],
     },
   };
 }
