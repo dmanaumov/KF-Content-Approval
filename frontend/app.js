@@ -203,6 +203,20 @@ function mediaFileUrl(m) {
     : `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
 }
 
+// Messages the agency team sent from the /team cabinet's "Чат с клиентом"
+// tab (kind: 'agency', see taskMapper.js's clientComments — the ONLY kind
+// there that's meant to reach this cabinet; 'approved'/'feedback'/
+// 'correction' are the client's own past actions, already reflected
+// elsewhere in this card). Shown above the client's own feedback-note (if
+// any) so a new message from the agency is the first thing noticed.
+function agencyMessagesHtml(task) {
+  const messages = (task.clientComments || []).filter((c) => c.kind === 'agency');
+  if (!messages.length) return '';
+  return `<div class="agency-messages">${messages
+    .map((c) => `<div class="agency-note"><span class="agency-note-label">Агентство</span>${esc(c.text)}</div>`)
+    .join('')}</div>`;
+}
+
 function mediaHtml(task, canReorder) {
   if (!task.media.length) {
     return '<div class="media"><div class="carousel"><div class="slide file-link"><div><b>Без вложений</b></div></div></div></div>';
@@ -315,6 +329,7 @@ function cardHtml(task) {
     ${mediaHtml(task, canEditText)}
     ${captionBlock}
     ${urlLink}
+    ${agencyMessagesHtml(task)}
     ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
     ${actions}
     ${aiDisclaimer}

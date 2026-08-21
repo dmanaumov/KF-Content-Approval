@@ -111,6 +111,24 @@ module.exports = {
   // must fail fast or the whole cabinet waits on it.
   diskProbeTimeoutMs: parseInt(process.env.MM_DISK_PROBE_TIMEOUT_MS || '5000', 10),
 
+  // Real drag-and-drop / file-picker upload from the /team cabinet straight
+  // to disk.kontentferma (see backend/src/diskUpload.js) — as opposed to the
+  // existing "paste an already-created share link" fallback, which stays
+  // available regardless. All three must be set for uploads to work; until
+  // they are, diskUpload.js throws a self-diagnosing error instead of
+  // silently doing nothing. DISK_WEBDAV_URL is the Nextcloud WebDAV root for
+  // the uploading account, e.g. "https://disk.kontentferma.com/remote.php/dav/files/smm-bot/"
+  // (note the trailing slash and that this is the *files* root, not a share
+  // link) — DISK_WEBDAV_USER/PASSWORD should be a Nextcloud "app password"
+  // for that account, not its real login password.
+  diskWebdavBaseUrl: (process.env.DISK_WEBDAV_URL || '').trim(),
+  diskWebdavUser: process.env.DISK_WEBDAV_USER || '',
+  diskWebdavPassword: process.env.DISK_WEBDAV_PASSWORD || '',
+  // Root folder under that account's files, per the "SMM / <клиент> / файл"
+  // convention the team asked for — sub-folder per client is created lazily
+  // (MKCOL) on first upload for that project, not pre-provisioned.
+  diskUploadRootPath: (process.env.DISK_UPLOAD_ROOT_PATH || 'SMM').replace(/^\/+|\/+$/g, ''),
+
   // Prints raw Mattermost block/property JSON to the server log — turn this
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',

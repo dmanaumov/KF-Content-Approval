@@ -229,6 +229,11 @@ button{cursor:pointer}
 .post-link{margin:12px 17px 0}
 .post-link a{display:inline-block;color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;border-bottom:1px solid currentColor}
 .feedback-note{margin:10px 17px 0;background:#FFF2F2;border-radius:14px;padding:11px 12px;color:#7F3434;font-size:13px;line-height:1.4}
+/* Сообщения от команды агентства (task.clientComments, kind:'agency') —
+   отправлены из кабинета команды, вкладка «Чат с клиентом». */
+.agency-messages{margin:10px 17px 0;display:grid;gap:6px}
+.agency-note{background:#EAF3F1;border-radius:14px;padding:11px 12px;color:#17322E;font-size:13px;line-height:1.4}
+.agency-note-label{display:block;font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--accent);margin-bottom:3px}
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:15px 17px 17px}
 .btn{border:0;border-radius:14px;padding:14px 12px;font-weight:850;font-size:14px}
 .approve{background:var(--accent);color:#fff}

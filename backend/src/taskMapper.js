@@ -239,22 +239,34 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     // addTeamMediaLink/updateTaskMediaOrderTeam) under that SAME account, so
     // naive "any comment from this account" would show internal team
     // activity to this client-facing timeline as if the client said it.
-    // Only these three marker words are ever written by an actual CLIENT
-    // action (approve / submit feedback / edit text or media order from the
-    // client cabinet — see setApprovalStatus, POST .../feedback,
-    // updateTaskText, updateTaskMediaOrder) — every team-cabinet marker
-    // always has a "(actorName)" tag instead, which none of these three do.
-    // `kind` lets the /team cabinet render this as a chat bubble (actual
-    // client-written text, 'feedback') vs. a plain system line ('approved'/
-    // 'correction' — these carry no free text of their own, just the marker).
-    const CLIENT_MARKER_RE = /^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+(СОГЛАСОВАНО|ПРАВКИ|ЗАКАЗЧИК)/;
+    // These marker words are written either by an actual CLIENT action
+    // (approve / submit feedback / edit text or media order from the client
+    // cabinet — see setApprovalStatus, POST .../feedback, updateTaskText,
+    // updateTaskMediaOrder — none of them tag an actor name) or by the
+    // team explicitly writing TO the client (СООБЩЕНИЕ, see
+    // sendClientMessage in index.js — this one DOES carry "(actorName)",
+    // same as the internal system markers, but it's deliberately included
+    // here since — unlike those — it's meant to reach the client). Every
+    // other team-cabinet marker (ТЕКСТ ОБНОВЛЁН, СТАТУС ИЗМЕНЁН, ...) is
+    // internal-only and must never appear in this client-facing timeline.
+    // `kind` lets both cabinets render this as a chat bubble (actual
+    // written text — 'feedback' from the client, 'agency' from the team) vs.
+    // a plain system line ('approved'/'correction' — no free text of their
+    // own, just the marker).
+    const CLIENT_MARKER_RE = /^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+(СОГЛАСОВАНО|ПРАВКИ|ЗАКАЗЧИК|СООБЩЕНИЕ)/;
     const clientComments = comments
       .filter((b) => CLIENT_MARKER_RE.test(String(b.title || '')))
       .map((b) => {
         const title = String(b.title || '');
         const marker = title.match(CLIENT_MARKER_RE)[1];
-        const kind = marker === 'СОГЛАСОВАНО' ? 'approved' : marker === 'ПРАВКИ' ? 'feedback' : 'correction';
-        const text = kind === 'feedback' ? title.replace(/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+ПРАВКИ\n\n/, '') : title;
+        const kind =
+          marker === 'СОГЛАСОВАНО' ? 'approved' : marker === 'ПРАВКИ' ? 'feedback' : marker === 'СООБЩЕНИЕ' ? 'agency' : 'correction';
+        const text =
+          kind === 'feedback'
+            ? title.replace(/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+ПРАВКИ\n\n/, '')
+            : kind === 'agency'
+            ? title.replace(/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+СООБЩЕНИЕ(?:\s+\([^)]*\))?\n\n/, '')
+            : title;
         return { id: b.id, kind, text, createdAt: b.createAt || 0 };
       })
       .sort((a, b) => a.createdAt - b.createdAt);

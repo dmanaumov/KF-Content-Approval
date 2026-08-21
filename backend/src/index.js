@@ -1,9 +1,11 @@
 const express = require('express');
 const path = require('path');
+const multer = require('multer');
 const config = require('./config');
 const mm = require('./mattermostClient');
 const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./diskEmbeds');
+const diskUpload = require('./diskUpload');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
@@ -14,6 +16,13 @@ const analytics = require('./analytics');
 
 const app = express();
 app.use(express.json());
+
+// Memory storage (not disk) — the file only ever needs to live long enough
+// to be relayed straight into diskUpload.uploadAndShare(); nothing else
+// reads it back, so there's no reason to touch this container's own disk.
+// 80MB covers any real social-media photo/video without letting an upload
+// tie up server memory for arbitrarily large files.
+const teamMediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 80 * 1024 * 1024 } });
 
 // ---------------------------------------------------------------------------
 // In-memory cache only (no database). Keyed by boardId. Cleared on write.
@@ -921,6 +930,51 @@ app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, async (
   }
 });
 
+// POST /api/team/tasks/:taskId/media-upload — multipart, field name "file".
+// The real drag-and-drop/file-picker path: uploads straight to
+// disk.kontentferma via WebDAV (diskUpload.js), creates a public share
+// link, then attaches it the exact same way POST .../media-link does for a
+// manually-pasted one (addTeamMediaLink). Needs DISK_WEBDAV_* configured —
+// until then diskUpload throws a self-diagnosing error (501, not a generic
+// 502) so the UI can say clearly "not set up yet" instead of "failed", and
+// the manual-link field stays usable as the fallback either way.
+app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req, res) => {
+  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'file_too_large' : 'upload_error',
+        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
+      });
+    }
+    const boardId = requireStaffBoardId(res);
+    if (!boardId) return;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    try {
+      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+      const feedbackAuthorUserId = await getFeedbackAuthorId();
+      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+      const task = tasks.find((t) => t.id === req.params.taskId);
+      if (!task) return res.status(404).json({ error: 'task_not_found' });
+      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+      const shareUrl = await diskUpload.uploadAndShare({
+        folderName: task.projectLabel || 'Без клиента',
+        filename,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+      });
+      const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, teamActorName(req));
+      res.json({ task: updated });
+    } catch (err) {
+      console.error('[api] team media upload failed:', err.message);
+      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
+      res.status(status).json({ error: err.code || 'media_upload_failed', message: err.message });
+    }
+  });
+});
+
 // POST /api/team/tasks/:taskId/title — body: { title }. The human-readable
 // part only — see updateTaskTitle for how the ig:/tg:/... prefix survives.
 app.post('/api/team/tasks/:taskId/title', teamAuth.requireTeamAuth, async (req, res) => {
@@ -1035,6 +1089,24 @@ app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (re
   } catch (err) {
     console.error('[api] team comment add failed:', err.message);
     res.status(500).json({ error: 'comment_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/client-message — body: { text }. Sends a
+// message to the CLIENT (see sendClientMessage) — separate from
+// /comments above, which is the internal team-only chat. Available any
+// time, not gated on the client having said anything first.
+app.post('/api/team/tasks/:taskId/client-message', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text_required' });
+  try {
+    const updated = await sendClientMessage(boardId, req.params.taskId, text, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team client-message failed:', err.message);
+    res.status(502).json({ error: 'client_message_failed', message: err.message });
   }
 });
 
@@ -1465,6 +1537,22 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
     },
   ], 'addTeamMediaLink');
   await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ДОБАВЛЕН МАТЕРИАЛ (${actorName || 'команда'}): ${shareUrl}`);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Posts a message TO the client — unlike every other team-cabinet marker,
+// this one is deliberately included in taskMapper.js's clientComments
+// (kind: 'agency'), because the whole point is for the client to see it,
+// not just staff working directly in Mattermost. Doesn't flip status (a
+// message isn't a correction) and, unlike updateTaskTextTeam etc., can be
+// sent at any time regardless of whether the client has said anything —
+// see the /team cabinet's "Чат с клиентом" tab, which the team asked to be
+// writable rather than read-only.
+async function sendClientMessage(boardId, taskId, text, actorName) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) throw new Error('Сообщение не может быть пустым.');
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СООБЩЕНИЕ (${actorName || 'команда'})\n\n${trimmed}`);
   invalidate(boardId);
   return refetchTeamTask(boardId, taskId);
 }

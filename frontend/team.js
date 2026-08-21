@@ -385,6 +385,20 @@ function togglePopover(el) {
   el.hidden = !shouldOpen;
 }
 
+// Короткая вспышка рамки вокруг только что сохранённого поля/пилюли/строки
+// (см. .tm-flash-save в team.css) — единая подсказка "сохранено" для всех
+// действий в карточке, вместо тоста на каждое мелкое сохранение. Снимает и
+// заново навешивает класс (а не просто добавляет) — иначе повторное
+// сохранение того же поля подряд не переиграло бы анимацию, т.к. класс уже
+// был бы на месте.
+function flashSaved(el) {
+  if (!el) return;
+  el.classList.remove('tm-flash-save');
+  void el.offsetWidth; // force reflow so re-adding the class restarts the animation
+  el.classList.add('tm-flash-save');
+  el.addEventListener('animationend', () => el.classList.remove('tm-flash-save'), { once: true });
+}
+
 function renderModal() {
   const t = currentModalTask();
   if (!t) { closeTaskModal(); return; }
@@ -622,8 +636,18 @@ function reorderRowHtml(m, i, total) {
 }
 
 function attachBoxHtml() {
-  return `<div class="tm-attach-box">
-    <div class="tm-attach-hint">Материал не пушим в Mattermost — храним на диске. Загрузка файла прямо отсюда пока не подключена (нет ключей от disk.kontentferma) — создайте ссылку на файл в папке клиента на диске и вставьте её сюда.</div>
+  // Реальная загрузка (перетащить файл или выбрать с устройства) идёт прямо
+  // на disk.kontentferma через WebDAV (см. POST .../media-upload,
+  // diskUpload.js) — если ключи ещё не настроены на сервере, роут вернёт
+  // понятную ошибку "не настроено", а не молча ничего не сделает; поле для
+  // вставки уже готовой ссылки остаётся ниже как резервный вариант всегда.
+  return `<div class="tm-dropzone" id="tmDropzone">
+    <div class="tm-dropzone-title">📎 Перетащите файл сюда или нажмите, чтобы выбрать</div>
+    <div class="tm-dropzone-hint">Загрузится на disk.kontentferma — в карточку попадёт только ссылка, не сам файл</div>
+    <input type="file" id="tmFileInput" accept="image/*,video/*">
+  </div>
+  <div class="tm-attach-sep">или вставьте готовую ссылку</div>
+  <div class="tm-attach-box">
     <div class="tm-attach-row">
       <input type="text" id="tmAttachInput" placeholder="https://disk.kontentferma.ru/s/...">
       <button type="button" data-action="attach-link">Добавить</button>
@@ -738,18 +762,34 @@ function clientCommentHtml(c) {
       <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
     </div>`;
   }
+  // 'agency' — сообщение, отправленное командой отсюда же (см. compose box
+  // ниже) — показываем как "своё" сообщение (справа), чат с клиентом
+  // читается в обе стороны, а не только его правки.
+  if (c.kind === 'agency') {
+    return `<div class="tm-chat-msg mine">
+      <div class="tm-chat-msg-author">Агентство</div>
+      <div class="tm-chat-msg-text">${esc(c.text)}</div>
+      <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
+    </div>`;
+  }
   const label = c.kind === 'approved' ? '✓ Клиент согласовал пост' : c.text;
   return `<div class="tm-chat-msg system">${esc(label)} · ${formatDateTime(c.createdAt)}</div>`;
 }
 
 function renderClientPane(t) {
   const items = t.clientComments || [];
-  if (!items.length) {
-    return `<div class="tm-chat"><div class="tm-chat-empty">Клиент пока не оставлял комментариев.</div></div>`;
-  }
+  const list = items.length
+    ? `<div class="tm-chat-list">${items.map(clientCommentHtml).join('')}</div>`
+    : `<div class="tm-chat-empty">Переписки пока нет — можно написать клиенту первым.</div>`;
+  // В отличие от предыдущей read-only версии — сюда всегда можно написать,
+  // независимо от того, оставлял ли клиент что-то сам (реальная переписка
+  // из карточки Mattermost, не только приём его правок).
   return `<div class="tm-chat">
-    <div class="tm-client-readonly-note">Только чтение — реальная переписка из карточки Mattermost.</div>
-    <div class="tm-chat-list">${items.map(clientCommentHtml).join('')}</div>
+    ${list}
+    <div class="tm-chat-compose">
+      <textarea id="tmClientComposeInput" placeholder="Написать клиенту…"></textarea>
+      <button type="button" class="tm-chat-send" data-action="send-client-message" aria-label="Отправить">➤</button>
+    </div>
   </div>`;
 }
 
@@ -801,6 +841,7 @@ tmHead.addEventListener('click', async (e) => {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/title`, { method: 'POST', body: { title: val } });
       editingTitle = false;
       applyUpdatedTask(data.task);
+      flashSaved(document.querySelector('#tmHead .tm-title'));
     } catch (err) {
       toast('Не удалось сохранить название: ' + err.message);
     }
@@ -813,6 +854,7 @@ tmHead.addEventListener('click', async (e) => {
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/status`, { method: 'POST', body: { status: btn.dataset.label } });
       applyUpdatedTask(data.task);
+      flashSaved(document.querySelector('#tmHead .tm-status-pill'));
     } catch (err) {
       toast('Не удалось изменить статус: ' + err.message);
     }
@@ -822,6 +864,7 @@ tmHead.addEventListener('click', async (e) => {
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/network`, { method: 'POST', body: { network: btn.dataset.network } });
       applyUpdatedTask(data.task);
+      flashSaved(document.querySelector('#tmHead .tm-network-pill'));
     } catch (err) {
       toast('Не удалось изменить соцсеть: ' + err.message);
     }
@@ -838,6 +881,7 @@ tmHead.addEventListener('click', async (e) => {
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/date`, { method: 'POST', body: { date: btn.dataset.date } });
       applyUpdatedTask(data.task);
+      flashSaved(document.querySelector('#tmHead .tm-date-pill'));
     } catch (err) {
       toast('Не удалось изменить дату: ' + err.message);
     }
@@ -893,6 +937,7 @@ tmBody.addEventListener('click', async (e) => {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/media-order`, { method: 'POST', body: { order: reorderIds } });
       reorderMode = false;
       applyUpdatedTask(data.task);
+      flashSaved(document.querySelector('#tmBody .tm-media-grid'));
     } catch (err) {
       toast('Не удалось сохранить порядок: ' + err.message);
     }
@@ -921,8 +966,9 @@ tmBody.addEventListener('click', async (e) => {
     btn.disabled = true;
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/media-link`, { method: 'POST', body: { url } });
+      input.value = '';
       applyUpdatedTask(data.task);
-      toast('Материал добавлен.');
+      flashSaved(document.querySelector('#tmBody .tm-media-grid'));
     } catch (err) {
       toast('Не удалось добавить ссылку: ' + err.message);
     } finally {
@@ -935,7 +981,7 @@ tmBody.addEventListener('click', async (e) => {
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/text`, { method: 'POST', body: { text: val } });
       applyUpdatedTask(data.task);
-      toast('Текст сохранён.');
+      flashSaved(document.getElementById('tmCaptionInput'));
     } catch (err) {
       toast('Не удалось сохранить текст: ' + err.message);
     }
@@ -946,7 +992,7 @@ tmBody.addEventListener('click', async (e) => {
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/keywords`, { method: 'POST', body: { text: val } });
       applyUpdatedTask(data.task);
-      toast('Сохранено.');
+      flashSaved(document.getElementById('tmKeywordsInput'));
     } catch (err) {
       toast('Не удалось сохранить: ' + err.message);
     }
@@ -962,6 +1008,8 @@ tmBody.addEventListener('click', async (e) => {
       teamCommentsCache[t.id] = [...(teamCommentsCache[t.id] || []), data.comment];
       input.value = '';
       renderModalBody(t);
+      const list = document.querySelector('#tmBody .tm-chat-list');
+      if (list) flashSaved(list.lastElementChild || list);
     } catch (err) {
       toast('Не удалось отправить: ' + err.message);
     } finally {
@@ -969,6 +1017,97 @@ tmBody.addEventListener('click', async (e) => {
     }
     return;
   }
+  if (action === 'send-client-message') {
+    const input = document.getElementById('tmClientComposeInput');
+    const text = (input.value || '').trim();
+    if (!text) return;
+    btn.disabled = true;
+    try {
+      // Unlike the team chat, clientComments already comes back embedded on
+      // the task itself (see taskMapper.js) — applyUpdatedTask alone is
+      // enough, no separate cache to update.
+      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/client-message`, { method: 'POST', body: { text } });
+      input.value = '';
+      applyUpdatedTask(data.task);
+      const list = document.querySelector('#tmBody .tm-chat-list');
+      if (list) flashSaved(list.lastElementChild || list);
+    } catch (err) {
+      toast('Не удалось отправить: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+    return;
+  }
+});
+
+// Реальная загрузка файла — перетащить в #tmDropzone или выбрать через
+// скрытый <input type="file"> внутри него (клик по зоне landing прямо на
+// input, см. .tm-dropzone CSS). Оба пути ведут в uploadMediaFile().
+async function uploadMediaFile(t, file) {
+  const zone = document.getElementById('tmDropzone');
+  const titleEl = zone && zone.querySelector('.tm-dropzone-title');
+  if (zone) zone.classList.add('uploading');
+  if (titleEl) titleEl.textContent = `Загружаем «${file.name}»…`;
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/media-upload`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast(
+        data.error === 'disk_upload_not_configured'
+          ? 'Загрузка ещё не настроена на сервере — вставьте готовую ссылку ниже.'
+          : 'Не удалось загрузить файл: ' + (data.message || data.error || 'ошибка')
+      );
+      return;
+    }
+    applyUpdatedTask(data.task);
+    flashSaved(document.querySelector('#tmBody .tm-media-grid'));
+  } catch (err) {
+    toast('Не удалось загрузить файл: ' + err.message);
+  } finally {
+    // На успехе applyUpdatedTask уже пересоздал #tmDropzone заново (обычным
+    // состоянием) — ищем свежий узел, а не держимся за старую ссылку,
+    // которая могла быть заменена перерисовкой.
+    const freshZone = document.getElementById('tmDropzone');
+    if (freshZone) {
+      freshZone.classList.remove('uploading');
+      const freshTitle = freshZone.querySelector('.tm-dropzone-title');
+      if (freshTitle) freshTitle.textContent = '📎 Перетащите файл сюда или нажмите, чтобы выбрать';
+    }
+  }
+}
+
+tmBody.addEventListener('change', (e) => {
+  const fileInput = e.target.closest('#tmFileInput');
+  if (!fileInput) return;
+  const t = currentModalTask();
+  const file = fileInput.files && fileInput.files[0];
+  fileInput.value = ''; // позволяет выбрать тот же файл повторно в будущем
+  if (t && file) uploadMediaFile(t, file);
+});
+
+tmBody.addEventListener('dragover', (e) => {
+  const zone = e.target.closest('#tmDropzone');
+  if (!zone) return;
+  e.preventDefault(); // без этого браузер блокирует drop по умолчанию
+  zone.classList.add('drag-over');
+});
+
+tmBody.addEventListener('dragleave', (e) => {
+  const zone = e.target.closest('#tmDropzone');
+  if (!zone) return;
+  zone.classList.remove('drag-over');
+});
+
+tmBody.addEventListener('drop', (e) => {
+  const zone = e.target.closest('#tmDropzone');
+  if (!zone) return;
+  e.preventDefault();
+  zone.classList.remove('drag-over');
+  const t = currentModalTask();
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (t && file) uploadMediaFile(t, file);
 });
 
 // Клик вне пилюль/попапов/аватара ИИ закрывает все открытые попапы. Capture
