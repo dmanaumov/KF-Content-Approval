@@ -228,12 +228,19 @@ button{cursor:pointer}
 .more{border:0;background:transparent;color:var(--accent);font-weight:800;padding:8px 0 0;font-size:12px}
 .post-link{margin:12px 17px 0}
 .post-link a{display:inline-block;color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;border-bottom:1px solid currentColor}
-.feedback-note{margin:10px 17px 0;background:#FFF2F2;border-radius:14px;padding:11px 12px;color:#7F3434;font-size:13px;line-height:1.4}
-/* Сообщения от команды агентства (task.clientComments, kind:'agency') —
-   отправлены из кабинета команды, вкладка «Чат с клиентом». */
-.agency-messages{margin:10px 17px 0;display:grid;gap:6px}
-.agency-note{background:#EAF3F1;border-radius:14px;padding:11px 12px;color:#17322E;font-size:13px;line-height:1.4}
-.agency-note-label{display:block;font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--accent);margin-bottom:3px}
+/* Диалог клиента с агентством (task.clientComments, kind:'feedback'/
+   'agency') — клиентские ПРАВКИ и сообщения команды из кабинета команды,
+   вкладка «Чат с клиентом». Свёрнут по умолчанию до последнего сообщения;
+   .expanded показывает всю переписку (toggle-dialog в app.js). */
+.client-dialog{margin:10px 17px 0;display:flex;flex-direction:column;gap:6px}
+.client-chat-msg{max-width:85%;padding:10px 12px;border-radius:15px;font-size:13px;line-height:1.4;word-break:break-word}
+.client-chat-msg.hidden-msg{display:none}
+.client-chat-msg.theirs{align-self:flex-start;background:#EAF3F1;color:#17322E;border-bottom-left-radius:4px}
+.client-chat-msg.mine{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.client-chat-label{display:block;font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--accent);margin-bottom:3px}
+.client-dialog-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:5px;margin-top:2px;background:transparent;border:0;padding:2px 0;font-size:12px;font-weight:800;color:var(--accent)}
+.client-dialog-toggle svg{transition:transform .2s ease}
+.client-dialog.expanded .client-dialog-toggle svg{transform:rotate(180deg)}
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:15px 17px 17px}
 .btn{border:0;border-radius:14px;padding:14px 12px;font-weight:850;font-size:14px}
 .approve{background:var(--accent);color:#fff}

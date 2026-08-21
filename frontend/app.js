@@ -26,6 +26,7 @@ let busyTaskId = null;
 let editingTextTaskId = '';
 let reorderTaskId = ''; // task currently open in the media-order modal, '' = closed
 let reorderIds = []; // working copy of that task's media ids, in the order being edited
+let expandedDialogIds = new Set(); // task ids whose client<->agency dialog is expanded
 let calYear = null; // calendar view's current year/month (0-indexed month) —
 let calMonth = null; // set lazily to today's month the first time it opens.
 
@@ -203,18 +204,40 @@ function mediaFileUrl(m) {
     : `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
 }
 
-// Messages the agency team sent from the /team cabinet's "Чат с клиентом"
-// tab (kind: 'agency', see taskMapper.js's clientComments — the ONLY kind
-// there that's meant to reach this cabinet; 'approved'/'feedback'/
-// 'correction' are the client's own past actions, already reflected
-// elsewhere in this card). Shown above the client's own feedback-note (if
-// any) so a new message from the agency is the first thing noticed.
-function agencyMessagesHtml(task) {
-  const messages = (task.clientComments || []).filter((c) => c.kind === 'agency');
+// Two-sided dialog between the client and the agency team, built from
+// taskMapper.js's clientComments: 'feedback' (client's own ПРАВКИ text) and
+// 'agency' (team messages sent from the /team cabinet's "Чат с клиентом"
+// tab) are real written messages, so they render as chat bubbles — client
+// on the right ('mine', since this is the client's own cabinet), agency on
+// the left ('theirs'). 'approved'/'correction' are system-style notices
+// (card approved / media reordered etc.), not conversation, so they're left
+// out here — they're already reflected elsewhere on the card (status badge,
+// media order itself).
+//
+// Collapsed by default to just the latest message with a toggle arrow —
+// see expandedDialogIds — so a returning client immediately sees what's
+// new without the whole history pushing the card's action buttons down.
+function clientDialogHtml(task) {
+  const CHAT_SIDE = { feedback: 'mine', agency: 'theirs' };
+  const messages = (task.clientComments || []).filter((c) => CHAT_SIDE[c.kind]);
   if (!messages.length) return '';
-  return `<div class="agency-messages">${messages
-    .map((c) => `<div class="agency-note"><span class="agency-note-label">Агентство</span>${esc(c.text)}</div>`)
-    .join('')}</div>`;
+  const expanded = expandedDialogIds.has(task.id);
+  const lastIndex = messages.length - 1;
+  const bubbles = messages
+    .map((c, i) => {
+      const side = CHAT_SIDE[c.kind];
+      const label = side === 'theirs' ? '<span class="client-chat-label">Агентство</span>' : '';
+      const hidden = !expanded && i !== lastIndex ? ' hidden-msg' : '';
+      return `<div class="client-chat-msg ${side}${hidden}">${label}${esc(c.text)}</div>`;
+    })
+    .join('');
+  const toggle = messages.length > 1
+    ? `<button type="button" class="client-dialog-toggle" data-action="toggle-dialog" data-id="${task.id}" aria-expanded="${expanded ? 'true' : 'false'}">
+        <span>${expanded ? 'Свернуть переписку' : 'Вся переписка'}</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="14" height="14"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>`
+    : '';
+  return `<div class="client-dialog${expanded ? ' expanded' : ''}">${bubbles}${toggle}</div>`;
 }
 
 function mediaHtml(task, canReorder) {
@@ -329,8 +352,7 @@ function cardHtml(task) {
     ${mediaHtml(task, canEditText)}
     ${captionBlock}
     ${urlLink}
-    ${agencyMessagesHtml(task)}
-    ${task.feedback ? `<div class="feedback-note">${esc(task.feedback)}</div>` : ''}
+    ${clientDialogHtml(task)}
     ${actions}
     ${aiDisclaimer}
   </article>`;
@@ -967,6 +989,11 @@ document.getElementById('stack').addEventListener('click', (e) => {
   if (btn.dataset.action === 'save-text') saveTextEdit(id);
   if (btn.dataset.action === 'open-media-order') openMediaOrder(id);
   if (btn.dataset.action === 'ai-info') toast('✨ Этот пост сгенерирован с помощью ИИ');
+  if (btn.dataset.action === 'toggle-dialog') {
+    if (expandedDialogIds.has(id)) expandedDialogIds.delete(id);
+    else expandedDialogIds.add(id);
+    render();
+  }
 });
 
 document.querySelector('[data-action="close-feedback"]').addEventListener('click', () => {
