@@ -136,6 +136,7 @@ const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
 const teamFilters = document.getElementById('teamFilters');
+const teamSearch = document.getElementById('teamSearch');
 const taskModal = document.getElementById('taskModal');
 const tmHead = document.getElementById('tmHead');
 const tmTabbar = document.getElementById('tmTabbar');
@@ -248,6 +249,9 @@ function taskRowHtml(task) {
     ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
     : '';
   const displayTitle = stripAiTag(bare);
+  // Короткая форма ID поста (первые 8 символов id карточки) — полный виден
+  // в модалке и копируется оттуда; поиск в списке матчит подстроку полного
+  // ID, так что набранные с чипа символы тоже находят карточку.
   return `<div class="team-task${urgent ? ' urgent' : ''}" data-task-id="${esc(task.id)}">
     <div class="team-task-top">
       <div>
@@ -258,6 +262,7 @@ function taskRowHtml(task) {
     <div class="team-task-bottom">
       <div class="team-task-meta">
         <div class="team-task-status">${statusBadgeHtml(task)}${urgentBadge}</div>
+        <span class="team-task-id" title="ID поста: ${esc(task.id)}">#${esc(String(task.id).slice(0, 8))}</span>
         ${dateBadge}
       </div>
     </div>
@@ -291,11 +296,23 @@ function renderChips() {
 }
 
 function renderTasks() {
-  const visible = activeStatuses
-    ? currentTasks.filter((t) => activeStatuses.has(norm(t.statusLabel)))
-    : currentTasks;
+  // Поиск (название / клиент / подстрока ID поста, без учёта регистра)
+  // сужает список ВНУТРИ выбранных статусных чипов — оба фильтра действуют
+  // одновременно. "#" в начале запроса просто отбрасывается: чип на карточке
+  // отображается как "#yoskwj9p", а искать хочется и так, и без решётки.
+  const q = norm((teamSearch && teamSearch.value) || '').replace(/^#/, '');
+  const bySearch = (t) =>
+    !q ||
+    norm(t.title).includes(q) ||
+    norm(t.projectLabel || '').includes(q) ||
+    norm(t.id).includes(q);
+  const visible = currentTasks.filter(bySearch).filter((t) => (activeStatuses ? activeStatuses.has(norm(t.statusLabel)) : true));
   if (!visible.length) {
-    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами.' : 'На вас пока нет ни одной задачи.';
+    teamEmpty.textContent = q
+      ? `Ничего не найдено по запросу «${teamSearch.value.trim()}».`
+      : currentTasks.length
+      ? 'Нет задач с выбранными статусами.'
+      : 'На вас пока нет ни одной задачи.';
     teamEmpty.hidden = false;
     teamList.innerHTML = '';
     return;
@@ -494,6 +511,10 @@ function renderModalHead(t) {
         <div class="tm-popover" id="tmNetworkPop" hidden>${networkPopHtml(t)}</div>
       </div>
     </div>
+    <button type="button" class="tm-id-chip" data-action="copy-id" data-id="${esc(t.id)}"
+            title="Нажмите, чтобы скопировать ID — по нему файл на диске и поиск в списке">
+      ID: ${esc(t.id)}
+    </button>
   `;
   if (editingTitle) {
     const input = document.getElementById('tmTitleInput');
@@ -833,6 +854,15 @@ tmHead.addEventListener('click', async (e) => {
 
   if (action === 'edit-title') { editingTitle = true; renderModalHead(t); return; }
   if (action === 'cancel-title') { editingTitle = false; renderModalHead(t); return; }
+  if (action === 'copy-id') {
+    try {
+      await navigator.clipboard.writeText(btn.dataset.id);
+      toast('ID скопирован');
+    } catch (err) {
+      toast('Не удалось скопировать: ' + err.message);
+    }
+    return;
+  }
   if (action === 'save-title') {
     const input = document.getElementById('tmTitleInput');
     const val = (input.value || '').trim();
@@ -1149,6 +1179,8 @@ teamFilters.addEventListener('click', (e) => {
   saveFilters();
   renderTasks();
 });
+
+teamSearch.addEventListener('input', renderTasks);
 
 teamList.addEventListener('click', (e) => {
   const row = e.target.closest('.team-task');

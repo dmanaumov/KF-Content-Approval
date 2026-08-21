@@ -82,6 +82,22 @@ async function putFile(relPath, buffer, mimeType) {
   }
 }
 
+// Имя файла строится как "<дата>_<ID поста>" и обязано быть воспроизводимым
+// (по нему файл на диске находят по карточке), поэтому коллизии решаем не
+// случайным суффиксом, а нумерацией: второй файл того же поста за тот же день
+// получает "_2", третий "_3" и т.д. Свободность проверяем HEAD-запросом
+// (404 = свободно); любой другой ответ считаем "занято" — лучше лишний
+// суффикс, чем молча перезаписать чей-то материал. Ограничитель + случайный
+// хвост — параноидальная страховка от бесконечного цикла при сбойном диске.
+async function findFreeFileName(relDir, base, ext) {
+  for (let n = 1; n <= 50; n++) {
+    const candidate = base + (n === 1 ? '' : '_' + n) + ext;
+    const res = await fetchWithAuth(webdavUrl(relDir + '/' + candidate), { method: 'HEAD' });
+    if (res.status === 404) return candidate;
+  }
+  return base + '_' + Date.now().toString(36) + ext;
+}
+
 // OCS Sharing API lives under the site origin, not under the WebDAV files
 // root — derived from diskWebdavBaseUrl rather than a second env var, so
 // there's only one URL to configure.
@@ -107,12 +123,14 @@ async function createPublicShare(relPath) {
 }
 
 // folderName: per-client sub-folder under diskUploadRootPath (e.g. the
-// task's projectLabel — "SMM / Кот Василий / ..."). filename: should
-// already be a reasonably final, collision-resistant name (the index.js
-// route stamps date + a random suffix before calling this).
+// task's projectLabel — "SMM / Кот Василий / ..."). baseName: extensionless
+// stem, already final and traceable — the index.js route builds it as
+// "<дата>_<ID поста>"; findFreeFileName appends _2/_3… on collisions.
+// ext: lowercase dot-extension from the original file ("" if none).
 async function uploadAndShare(opts) {
   const folderName = opts.folderName;
-  const filename = opts.filename;
+  const baseName = opts.baseName;
+  const ext = opts.ext || '';
   const buffer = opts.buffer;
   const mimeType = opts.mimeType;
   if (!config.diskWebdavBaseUrl || !config.diskWebdavUser || !config.diskWebdavPassword) {
@@ -124,8 +142,9 @@ async function uploadAndShare(opts) {
   }
   const root = config.diskUploadRootPath || 'SMM';
   const relDir = root + '/' + sanitizeSegment(folderName);
-  const relFile = relDir + '/' + sanitizeSegment(filename);
   await ensureRemoteDir(relDir);
+  const filename = await findFreeFileName(relDir, sanitizeSegment(baseName), ext);
+  const relFile = relDir + '/' + filename;
   await putFile(relFile, buffer, mimeType);
   return createPublicShare(relFile);
 }

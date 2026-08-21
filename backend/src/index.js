@@ -956,12 +956,16 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req,
       const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
       const task = tasks.find((t) => t.id === req.params.taskId);
       if (!task) return res.status(404).json({ error: 'task_not_found' });
+      // Имя файла на диске = "<дата>_<ID поста><расширение>" — по нему файл
+      // однозначно отслеживается до карточки (ID виден в кабинете команды и
+      // ищется в списке постов). Коллизии (несколько файлов одного поста за
+      // один день) разбирает diskUpload.findFreeFileName: "_2", "_3", ...
       const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
       const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
-      const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
       const shareUrl = await diskUpload.uploadAndShare({
         folderName: task.projectLabel || 'Без клиента',
-        filename,
+        baseName: `${dateStr}_${task.id}`,
+        ext: extMatch ? extMatch[0].toLowerCase() : '',
         buffer: req.file.buffer,
         mimeType: req.file.mimetype,
       });
