@@ -939,17 +939,6 @@ app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, async (
 // 502) so the UI can say clearly "not set up yet" instead of "failed", and
 // the manual-link field stays usable as the fallback either way.
 app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req, res) => {
-  // Fail fast BEFORE multer starts buffering the file: otherwise the browser
-  // uploads all 50–80 МБ first and only then gets "не настроено" — выглядит
-  // как долгое "думание" и отказ в конце. Тот же код ошибки, что бросает
-  // diskUpload.uploadAndShare, чтобы UI не различал два пути.
-  if (!config.diskWebdavBaseUrl || !config.diskWebdavUser || !config.diskWebdavPassword) {
-    return res.status(501).json({
-      error: 'disk_upload_not_configured',
-      message:
-        'Загрузка на Диск ещё не настроена — нужны DISK_WEBDAV_URL, DISK_WEBDAV_USER, DISK_WEBDAV_PASSWORD в .env (см. комментарий в config.js). Пока можно прикрепить уже готовую ссылку вручную — поле ниже остаётся доступным.',
-    });
-  }
   teamMediaUpload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
       const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
@@ -967,16 +956,12 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req,
       const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
       const task = tasks.find((t) => t.id === req.params.taskId);
       if (!task) return res.status(404).json({ error: 'task_not_found' });
-      // Имя файла на диске = "<дата>_<ID поста><расширение>" — по нему файл
-      // однозначно отслеживается до карточки (ID виден в кабинете команды и
-      // ищется в списке постов). Коллизии (несколько файлов одного поста за
-      // один день) разбирает diskUpload.findFreeFileName: "_2", "_3", ...
       const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
       const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
       const shareUrl = await diskUpload.uploadAndShare({
         folderName: task.projectLabel || 'Без клиента',
-        baseName: `${dateStr}_${task.id}`,
-        ext: extMatch ? extMatch[0].toLowerCase() : '',
+        filename,
         buffer: req.file.buffer,
         mimeType: req.file.mimetype,
       });
@@ -986,6 +971,47 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req,
       console.error('[api] team media upload failed:', err.message);
       const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
       res.status(status).json({ error: err.code || 'media_upload_failed', message: err.message });
+    }
+  });
+});
+
+// POST /api/team/tasks/:taskId/chat-upload — multipart, field name "file".
+// A photo attached to a CHAT message (either "ЧАТ КОМАНДЫ" or "Чат с
+// клиентом" — not the post's own media). Uploads to disk.kontentferma the
+// same way media-upload above does, but does NOT call addTeamMediaLink —
+// it just hands back the share link for the caller to attach to whichever
+// message it's about to send (POST .../comments or .../client-message).
+app.post('/api/team/tasks/:taskId/chat-upload', teamAuth.requireTeamAuth, (req, res) => {
+  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'file_too_large' : 'upload_error',
+        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
+      });
+    }
+    const boardId = requireStaffBoardId(res);
+    if (!boardId) return;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    try {
+      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+      const feedbackAuthorUserId = await getFeedbackAuthorId();
+      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+      const task = tasks.find((t) => t.id === req.params.taskId);
+      if (!task) return res.status(404).json({ error: 'task_not_found' });
+      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `chat_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+      const shareUrl = await diskUpload.uploadAndShare({
+        folderName: task.projectLabel || 'Без клиента',
+        filename,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+      });
+      res.json({ shareUrl });
+    } catch (err) {
+      console.error('[api] chat image upload failed:', err.message);
+      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
+      res.status(status).json({ error: err.code || 'chat_upload_failed', message: err.message });
     }
   });
 });
@@ -1096,10 +1122,12 @@ app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (re
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const text = String((req.body && req.body.text) || '').trim();
-  if (!text) return res.status(400).json({ error: 'text_required' });
+  const imageUrl = String((req.body && req.body.imageUrl) || '').trim();
+  // A message can be image-only (no caption) — only reject if BOTH are empty.
+  if (!text && !imageUrl) return res.status(400).json({ error: 'text_required' });
   try {
     const user = req.teamSession.user;
-    const comment = await teamComments.addComment(boardId, req.params.taskId, { id: user.id, name: teamActorName(req) }, text);
+    const comment = await teamComments.addComment(boardId, req.params.taskId, { id: user.id, name: teamActorName(req) }, text, imageUrl);
     res.json({ comment });
   } catch (err) {
     console.error('[api] team comment add failed:', err.message);
@@ -1115,67 +1143,16 @@ app.post('/api/team/tasks/:taskId/client-message', teamAuth.requireTeamAuth, asy
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const text = String((req.body && req.body.text) || '').trim();
-  if (!text) return res.status(400).json({ error: 'text_required' });
+  const imageUrl = String((req.body && req.body.imageUrl) || '').trim();
+  // A message can be image-only (no caption) — only reject if BOTH are empty.
+  if (!text && !imageUrl) return res.status(400).json({ error: 'text_required' });
   try {
-    const updated = await sendClientMessage(boardId, req.params.taskId, text, teamActorName(req));
+    const updated = await sendClientMessage(boardId, req.params.taskId, text, teamActorName(req), imageUrl);
     res.json({ task: updated });
   } catch (err) {
     console.error('[api] team client-message failed:', err.message);
     res.status(502).json({ error: 'client_message_failed', message: err.message });
   }
-});
-
-// POST /api/team/tasks/:taskId/client-media — multipart "file" (+ caption).
-// Зеркало клиентского chat-media: сотрудник прикладывает картинку для
-// клиента в том же «Чате с клиентом». Тот же диск и та же папка
-// SMM/<Клиент>/ClientMedia/, в карточку — только ссылка маркерным
-// комментарием «СООБЩЕНИЕ (<actor>)» (kind 'agency' в taskMapper) — клиент
-// видит её как пузырь «Агентство» с превью. Статус не трогаем.
-app.post('/api/team/tasks/:taskId/client-media', teamAuth.requireTeamAuth, (req, res) => {
-  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
-    if (uploadErr) {
-      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
-      return res.status(tooLarge ? 413 : 400).json({
-        error: tooLarge ? 'file_too_large' : 'upload_error',
-        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
-      });
-    }
-    const boardId = requireStaffBoardId(res);
-    if (!boardId) return;
-    if (!req.file) return res.status(400).json({ error: 'file_required', message: 'Файл не получен.' });
-    if (!/^image\//i.test(req.file.mimetype || '')) {
-      return res.status(400).json({ error: 'only_images', message: 'В чат можно приложить только фото или скриншот.' });
-    }
-    try {
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === req.params.taskId);
-      if (!task) return res.status(404).json({ error: 'task_not_found' });
-      const caption = String((req.body && req.body.caption) || '').trim();
-      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
-      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
-      const shareUrl = await diskUpload.uploadAndShare({
-        folderName: `${task.projectLabel || 'Без клиента'}/ClientMedia`,
-        baseName: `${dateStr}_${task.id}`,
-        ext: extMatch ? extMatch[0].toLowerCase() : '',
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
-      });
-      await mm.addCardComment(
-        boardId,
-        task.id,
-        `${formatMoscowTimestamp()} СООБЩЕНИЕ (${teamActorName(req)})\n\n${caption ? caption + '\n' : ''}${shareUrl}`
-      );
-      invalidate(boardId);
-      const updated = await refetchTeamTask(boardId, task.id);
-      res.json({ task: updated });
-    } catch (err) {
-      console.error('[api] team client-media failed:', err.message);
-      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
-      res.status(status).json({ error: err.code || 'client_media_failed', message: err.message });
-    }
-  });
 });
 
 // POST /api/boards/:boardId/tasks/:taskId/approve — idempotent.
@@ -1209,60 +1186,6 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback', async (req, res) => {
     console.error('[api] feedback failed:', err.message);
     res.status(502).json({ error: 'feedback_failed', message: err.message });
   }
-});
-
-// POST /api/boards/:boardId/tasks/:taskId/chat-media — multipart "file"
-// (+ необязательное текстовое поле caption). Клиент прикладывает фото/скрин
-// В ЧАТ (кнопка «Приложить медиа» в его кабинете). Файл кладётся на диск в
-// SMM/<Клиент>/ClientMedia/<дата>_<ID поста>.<ext> (нумерацию коллизий
-// берёт на себя diskUpload.findFreeFileName), а в карточку пишется ТОЛЬКО
-// ссылка маркерным комментарием «ФАЙЛ ОТ КЛИЕНТА» — ни в медиа поста файл
-// не попадает, ни в хранилище Mattermost. Статус согласования намеренно НЕ
-// трогается: скрин в чате — это не запрос правок (в отличие от .../feedback).
-app.post('/api/boards/:boardId/tasks/:taskId/chat-media', (req, res) => {
-  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
-    if (uploadErr) {
-      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
-      return res.status(tooLarge ? 413 : 400).json({
-        error: tooLarge ? 'file_too_large' : 'upload_error',
-        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
-      });
-    }
-    const boardId = req.params.boardId;
-    if (!req.file) return res.status(400).json({ error: 'file_required', message: 'Файл не получен.' });
-    if (!/^image\//i.test(req.file.mimetype || '')) {
-      return res.status(400).json({ error: 'only_images', message: 'В чат можно приложить только фото или скриншот.' });
-    }
-    try {
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === req.params.taskId);
-      if (!task) return res.status(404).json({ error: 'task_not_found' });
-      const caption = String((req.body && req.body.caption) || '').trim();
-      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
-      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
-      const shareUrl = await diskUpload.uploadAndShare({
-        folderName: `${task.projectLabel || 'Без клиента'}/ClientMedia`,
-        baseName: `${dateStr}_${task.id}`,
-        ext: extMatch ? extMatch[0].toLowerCase() : '',
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
-      });
-      await mm.addCardComment(
-        boardId,
-        task.id,
-        `${formatMoscowTimestamp()} ФАЙЛ ОТ КЛИЕНТА\n\n${caption ? caption + '\n' : ''}${shareUrl}`
-      );
-      invalidate(boardId);
-      const updated = await refetchTeamTask(boardId, task.id);
-      res.json({ task: updated });
-    } catch (err) {
-      console.error('[api] chat media upload failed:', err.message);
-      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
-      res.status(status).json({ error: err.code || 'chat_media_failed', message: err.message });
-    }
-  });
 });
 
 // POST /api/boards/:boardId/tasks/:taskId/text — body: { text }
@@ -1671,10 +1594,17 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
 // sent at any time regardless of whether the client has said anything —
 // see the /team cabinet's "Чат с клиентом" tab, which the team asked to be
 // writable rather than read-only.
-async function sendClientMessage(boardId, taskId, text, actorName) {
+// imageUrl: optional disk.kontentferma share link for a photo attached to
+// this message — appended as its own trailing line so taskMapper.js's
+// clientComments extraction (kind:'agency') can pull it back out (same
+// convention diskEmbeds.js uses for card-description attachments; see the
+// comment there and in taskMapper.js).
+async function sendClientMessage(boardId, taskId, text, actorName, imageUrl) {
   const trimmed = String(text || '').trim();
-  if (!trimmed) throw new Error('Сообщение не может быть пустым.');
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СООБЩЕНИЕ (${actorName || 'команда'})\n\n${trimmed}`);
+  const image = String(imageUrl || '').trim();
+  if (!trimmed && !image) throw new Error('Сообщение не может быть пустым.');
+  const body = image ? `${trimmed}${trimmed ? '\n' : ''}${image}` : trimmed;
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СООБЩЕНИЕ (${actorName || 'команда'})\n\n${body}`);
   invalidate(boardId);
   return refetchTeamTask(boardId, taskId);
 }

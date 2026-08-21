@@ -9,10 +9,6 @@
 
 .team-empty{margin:40px 20px;text-align:center;color:var(--muted);font-size:14px}
 
-/* Поиск по списку постов: название / клиент / #ID поста. */
-.team-search{padding:12px 12px 0}
-.team-search .field-input{width:100%;box-sizing:border-box;background:#fff}
-
 /* Фильтр-чипы по статусам: все включены по умолчанию; статусы, где нужны
    действия ответственного (В ПРОЦЕССЕ, КОРРЕКТИРОВКА) — тёплым цветом,
    остальные (НА СОГЛАСОВАНИИ, СДАЛИ, ЗАПЛАНИРОВАНО) — серым. */
@@ -45,9 +41,6 @@
 .team-task-meta{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px;text-align:right}
 .team-task-status{display:flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 .team-task-date{font-size:12px;color:var(--muted);font-weight:800;letter-spacing:.02em}
-/* Короткая форма ID поста в строке списка (полный — в модалке, по клику
-   копируется; поиск матчит подстроку полного ID). */
-.team-task-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);letter-spacing:.02em}
 /* Горящая задача — требующая действий ответственного с дедлайном ≤3 дня или
    просроченная (аналог .card.urgent в кабинете клиента). */
 .team-task.urgent{border-color:var(--urgent);box-shadow:0 0 0 2px var(--urgent),0 10px 26px rgba(255,95,96,.28);background:#FFF5F4}
@@ -85,8 +78,6 @@
 .tm-pill-wrap{position:relative}
 .tm-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800;color:var(--ink);white-space:nowrap}
 .tm-pill .tm-pill-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:0 0 auto}
-/* Полный ID поста в шапке модалки — клик копирует в буфер. */
-.tm-id-chip{display:inline-block;max-width:100%;margin-top:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px dashed var(--line);background:transparent;border-radius:8px;padding:4px 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);cursor:pointer}
 .tm-pill.tm-status-pill.need{background:#FFE8E2;border-color:#F0C4BF;color:#C94F2E}
 .tm-pill.tm-status-pill.need .tm-pill-dot{background:#C94F2E}
 .tm-pill.tm-status-pill.wait{background:#EDEFEF;border-color:#DDE1E1;color:#4B5654}
@@ -119,18 +110,8 @@
 .tm-tabbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex:0 0 auto;position:relative}
 .tm-tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
 .tm-tabs::-webkit-scrollbar{display:none}
-/* Вкладки: у каждой свой «личный» цвет. Активная кнопка красится им, а
-   подложка панели ниже — тем же цветом на ~10% (см. .tm-body.pane-*).
-   Цель — чтобы «Чат команды» (зелёный, внутренний) и «Чат с клиентом»
-   (оранжевый, ВНЕШНИЙ) нельзя было перепутать: сообщение для своих не
-   должно улетать клиенту. */
 .tm-tab{flex:0 0 auto;border:0;background:transparent;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
-.tm-tab.pane-media.active{background:#EEF1F1;color:#3D4745;box-shadow:inset 0 0 0 1px #C9D2D0}
-.tm-tab.pane-text.active{background:rgba(37,99,235,.10);color:#1D4ED8;box-shadow:inset 0 0 0 1px rgba(37,99,235,.35)}
-.tm-tab.pane-team.active{background:rgba(5,150,105,.14);color:#047857;box-shadow:inset 0 0 0 1px rgba(5,150,105,.45)}
-/* «Чат с клиентом» — фирменный коралловый (--kf-coral #DF6162) на 10% */
-.tm-tab.pane-client.active{background:rgba(223,97,98,.10);color:#B04A4B;box-shadow:inset 0 0 0 1px rgba(223,97,98,.45)}
-.tm-tab.pane-preview.active{background:rgba(124,58,237,.10);color:#6D28D9;box-shadow:inset 0 0 0 1px rgba(124,58,237,.35)}
+.tm-tab.active{background:var(--ink);color:#fff}
 .tm-ai-avatar{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:2px solid var(--ai);padding:0;overflow:hidden;box-shadow:0 4px 12px rgba(155,90,246,.28)}
 .tm-ai-avatar img{width:100%;height:100%;object-fit:cover;display:block}
 .tm-ai-pop{position:absolute;top:calc(100% - 4px);right:14px;z-index:6;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 14px 34px rgba(15,25,24,.16);padding:12px;width:250px}
@@ -142,13 +123,6 @@
 
 /* --- Тело: прокручиваемая область с панелями вкладок --- */
 .tm-body{overflow-y:auto;padding:16px 20px 20px;flex:1;min-height:0}
-/* Подложка панели = «личный» цвет вкладки на ~10% (см. комментарий у .tm-tab):
-   зелёная — свои, коралловая (рыжая, --kf-coral) — клиент. */
-.tm-body.pane-media{background:#F7F9F9}
-.tm-body.pane-text{background:rgba(37,99,235,.08)}
-.tm-body.pane-team{background:rgba(5,150,105,.10)}
-.tm-body.pane-client{background:rgba(223,97,98,.10)}
-.tm-body.pane-preview{background:rgba(124,58,237,.07)}
 .tm-pane{display:grid;gap:14px}
 
 /* Медиа */
@@ -171,12 +145,6 @@
 .tm-reorder-btns{display:flex;gap:4px}
 .tm-mini-btn{border:1px solid var(--line);background:#fff;border-radius:8px;width:26px;height:26px;font-size:12px;color:var(--ink)}
 .tm-mini-btn:disabled{opacity:.35}
-.tm-attach-box{background:#F7F8F8;border:1px dashed #C7CECD;border-radius:16px;padding:14px}
-.tm-attach-hint{font-size:11.5px;color:var(--muted);line-height:1.45;margin-bottom:9px}
-.tm-attach-row{display:flex;gap:8px}
-.tm-attach-row input{flex:1;border:1px solid var(--line);border-radius:11px;padding:9px 11px;font-size:12.5px;outline:none;font:inherit}
-.tm-attach-row input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
-.tm-attach-row button{flex:0 0 auto;border:0;background:var(--accent);color:#fff;border-radius:11px;padding:0 14px;font-size:12.5px;font-weight:800}
 
 /* Текст + ключевые слова */
 .tm-field-label{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.02em;margin-bottom:6px}
@@ -195,16 +163,28 @@
 .tm-chat-msg-text{font-size:13px;line-height:1.45;white-space:pre-wrap}
 .tm-chat-msg-time{font-size:9.5px;color:var(--muted);margin-top:3px}
 .tm-chat-msg.system{background:transparent;align-self:center;max-width:100%;text-align:center;color:var(--muted);font-size:11px;padding:2px 0}
-.tm-chat-compose{display:flex;gap:8px;align-items:flex-end}
+.tm-chat-compose{display:flex;flex-direction:column;gap:8px}
+.tm-chat-compose-row{display:flex;gap:8px;align-items:flex-end}
 .tm-chat-compose textarea{flex:1;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;font-size:13px;resize:none;min-height:40px;max-height:120px;outline:none}
 .tm-chat-compose textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
-/* Скрепка — приложить картинку для клиента (см. /client-media в index.js). */
-.tm-chat-attach{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:12px;width:40px;height:40px;font-size:15px;cursor:pointer}
-.tm-chat-attach:disabled{opacity:.55;cursor:default}
 .tm-chat-send{flex:0 0 auto;border:0;background:var(--accent);color:#fff;border-radius:12px;width:40px;height:40px;font-size:15px}
-/* Превью вложений в «Чате с клиентом» (скрины клиента и картинки команды). */
-.tm-chat-img{display:block;max-width:220px;max-height:180px;width:auto;height:auto;border-radius:12px;margin-bottom:4px}
+.tm-chat-attach{flex:0 0 auto;border:1px solid var(--line);background:#fff;color:var(--accent);border-radius:12px;width:40px;height:40px;font-size:17px;display:grid;place-items:center;cursor:pointer}
+.tm-chat-attach:active{background:#F2F4F4}
+.tm-chat-pending-img{position:relative;display:inline-flex;width:60px;height:60px;border-radius:12px;overflow:hidden;background:#F2F4F4;border:1px solid var(--line)}
+.tm-chat-pending-img img{width:100%;height:100%;object-fit:cover;display:block}
+.tm-chat-pending-img.uploading{opacity:.5}
+.tm-chat-pending-remove{position:absolute;top:2px;right:2px;width:20px;height:20px;border:0;border-radius:999px;background:rgba(15,25,24,.72);color:#fff;font-size:11px;line-height:1;display:grid;place-items:center;cursor:pointer}
+.tm-chat-img{display:block;max-width:170px;max-height:170px;border-radius:12px;margin-top:6px;cursor:zoom-in;object-fit:cover}
 .tm-client-readonly-note{font-size:11px;color:var(--muted);text-align:center}
+
+/* Полноэкранный просмотр фото из чата (openLightbox в team.js/app.js) — до
+   80% ширины/высоты экрана; закрывается крестиком, кликом по фону или
+   аппаратной кнопкой "назад" (см. history.pushState в openLightbox). */
+.lightbox{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center}
+.lightbox[hidden]{display:none}
+.lightbox-backdrop{position:absolute;inset:0;background:rgba(8,14,13,.88)}
+.lightbox img{position:relative;max-width:80vw;max-height:80vh;border-radius:12px;object-fit:contain;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.lightbox-close{position:absolute;top:18px;right:18px;width:38px;height:38px;border:0;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:17px;display:grid;place-items:center;cursor:pointer;z-index:1}
 
 /* Предпросмотр поста */
 .tm-preview-phone{background:#0F1917;border-radius:22px;padding:12px;max-width:320px;margin:0 auto}
@@ -231,14 +211,22 @@
 }
 .tm-flash-save{animation:tm-flash-pulse 1100ms ease-out}
 
-/* --- Загрузка медиа: drag-and-drop + выбор файла с устройства --- */
-.tm-dropzone{position:relative;background:#F7F8F8;border:1.5px dashed #C7CECD;border-radius:16px;padding:18px 14px;text-align:center;cursor:pointer;transition:.15s}
-.tm-dropzone:hover{border-color:var(--accent)}
-.tm-dropzone.drag-over{border-color:var(--accent);background:#EAF3F1}
+/* --- Загрузка медиа: drag-and-drop + выбор файла с устройства ---
+   Одна карточка: зона перетаскивания сверху, поле для готовой ссылки
+   снизу — визуально один блок, а не два разных. */
+.tm-attach-card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.tm-dropzone{position:relative;padding:22px 16px 18px;text-align:center;cursor:pointer;transition:background .15s;display:flex;flex-direction:column;align-items:center;gap:7px}
+.tm-dropzone:hover{background:#F7F8F8}
+.tm-dropzone.drag-over{background:#EAF3F1}
+.tm-dropzone-icon{width:42px;height:42px;border-radius:999px;background:#EAF3F1;color:var(--accent);display:grid;place-items:center}
+.tm-dropzone-icon svg{width:21px;height:21px;display:block}
 .tm-dropzone-title{font-size:12.5px;font-weight:800;color:var(--ink)}
-.tm-dropzone-hint{font-size:11px;color:var(--muted);margin-top:3px}
+.tm-dropzone-hint{font-size:11px;color:var(--muted);max-width:230px;line-height:1.4}
 .tm-dropzone input[type="file"]{position:absolute;inset:0;opacity:0;cursor:pointer}
-.tm-dropzone.uploading{opacity:.6;pointer-events:none}
-.tm-upload-progress{margin-top:8px;font-size:11px;color:var(--accent);font-weight:800}
-.tm-attach-sep{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
-.tm-attach-sep::before,.tm-attach-sep::after{content:"";flex:1;height:1px;background:var(--line)}
+.tm-dropzone.uploading{opacity:.55;pointer-events:none}
+.tm-attach-link-row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:#FBFCFC}
+.tm-attach-link-label{flex:0 0 auto;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
+.tm-attach-link-row input{flex:1;min-width:0;border:1px solid var(--line);border-radius:11px;padding:8px 10px;font-size:12.5px;outline:none;font:inherit;background:#fff}
+.tm-attach-link-row input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.tm-attach-link-btn{flex:0 0 auto;width:34px;height:34px;border:0;border-radius:10px;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer}
+.tm-attach-link-btn svg{width:16px;height:16px;display:block}

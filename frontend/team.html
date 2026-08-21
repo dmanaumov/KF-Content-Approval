@@ -6,7 +6,7 @@
   <title>КФ — Кабинет команды</title>
   <link rel="stylesheet" href="/app.css?v=7">
   <link rel="stylesheet" href="/projects.css?v=5">
-  <link rel="stylesheet" href="/team.css?v=13">
+  <link rel="stylesheet" href="/team.css?v=11">
 </head>
 <body>
 <div class="page">
@@ -47,10 +47,6 @@
       </div>
     </header>
 
-    <div id="teamSearchWrap" class="team-search">
-      <input id="teamSearch" class="field-input" type="search" autocomplete="off"
-             placeholder="Поиск: название или #ID поста" aria-label="Поиск задач">
-    </div>
     <div id="teamFilters" class="team-filters" hidden></div>
     <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
     <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
@@ -68,8 +64,14 @@
   </div>
 </div>
 
+<div id="lightbox" class="lightbox" hidden>
+  <div class="lightbox-backdrop"></div>
+  <button type="button" class="lightbox-close" aria-label="Закрыть">✕</button>
+  <img id="lightboxImg" src="" alt="">
+</div>
+
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=13"></script>
+<script src="/team.js?v=11"></script>
 </body>
 </html>

@@ -170,6 +170,14 @@ async function initSchema() {
     );
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS task_team_comments_task_idx ON task_team_comments (board_id, task_id);`);
+  // A team chat message can carry one attached photo (uploaded straight to
+  // disk.kontentferma via diskUpload.js, same as the Медиа-tab dropzone) —
+  // see teamComments.js/frontend team.js "ЧАТ КОМАНДЫ". Idempotent add, same
+  // philosophy as the rest of initSchema.
+  await pool.query(`
+    ALTER TABLE task_team_comments
+      ADD COLUMN IF NOT EXISTS image_url text NOT NULL DEFAULT '';
+  `);
   await ensureN8nRole();
 }
 

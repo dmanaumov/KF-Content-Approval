@@ -233,19 +233,6 @@ button{cursor:pointer}
    вкладка «Чат с клиентом». Свёрнут по умолчанию до последнего сообщения;
    .expanded показывает всю переписку (toggle-dialog в app.js). */
 .client-dialog{margin:10px 17px 0;display:flex;flex-direction:column;gap:6px}
-/* Кнопка «Приложить медиа» в чате — фото/скрины клиента, только в чат,
-   не в пост (файл падает в SMM/<клиент>/ClientMedia на диске). */
-.client-chat-row{display:flex;margin:8px 17px 0}
-.client-chat-attach{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer}
-.client-chat-attach:active{background:#F1F4F3}
-.client-chat-attach:disabled{opacity:.55;cursor:default}
-.client-chat-img-link{display:block;max-width:78%}
-.client-chat-img{display:block;width:100%;max-width:220px;border-radius:12px}
-/* Пузырь с картинкой = сама картинка (как в мессенджерах), без подложки */
-.client-chat-msg:has(.client-chat-img){background:transparent;padding:0;color:var(--ink)}
-.client-chat-msg.theirs:has(.client-chat-img){align-self:flex-start}
-.client-chat-msg.mine:has(.client-chat-img){align-self:flex-end}
-.client-chat-caption{display:block;margin-top:3px}
 .client-chat-msg{max-width:85%;padding:10px 12px;border-radius:15px;font-size:13px;line-height:1.4;word-break:break-word}
 .client-chat-msg.hidden-msg{display:none}
 .client-chat-msg.theirs{align-self:flex-start;background:#EAF3F1;color:#17322E;border-bottom-left-radius:4px}
@@ -254,6 +241,16 @@ button{cursor:pointer}
 .client-dialog-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:5px;margin-top:2px;background:transparent;border:0;padding:2px 0;font-size:12px;font-weight:800;color:var(--accent)}
 .client-dialog-toggle svg{transition:transform .2s ease}
 .client-dialog.expanded .client-dialog-toggle svg{transform:rotate(180deg)}
+.client-chat-img{display:block;max-width:170px;max-height:170px;border-radius:11px;margin-top:6px;cursor:zoom-in;object-fit:cover}
+
+/* Полноэкранный просмотр фото из переписки (openLightbox в app.js/team.js)
+   — до 80% ширины/высоты экрана; закрывается крестиком, кликом по фону или
+   аппаратной кнопкой "назад" (см. history.pushState в openLightbox). */
+.lightbox{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center}
+.lightbox[hidden]{display:none}
+.lightbox-backdrop{position:absolute;inset:0;background:rgba(8,14,13,.88)}
+.lightbox img{position:relative;max-width:80vw;max-height:80vh;border-radius:12px;object-fit:contain;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.lightbox-close{position:absolute;top:18px;right:18px;width:38px;height:38px;border:0;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:17px;display:grid;place-items:center;cursor:pointer;z-index:1}
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:15px 17px 17px}
 .btn{border:0;border-radius:14px;padding:14px 12px;font-weight:850;font-size:14px}
 .approve{background:var(--accent);color:#fff}

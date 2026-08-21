@@ -241,44 +241,51 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     // activity to this client-facing timeline as if the client said it.
     // These marker words are written either by an actual CLIENT action
     // (approve / submit feedback / edit text or media order from the client
-    // cabinet / attach a screenshot in the chat — see setApprovalStatus,
-    // POST .../feedback, updateTaskText, updateTaskMediaOrder, chat-media)
-    // or by the team explicitly writing TO the client (СООБЩЕНИЕ, see
+    // cabinet — see setApprovalStatus, POST .../feedback, updateTaskText,
+    // updateTaskMediaOrder — none of them tag an actor name) or by the
+    // team explicitly writing TO the client (СООБЩЕНИЕ, see
     // sendClientMessage in index.js — this one DOES carry "(actorName)",
     // same as the internal system markers, but it's deliberately included
     // here since — unlike those — it's meant to reach the client). Every
     // other team-cabinet marker (ТЕКСТ ОБНОВЛЁН, СТАТУС ИЗМЕНЁН, ...) is
     // internal-only and must never appear in this client-facing timeline.
     // `kind` lets both cabinets render this as a chat bubble (actual
-    // written text or an attached file — 'feedback'/'client-msg'/'client-file'
-    // from the client, 'agency' from the team) vs. a plain system line
-    // ('approved'/'correction' — no free text of their own, just the marker).
-    // Longer/more specific markers MUST stay before their prefixes
-    // (СООБЩЕНИЕ КЛИЕНТА before СООБЩЕНИЕ) — regex alternation is ordered.
-    const CLIENT_MARKER_RE = /^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+(ФАЙЛ ОТ КЛИЕНТА|СООБЩЕНИЕ КЛИЕНТА|СОГЛАСОВАНО|ПРАВКИ|ЗАКАЗЧИК|СООБЩЕНИЕ)/;
+    // written text — 'feedback' from the client, 'agency' from the team) vs.
+    // a plain system line ('approved'/'correction' — no free text of their
+    // own, just the marker).
+    const CLIENT_MARKER_RE = /^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+(СОГЛАСОВАНО|ПРАВКИ|ЗАКАЗЧИК|СООБЩЕНИЕ)/;
     const clientComments = comments
       .filter((b) => CLIENT_MARKER_RE.test(String(b.title || '')))
       .map((b) => {
         const title = String(b.title || '');
         const marker = title.match(CLIENT_MARKER_RE)[1];
         const kind =
-          marker === 'СОГЛАСОВАНО'
-            ? 'approved'
-            : marker === 'ПРАВКИ'
-            ? 'feedback'
-            : marker === 'ФАЙЛ ОТ КЛИЕНТА'
-            ? 'client-file'
-            : marker === 'СООБЩЕНИЕ КЛИЕНТА'
-            ? 'client-msg'
-            : marker === 'СООБЩЕНИЕ'
-            ? 'agency'
-            : 'correction';
-        const bodyRe = /^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+[^\n]+\n\n/;
-        const text =
-          kind === 'feedback' || kind === 'agency' || kind === 'client-file' || kind === 'client-msg'
-            ? title.replace(bodyRe, '')
+          marker === 'СОГЛАСОВАНО' ? 'approved' : marker === 'ПРАВКИ' ? 'feedback' : marker === 'СООБЩЕНИЕ' ? 'agency' : 'correction';
+        let text =
+          kind === 'feedback'
+            ? title.replace(/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+ПРАВКИ\n\n/, '')
+            : kind === 'agency'
+            ? title.replace(/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+СООБЩЕНИЕ(?:\s+\([^)]*\))?\n\n/, '')
             : title;
-        return { id: b.id, kind, text, createdAt: b.createAt || 0 };
+        // A written message ('feedback'/'agency') can carry one attached
+        // photo — sent as a plain disk.kontentferma share link on its own
+        // trailing line (see sendClientMessage in index.js), same
+        // convention diskEmbeds.js uses for card-description attachments.
+        // Only treated as an attachment when the link is the LAST thing in
+        // the text, so a link mentioned mid-sentence stays plain text.
+        let imageUrl = null;
+        if (kind === 'feedback' || kind === 'agency') {
+          const links = extractDiskLinks(text);
+          const lastLink = links[links.length - 1];
+          if (lastLink && text.trim().endsWith(lastLink)) {
+            const validated = parseAndValidateShareUrl(lastLink);
+            if (validated) {
+              imageUrl = validated;
+              text = stripDiskLinks(text, [lastLink]);
+            }
+          }
+        }
+        return { id: b.id, kind, text, imageUrl, createdAt: b.createAt || 0 };
       })
       .sort((a, b) => a.createdAt - b.createdAt);
 

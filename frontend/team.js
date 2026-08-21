@@ -67,7 +67,13 @@ let reorderIds = [];
 let dateCalYear = null;
 let dateCalMonth = null;
 const scheduleCache = {}; // 'YYYY-MM' -> {days}, from GET /api/team/schedule
-const teamCommentsCache = {}; // taskId -> [{id,authorId,authorName,text,createdAt}]
+const teamCommentsCache = {}; // taskId -> [{id,authorId,authorName,text,createdAt,imageUrl}]
+// A photo picked/uploaded for the NEXT message in each chat, before Send is
+// pressed — { shareUrl } once the upload finished, or null. Uploaded eagerly
+// on file pick (not on Send) so the compose box can show a preview + let the
+// user remove it before sending, same UX as the Медиа-tab dropzone.
+let pendingTeamImage = null;
+let pendingClientImage = null;
 
 function saveFilters() {
   try { localStorage.setItem(FILTERS_KEY, JSON.stringify(activeStatuses ? [...activeStatuses] : [])); } catch (e) {}
@@ -136,7 +142,6 @@ const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
 const teamFilters = document.getElementById('teamFilters');
-const teamSearch = document.getElementById('teamSearch');
 const taskModal = document.getElementById('taskModal');
 const tmHead = document.getElementById('tmHead');
 const tmTabbar = document.getElementById('tmTabbar');
@@ -249,9 +254,6 @@ function taskRowHtml(task) {
     ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
     : '';
   const displayTitle = stripAiTag(bare);
-  // Короткая форма ID поста (первые 8 символов id карточки) — полный виден
-  // в модалке и копируется оттуда; поиск в списке матчит подстроку полного
-  // ID, так что набранные с чипа символы тоже находят карточку.
   return `<div class="team-task${urgent ? ' urgent' : ''}" data-task-id="${esc(task.id)}">
     <div class="team-task-top">
       <div>
@@ -262,7 +264,6 @@ function taskRowHtml(task) {
     <div class="team-task-bottom">
       <div class="team-task-meta">
         <div class="team-task-status">${statusBadgeHtml(task)}${urgentBadge}</div>
-        <span class="team-task-id" title="ID поста: ${esc(task.id)}">#${esc(String(task.id).slice(0, 8))}</span>
         ${dateBadge}
       </div>
     </div>
@@ -296,23 +297,11 @@ function renderChips() {
 }
 
 function renderTasks() {
-  // Поиск (название / клиент / подстрока ID поста, без учёта регистра)
-  // сужает список ВНУТРИ выбранных статусных чипов — оба фильтра действуют
-  // одновременно. "#" в начале запроса просто отбрасывается: чип на карточке
-  // отображается как "#yoskwj9p", а искать хочется и так, и без решётки.
-  const q = norm((teamSearch && teamSearch.value) || '').replace(/^#/, '');
-  const bySearch = (t) =>
-    !q ||
-    norm(t.title).includes(q) ||
-    norm(t.projectLabel || '').includes(q) ||
-    norm(t.id).includes(q);
-  const visible = currentTasks.filter(bySearch).filter((t) => (activeStatuses ? activeStatuses.has(norm(t.statusLabel)) : true));
+  const visible = activeStatuses
+    ? currentTasks.filter((t) => activeStatuses.has(norm(t.statusLabel)))
+    : currentTasks;
   if (!visible.length) {
-    teamEmpty.textContent = q
-      ? `Ничего не найдено по запросу «${teamSearch.value.trim()}».`
-      : currentTasks.length
-      ? 'Нет задач с выбранными статусами.'
-      : 'На вас пока нет ни одной задачи.';
+    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами.' : 'На вас пока нет ни одной задачи.';
     teamEmpty.hidden = false;
     teamList.innerHTML = '';
     return;
@@ -511,10 +500,6 @@ function renderModalHead(t) {
         <div class="tm-popover" id="tmNetworkPop" hidden>${networkPopHtml(t)}</div>
       </div>
     </div>
-    <button type="button" class="tm-id-chip" data-action="copy-id" data-id="${esc(t.id)}"
-            title="Нажмите, чтобы скопировать ID — по нему файл на диске и поиск в списке">
-      ID: ${esc(t.id)}
-    </button>
   `;
   if (editingTitle) {
     const input = document.getElementById('tmTitleInput');
@@ -598,15 +583,11 @@ async function onToggleDatePop(t) {
 }
 
 // --- Вкладки + аватар ИИ-генератора ---
-// color — «личный» цвет вкладки: им красятся активная кнопка и подложка
-// панели (10%-ный тинт, см. .tm-tab.pane-* / .tm-body.pane-* в team.css).
-// Смысл: внутренний «Чат команды» и внешний «Чат с клиентом» должны быть
-// различимы с первого взгляда, чтобы сообщение для своих не улетело клиенту.
 
 const TABS = [
   { key: 'media', label: 'Медиа' },
   { key: 'text', label: 'Текст' },
-  { key: 'team', label: 'Чат команды' },
+  { key: 'team', label: 'ЧАТ КОМАНДЫ' },
   { key: 'client', label: 'Чат с клиентом' },
   { key: 'preview', label: 'Предпросмотр поста' },
 ];
@@ -614,7 +595,7 @@ const TABS = [
 function renderModalTabbar() {
   tmTabbar.innerHTML = `
     <div class="tm-tabs">
-      ${TABS.map((tb) => `<button type="button" class="tm-tab pane-${tb.key}${activeTab === tb.key ? ' active' : ''}" data-tab="${tb.key}">${tb.label}</button>`).join('')}
+      ${TABS.map((tb) => `<button type="button" class="tm-tab${activeTab === tb.key ? ' active' : ''}" data-tab="${tb.key}">${tb.label}</button>`).join('')}
     </div>
     <button type="button" class="tm-ai-avatar" id="tmAiBtn" title="ИИ-генератор" aria-label="ИИ-генератор">
       <img src="/ai-avatar.png" alt="">
@@ -666,16 +647,22 @@ function attachBoxHtml() {
   // diskUpload.js) — если ключи ещё не настроены на сервере, роут вернёт
   // понятную ошибку "не настроено", а не молча ничего не сделает; поле для
   // вставки уже готовой ссылки остаётся ниже как резервный вариант всегда.
-  return `<div class="tm-dropzone" id="tmDropzone">
-    <div class="tm-dropzone-title">📎 Перетащите файл сюда или нажмите, чтобы выбрать</div>
-    <div class="tm-dropzone-hint">Загрузится на disk.kontentferma — в карточку попадёт только ссылка, не сам файл</div>
-    <input type="file" id="tmFileInput" accept="image/*,video/*">
-  </div>
-  <div class="tm-attach-sep">или вставьте готовую ссылку</div>
-  <div class="tm-attach-box">
-    <div class="tm-attach-row">
+  // Обе части — один визуальный блок (карточка), а не два разрозненных.
+  return `<div class="tm-attach-card">
+    <div class="tm-dropzone" id="tmDropzone">
+      <div class="tm-dropzone-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17a4.5 4.5 0 0 1-.4-8.98A5.5 5.5 0 0 1 17.2 9.5 4 4 0 0 1 17 17H7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 20v-7m0 0-2.6 2.6M12 13l2.6 2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="tm-dropzone-title">Перетащите файл сюда или нажмите, чтобы выбрать</div>
+      <div class="tm-dropzone-hint">Фото или видео — загрузится на disk.kontentferma, в карточку попадёт только ссылка</div>
+      <input type="file" id="tmFileInput" accept="image/*,video/*">
+    </div>
+    <div class="tm-attach-link-row">
+      <span class="tm-attach-link-label">или ссылка</span>
       <input type="text" id="tmAttachInput" placeholder="https://disk.kontentferma.ru/s/...">
-      <button type="button" data-action="attach-link">Добавить</button>
+      <button type="button" class="tm-attach-link-btn" data-action="attach-link" aria-label="Добавить ссылку" title="Добавить ссылку">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
     </div>
   </div>`;
 }
@@ -728,6 +715,25 @@ function renderTextPane(t) {
 
 // --- ЧАТ КОМАНДЫ (внутренний, своя таблица в БД — не карточка Mattermost) ---
 
+// Небольшая картинка-миниатюра внутри сообщения чата (если есть) — клик
+// открывает её на весь экран (см. openLightbox). Общая для обоих чатов.
+function chatMsgImageHtml(imageUrl) {
+  if (!imageUrl) return '';
+  return `<img class="tm-chat-img" src="${esc(imageUrl)}" alt="" loading="lazy" data-action="open-lightbox" data-src="${esc(imageUrl)}">`;
+}
+
+// Превью ещё не отправленной картинки над полем ввода + кнопка убрать —
+// общая для обоих compose-боксов, различаются только data-scope ('team' /
+// 'client') и тем, какая переменная (pendingTeamImage/pendingClientImage)
+// её держит.
+function pendingImageHtml(pending, scope) {
+  if (!pending) return '';
+  return `<div class="tm-chat-pending-img${pending.uploading ? ' uploading' : ''}">
+    ${pending.shareUrl ? `<img src="${esc(pending.shareUrl)}" alt="">` : ''}
+    <button type="button" class="tm-chat-pending-remove" data-action="remove-pending-image" data-scope="${scope}" aria-label="Убрать фото">✕</button>
+  </div>`;
+}
+
 function renderTeamPane(t) {
   const list = teamCommentsCache[t.id];
   if (!list) {
@@ -739,7 +745,8 @@ function renderTeamPane(t) {
           const mine = currentUser && c.authorId === currentUser.id;
           return `<div class="tm-chat-msg${mine ? ' mine' : ''}">
             <div class="tm-chat-msg-author">${esc(c.authorName || 'Команда')}</div>
-            <div class="tm-chat-msg-text">${esc(c.text)}</div>
+            ${c.text ? `<div class="tm-chat-msg-text">${esc(c.text)}</div>` : ''}
+            ${chatMsgImageHtml(c.imageUrl)}
             <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
           </div>`;
         })
@@ -748,8 +755,15 @@ function renderTeamPane(t) {
   return `<div class="tm-chat">
     <div class="tm-chat-list">${items}</div>
     <div class="tm-chat-compose">
-      <textarea id="tmTeamComposeInput" placeholder="Написать команде…"></textarea>
-      <button type="button" class="tm-chat-send" data-action="send-team-comment" aria-label="Отправить">➤</button>
+      ${pendingImageHtml(pendingTeamImage, 'team')}
+      <div class="tm-chat-compose-row">
+        <button type="button" class="tm-chat-attach" data-action="pick-chat-image" data-scope="team" aria-label="Прикрепить фото" title="Прикрепить фото">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <textarea id="tmTeamComposeInput" placeholder="Написать команде…"></textarea>
+        <button type="button" class="tm-chat-send" data-action="send-team-comment" aria-label="Отправить">➤</button>
+      </div>
+      <input type="file" id="tmTeamChatFileInput" data-scope="team" accept="image/*" hidden>
     </div>
   </div>`;
 }
@@ -779,47 +793,23 @@ function formatDateTime(ms) {
   }
 }
 
-// Вложение в чате (скрин клиента или картинка от агентства): маркерный
-// комментарий несёт ссылку на диск отдельной строкой — вынимаем её и рисуем
-// превью через тот же прокси, что и медиа поста; остаток текста — подпись.
-const CHAT_FILE_URL_RE = /https:\/\/disk\.kontentferma\.[a-z]{2,10}\/s\/[A-Za-z0-9]+/i;
-
-function chatMsgAttachment(text) {
-  const urls = String(text || '').match(new RegExp(CHAT_FILE_URL_RE.source, 'gi')) || [];
-  if (!urls.length) return { imgs: '', caption: text };
-  let caption = String(text || '');
-  let imgs = '';
-  for (const url of urls) {
-    caption = caption.split(url).join('');
-    imgs += `<img class="tm-chat-img" src="${esc(mediaFileUrl({ source: 'disk', shareUrl: url }))}" alt="Вложение" loading="lazy">`;
-  }
-  return { imgs, caption: caption.trim() };
-}
-
 function clientCommentHtml(c) {
-  const bubble = (author, bodyHtml) => `<div class="tm-chat-msg">
-      <div class="tm-chat-msg-author">${esc(author)}</div>
-      ${bodyHtml}
+  if (c.kind === 'feedback') {
+    return `<div class="tm-chat-msg">
+      <div class="tm-chat-msg-author">Клиент</div>
+      ${c.text ? `<div class="tm-chat-msg-text">${esc(c.text)}</div>` : ''}
+      ${chatMsgImageHtml(c.imageUrl)}
       <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
     </div>`;
-  // Файл клиента («ФАЙЛ ОТ КЛИЕНТА») — пузырь с превью.
-  if (c.kind === 'client-file') {
-    const { imgs, caption } = chatMsgAttachment(c.text);
-    return bubble('Клиент · файл', `${imgs}${caption ? `<div class="tm-chat-msg-text">${esc(caption)}</div>` : ''}`);
   }
-  if (c.kind === 'feedback' || c.kind === 'client-msg') {
-    const { imgs, caption } = chatMsgAttachment(c.text);
-    return bubble(
-      'Клиент',
-      `${imgs}${caption ? `<div class="tm-chat-msg-text">${esc(caption)}</div>` : ''}`
-    );
-  }
-  // 'agency' — сообщение/картинка от команды отсюда же — «своё» (справа).
+  // 'agency' — сообщение, отправленное командой отсюда же (см. compose box
+  // ниже) — показываем как "своё" сообщение (справа), чат с клиентом
+  // читается в обе стороны, а не только его правки.
   if (c.kind === 'agency') {
-    const { imgs, caption } = chatMsgAttachment(c.text);
     return `<div class="tm-chat-msg mine">
       <div class="tm-chat-msg-author">Агентство</div>
-      ${imgs}${caption ? `<div class="tm-chat-msg-text">${esc(caption)}</div>` : ''}
+      ${c.text ? `<div class="tm-chat-msg-text">${esc(c.text)}</div>` : ''}
+      ${chatMsgImageHtml(c.imageUrl)}
       <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
     </div>`;
   }
@@ -834,16 +824,19 @@ function renderClientPane(t) {
     : `<div class="tm-chat-empty">Переписки пока нет — можно написать клиенту первым.</div>`;
   // В отличие от предыдущей read-only версии — сюда всегда можно написать,
   // независимо от того, оставлял ли клиент что-то сам (реальная переписка
-  // из карточки Mattermost, не только приём его правок). Скрепка — картинка
-  // для клиента: тот же диск SMM/<клиент>/ClientMedia, в чат попадает
-  // превью, в Mattermost — только ссылка (см. /client-media в index.js).
+  // из карточки Mattermost, не только приём его правок).
   return `<div class="tm-chat">
     ${list}
     <div class="tm-chat-compose">
-      <input type="file" accept="image/*" hidden data-client-chat-file="${esc(t.id)}">
-      <button type="button" class="tm-chat-attach" data-action="client-chat-attach" aria-label="Приложить изображение" title="Приложить изображение">📎</button>
-      <textarea id="tmClientComposeInput" placeholder="Написать клиенту…"></textarea>
-      <button type="button" class="tm-chat-send" data-action="send-client-message" aria-label="Отправить">➤</button>
+      ${pendingImageHtml(pendingClientImage, 'client')}
+      <div class="tm-chat-compose-row">
+        <button type="button" class="tm-chat-attach" data-action="pick-chat-image" data-scope="client" aria-label="Прикрепить фото" title="Прикрепить фото">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <textarea id="tmClientComposeInput" placeholder="Написать клиенту…"></textarea>
+        <button type="button" class="tm-chat-send" data-action="send-client-message" aria-label="Отправить">➤</button>
+      </div>
+      <input type="file" id="tmClientChatFileInput" data-scope="client" accept="image/*" hidden>
     </div>
   </div>`;
 }
@@ -874,9 +867,6 @@ function renderModalBody(t) {
   else if (activeTab === 'team') html = renderTeamPane(t);
   else if (activeTab === 'client') html = renderClientPane(t);
   else if (activeTab === 'preview') html = renderPreviewPane(t);
-  // Подложка панели красится в «личный» цвет вкладки (10%-ный тинт) —
-  // мгновенный визуальный маркер, В КАКОЙ чат сейчас пишешь.
-  tmBody.className = `tm-body pane-${activeTab}`;
   tmBody.innerHTML = html;
 }
 
@@ -891,15 +881,6 @@ tmHead.addEventListener('click', async (e) => {
 
   if (action === 'edit-title') { editingTitle = true; renderModalHead(t); return; }
   if (action === 'cancel-title') { editingTitle = false; renderModalHead(t); return; }
-  if (action === 'copy-id') {
-    try {
-      await navigator.clipboard.writeText(btn.dataset.id);
-      toast('ID скопирован');
-    } catch (err) {
-      toast('Не удалось скопировать: ' + err.message);
-    }
-    return;
-  }
   if (action === 'save-title') {
     const input = document.getElementById('tmTitleInput');
     const val = (input.value || '').trim();
@@ -1065,15 +1046,29 @@ tmBody.addEventListener('click', async (e) => {
     }
     return;
   }
+  if (action === 'pick-chat-image') {
+    const inputId = btn.dataset.scope === 'client' ? 'tmClientChatFileInput' : 'tmTeamChatFileInput';
+    const input = document.getElementById(inputId);
+    if (input) input.click();
+    return;
+  }
+  if (action === 'remove-pending-image') {
+    if (btn.dataset.scope === 'client') pendingClientImage = null; else pendingTeamImage = null;
+    renderModalBody(t);
+    return;
+  }
   if (action === 'send-team-comment') {
     const input = document.getElementById('tmTeamComposeInput');
     const text = (input.value || '').trim();
-    if (!text) return;
+    const imageUrl = pendingTeamImage && pendingTeamImage.shareUrl;
+    if (!text && !imageUrl) return;
+    if (pendingTeamImage && pendingTeamImage.uploading) { toast('Фото ещё загружается…'); return; }
     btn.disabled = true;
     try {
-      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/comments`, { method: 'POST', body: { text } });
+      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/comments`, { method: 'POST', body: { text, imageUrl: imageUrl || '' } });
       teamCommentsCache[t.id] = [...(teamCommentsCache[t.id] || []), data.comment];
       input.value = '';
+      pendingTeamImage = null;
       renderModalBody(t);
       const list = document.querySelector('#tmBody .tm-chat-list');
       if (list) flashSaved(list.lastElementChild || list);
@@ -1087,14 +1082,17 @@ tmBody.addEventListener('click', async (e) => {
   if (action === 'send-client-message') {
     const input = document.getElementById('tmClientComposeInput');
     const text = (input.value || '').trim();
-    if (!text) return;
+    const imageUrl = pendingClientImage && pendingClientImage.shareUrl;
+    if (!text && !imageUrl) return;
+    if (pendingClientImage && pendingClientImage.uploading) { toast('Фото ещё загружается…'); return; }
     btn.disabled = true;
     try {
       // Unlike the team chat, clientComments already comes back embedded on
       // the task itself (see taskMapper.js) — applyUpdatedTask alone is
       // enough, no separate cache to update.
-      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/client-message`, { method: 'POST', body: { text } });
+      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/client-message`, { method: 'POST', body: { text, imageUrl: imageUrl || '' } });
       input.value = '';
+      pendingClientImage = null;
       applyUpdatedTask(data.task);
       const list = document.querySelector('#tmBody .tm-chat-list');
       if (list) flashSaved(list.lastElementChild || list);
@@ -1105,42 +1103,16 @@ tmBody.addEventListener('click', async (e) => {
     }
     return;
   }
-  if (action === 'client-chat-attach') {
-    const input = document.querySelector('#tmBody input[data-client-chat-file]');
-    if (input) input.click();
-    return;
-  }
 });
 
-// Картинка для клиента из «Чата с клиентом» — тот же путь, что у клиента
-// (диск SMM/<клиент>/ClientMedia + ссылка в маркерном комментарии), только
-// маркер «СООБЩЕНИЕ (Имя)» — клиент увидит пузырь «Агентство» с превью.
-async function uploadClientChatMedia(t, input) {
-  const file = input.files && input.files[0];
-  if (!file) return;
-  const compose = document.querySelector('#tmBody .tm-chat-compose');
-  const attachBtn = compose && compose.querySelector('.tm-chat-attach');
-  const textarea = document.getElementById('tmClientComposeInput');
-  if (attachBtn) attachBtn.disabled = true;
-  if (textarea) textarea.placeholder = 'Загружаем изображение…';
-  try {
-    // Подпись: то, что сотрудник успел набрать в поле до выбора файла.
-    const form = new FormData();
-    form.append('file', file);
-    if (textarea && textarea.value.trim()) form.append('caption', textarea.value.trim());
-    const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/client-media`, { method: 'POST', body: form });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
-    applyUpdatedTask(data.task);
-    toast('Изображение отправлено клиенту');
-  } catch (err) {
-    if (textarea) textarea.placeholder = 'Написать клиенту…';
-    if (attachBtn) attachBtn.disabled = false;
-    toast('Не удалось прикрепить: ' + err.message);
-  } finally {
-    if (input) input.value = '';
-  }
-}
+// Клик по миниатюре фото в чате — открывает её на весь экран (см.
+// openLightbox ниже). Отдельный слушатель, а не часть делегата кликов по
+// button выше: миниатюра — это <img>, не кнопка.
+tmBody.addEventListener('click', (e) => {
+  const img = e.target.closest('.tm-chat-img');
+  if (!img) return;
+  openLightbox(img.dataset.src || img.src);
+});
 
 // Реальная загрузка файла — перетащить в #tmDropzone или выбрать через
 // скрытый <input type="file"> внутри него (клик по зоне landing прямо на
@@ -1175,26 +1147,62 @@ async function uploadMediaFile(t, file) {
     if (freshZone) {
       freshZone.classList.remove('uploading');
       const freshTitle = freshZone.querySelector('.tm-dropzone-title');
-      if (freshTitle) freshTitle.textContent = '📎 Перетащите файл сюда или нажмите, чтобы выбрать';
+      if (freshTitle) freshTitle.textContent = 'Перетащите файл сюда или нажмите, чтобы выбрать';
     }
   }
 }
 
 tmBody.addEventListener('change', (e) => {
-  const t = currentModalTask();
-  // Картинка для клиента из «Чата с клиентом».
-  const chatInput = e.target.closest('input[data-client-chat-file]');
-  if (chatInput) {
-    if (t) uploadClientChatMedia(t, chatInput);
-    else chatInput.value = '';
+  const fileInput = e.target.closest('#tmFileInput');
+  if (fileInput) {
+    const t = currentModalTask();
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = ''; // позволяет выбрать тот же файл повторно в будущем
+    if (t && file) uploadMediaFile(t, file);
     return;
   }
-  const fileInput = e.target.closest('#tmFileInput');
-  if (!fileInput) return;
-  const file = fileInput.files && fileInput.files[0];
-  fileInput.value = ''; // позволяет выбрать тот же файл повторно в будущем
-  if (t && file) uploadMediaFile(t, file);
+  const chatFileInput = e.target.closest('#tmTeamChatFileInput, #tmClientChatFileInput');
+  if (chatFileInput) {
+    const t = currentModalTask();
+    const file = chatFileInput.files && chatFileInput.files[0];
+    const scope = chatFileInput.dataset.scope;
+    chatFileInput.value = '';
+    if (t && file) uploadChatImage(t, file, scope);
+  }
 });
+
+// Фото для СЛЕДУЮЩЕГО сообщения в чате — грузится сразу при выборе файла
+// (не при нажатии "Отправить"), результат складывается в
+// pendingTeamImage/pendingClientImage и показывается превью над полем
+// ввода; сам текст+ссылка уходят вместе только при отправке (см.
+// send-team-comment/send-client-message ниже).
+async function uploadChatImage(t, file, scope) {
+  const setPending = (v) => { if (scope === 'team') pendingTeamImage = v; else pendingClientImage = v; };
+  setPending({ uploading: true, shareUrl: '' });
+  renderModalBody(t);
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/chat-upload`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setPending(null);
+      toast(
+        data.error === 'disk_upload_not_configured'
+          ? 'Загрузка ещё не настроена на сервере.'
+          : 'Не удалось загрузить фото: ' + (data.message || data.error || 'ошибка')
+      );
+      renderModalBody(t);
+      return;
+    }
+    setPending({ uploading: false, shareUrl: data.shareUrl });
+    renderModalBody(t);
+  } catch (err) {
+    setPending(null);
+    toast('Не удалось загрузить фото: ' + err.message);
+    renderModalBody(t);
+  }
+}
 
 tmBody.addEventListener('dragover', (e) => {
   const zone = e.target.closest('#tmDropzone');
@@ -1219,6 +1227,44 @@ tmBody.addEventListener('drop', (e) => {
   if (t && file) uploadMediaFile(t, file);
 });
 
+// Полноэкранный просмотр фото из чата — маленькая миниатюра в сообщении,
+// по клику "всплывает" до 80% экрана (см. .lightbox img в team.css), фон и
+// крестик закрывают. history.pushState при открытии + popstate — чтобы
+// аппаратная/жестовая кнопка "назад" тоже просто закрывала фото, а не
+// уводила с кабинета (важно на телефоне).
+const lightboxEl = document.getElementById('lightbox');
+const lightboxImgEl = document.getElementById('lightboxImg');
+let lightboxOpenedViaHistory = false;
+
+function openLightbox(url) {
+  if (!lightboxEl || !url) return;
+  lightboxImgEl.src = url;
+  lightboxEl.hidden = false;
+  lightboxOpenedViaHistory = true;
+  history.pushState({ lightbox: true }, '');
+}
+
+function closeLightbox() {
+  if (!lightboxEl || lightboxEl.hidden) return;
+  lightboxEl.hidden = true;
+  lightboxImgEl.src = '';
+  if (lightboxOpenedViaHistory) {
+    lightboxOpenedViaHistory = false;
+    history.back();
+  }
+}
+
+if (lightboxEl) {
+  lightboxEl.querySelector('.lightbox-backdrop').addEventListener('click', closeLightbox);
+  lightboxEl.querySelector('.lightbox-close').addEventListener('click', closeLightbox);
+}
+window.addEventListener('popstate', () => {
+  if (lightboxEl && !lightboxEl.hidden) {
+    lightboxOpenedViaHistory = false; // история уже сдвинулась сама, повторно back() не нужен
+    closeLightbox();
+  }
+});
+
 // Клик вне пилюль/попапов/аватара ИИ закрывает все открытые попапы. Capture
 // phase (3-й аргумент true), а не bubble — намеренно: действия ВНУТРИ
 // попапов (выбор статуса, дата, стрелки календаря вперёд/назад) сами
@@ -1239,7 +1285,9 @@ document.addEventListener('click', (e) => {
 }, true);
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !taskModal.hidden) closeTaskModal();
+  if (e.key !== 'Escape') return;
+  if (lightboxEl && !lightboxEl.hidden) { closeLightbox(); return; }
+  if (!taskModal.hidden) closeTaskModal();
 });
 
 // =================================================================================
@@ -1258,8 +1306,6 @@ teamFilters.addEventListener('click', (e) => {
   saveFilters();
   renderTasks();
 });
-
-teamSearch.addEventListener('input', renderTasks);
 
 teamList.addEventListener('click', (e) => {
   const row = e.target.closest('.team-task');

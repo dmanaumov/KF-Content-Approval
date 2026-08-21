@@ -15,7 +15,7 @@ const db = require('./db');
 async function listComments(boardId, taskId) {
   if (!db.pool) return [];
   const { rows } = await db.pool.query(
-    `SELECT id, author_id, author_name, text, created_at
+    `SELECT id, author_id, author_name, text, image_url, created_at
      FROM task_team_comments
      WHERE board_id = $1 AND task_id = $2
      ORDER BY created_at ASC`,
@@ -24,13 +24,16 @@ async function listComments(boardId, taskId) {
   return rows.map(rowToComment);
 }
 
-async function addComment(boardId, taskId, author, text) {
+// imageUrl: optional disk.kontentferma share link for a photo attached to
+// this message (uploaded via diskUpload.js, see index.js's chat-upload
+// route) — a message can be text-only, image-only, or both.
+async function addComment(boardId, taskId, author, text, imageUrl) {
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `INSERT INTO task_team_comments (board_id, task_id, author_id, author_name, text)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, author_id, author_name, text, created_at`,
-    [boardId, taskId, (author && author.id) || '', (author && author.name) || '', text]
+    `INSERT INTO task_team_comments (board_id, task_id, author_id, author_name, text, image_url)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, author_id, author_name, text, image_url, created_at`,
+    [boardId, taskId, (author && author.id) || '', (author && author.name) || '', text || '', imageUrl || '']
   );
   return rowToComment(rows[0]);
 }
@@ -41,6 +44,7 @@ function rowToComment(r) {
     authorId: r.author_id,
     authorName: r.author_name,
     text: r.text,
+    imageUrl: r.image_url || '',
     createdAt: r.created_at,
   };
 }
