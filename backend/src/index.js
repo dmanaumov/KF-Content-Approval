@@ -939,6 +939,17 @@ app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, async (
 // 502) so the UI can say clearly "not set up yet" instead of "failed", and
 // the manual-link field stays usable as the fallback either way.
 app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req, res) => {
+  // Fail fast BEFORE multer starts buffering the file: otherwise the browser
+  // uploads all 50–80 МБ first and only then gets "не настроено" — выглядит
+  // как долгое "думание" и отказ в конце. Тот же код ошибки, что бросает
+  // diskUpload.uploadAndShare, чтобы UI не различал два пути.
+  if (!config.diskWebdavBaseUrl || !config.diskWebdavUser || !config.diskWebdavPassword) {
+    return res.status(501).json({
+      error: 'disk_upload_not_configured',
+      message:
+        'Загрузка на Диск ещё не настроена — нужны DISK_WEBDAV_URL, DISK_WEBDAV_USER, DISK_WEBDAV_PASSWORD в .env (см. комментарий в config.js). Пока можно прикрепить уже готовую ссылку вручную — поле ниже остаётся доступным.',
+    });
+  }
   teamMediaUpload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
       const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';

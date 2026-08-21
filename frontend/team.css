@@ -119,8 +119,17 @@
 .tm-tabbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex:0 0 auto;position:relative}
 .tm-tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
 .tm-tabs::-webkit-scrollbar{display:none}
+/* Вкладки: у каждой свой «личный» цвет. Активная кнопка красится им, а
+   подложка панели ниже — тем же цветом на ~10% (см. .tm-body.pane-*).
+   Цель — чтобы «Чат команды» (зелёный, внутренний) и «Чат с клиентом»
+   (оранжевый, ВНЕШНИЙ) нельзя было перепутать: сообщение для своих не
+   должно улетать клиенту. */
 .tm-tab{flex:0 0 auto;border:0;background:transparent;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
-.tm-tab.active{background:var(--ink);color:#fff}
+.tm-tab.pane-media.active{background:#EEF1F1;color:#3D4745;box-shadow:inset 0 0 0 1px #C9D2D0}
+.tm-tab.pane-text.active{background:rgba(37,99,235,.10);color:#1D4ED8;box-shadow:inset 0 0 0 1px rgba(37,99,235,.35)}
+.tm-tab.pane-team.active{background:rgba(5,150,105,.14);color:#047857;box-shadow:inset 0 0 0 1px rgba(5,150,105,.45)}
+.tm-tab.pane-client.active{background:rgba(234,88,12,.14);color:#C2410C;box-shadow:inset 0 0 0 1px rgba(234,88,12,.45)}
+.tm-tab.pane-preview.active{background:rgba(124,58,237,.10);color:#6D28D9;box-shadow:inset 0 0 0 1px rgba(124,58,237,.35)}
 .tm-ai-avatar{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:2px solid var(--ai);padding:0;overflow:hidden;box-shadow:0 4px 12px rgba(155,90,246,.28)}
 .tm-ai-avatar img{width:100%;height:100%;object-fit:cover;display:block}
 .tm-ai-pop{position:absolute;top:calc(100% - 4px);right:14px;z-index:6;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 14px 34px rgba(15,25,24,.16);padding:12px;width:250px}
@@ -132,6 +141,13 @@
 
 /* --- Тело: прокручиваемая область с панелями вкладок --- */
 .tm-body{overflow-y:auto;padding:16px 20px 20px;flex:1;min-height:0}
+/* Подложка панели = «личный» цвет вкладки на ~10% (см. комментарий у .tm-tab):
+   зелёная — свои, оранжевая — клиент. */
+.tm-body.pane-media{background:#F7F9F9}
+.tm-body.pane-text{background:rgba(37,99,235,.08)}
+.tm-body.pane-team{background:rgba(5,150,105,.10)}
+.tm-body.pane-client{background:rgba(234,88,12,.10)}
+.tm-body.pane-preview{background:rgba(124,58,237,.07)}
 .tm-pane{display:grid;gap:14px}
 
 /* Медиа */

@@ -598,11 +598,15 @@ async function onToggleDatePop(t) {
 }
 
 // --- Вкладки + аватар ИИ-генератора ---
+// color — «личный» цвет вкладки: им красятся активная кнопка и подложка
+// панели (10%-ный тинт, см. .tm-tab.pane-* / .tm-body.pane-* в team.css).
+// Смысл: внутренний «Чат команды» и внешний «Чат с клиентом» должны быть
+// различимы с первого взгляда, чтобы сообщение для своих не улетело клиенту.
 
 const TABS = [
   { key: 'media', label: 'Медиа' },
   { key: 'text', label: 'Текст' },
-  { key: 'team', label: 'ЧАТ КОМАНДЫ' },
+  { key: 'team', label: 'Чат команды' },
   { key: 'client', label: 'Чат с клиентом' },
   { key: 'preview', label: 'Предпросмотр поста' },
 ];
@@ -610,7 +614,7 @@ const TABS = [
 function renderModalTabbar() {
   tmTabbar.innerHTML = `
     <div class="tm-tabs">
-      ${TABS.map((tb) => `<button type="button" class="tm-tab${activeTab === tb.key ? ' active' : ''}" data-tab="${tb.key}">${tb.label}</button>`).join('')}
+      ${TABS.map((tb) => `<button type="button" class="tm-tab pane-${tb.key}${activeTab === tb.key ? ' active' : ''}" data-tab="${tb.key}">${tb.label}</button>`).join('')}
     </div>
     <button type="button" class="tm-ai-avatar" id="tmAiBtn" title="ИИ-генератор" aria-label="ИИ-генератор">
       <img src="/ai-avatar.png" alt="">
@@ -840,6 +844,9 @@ function renderModalBody(t) {
   else if (activeTab === 'team') html = renderTeamPane(t);
   else if (activeTab === 'client') html = renderClientPane(t);
   else if (activeTab === 'preview') html = renderPreviewPane(t);
+  // Подложка панели красится в «личный» цвет вкладки (10%-ный тинт) —
+  // мгновенный визуальный маркер, В КАКОЙ чат сейчас пишешь.
+  tmBody.className = `tm-body pane-${activeTab}`;
   tmBody.innerHTML = html;
 }
 
