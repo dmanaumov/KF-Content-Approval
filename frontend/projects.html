@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>КФ — Управление SMM-клиентами</title>
-  <link rel="stylesheet" href="/app.css?v=8">
-  <link rel="stylesheet" href="/projects.css?v=5">
+  <link rel="stylesheet" href="/app.css?v=9">
+  <link rel="stylesheet" href="/projects.css?v=6">
 </head>
 <body>
 <div class="page">
@@ -21,8 +21,12 @@
           <div class="staff-head-pill">интерфейс команды</div>
         </div>
         <div class="staff-links">
-          <a class="head-link" href="/stat">Статистика доступа</a>
-          <a id="ceoLink" class="head-link" href="/ceo" hidden>CEO-дашборд</a>
+          <a class="head-icon-link" href="/stat" title="Статистика доступа" aria-label="Статистика доступа">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="10" y="7" width="4" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="16" y="3" width="4" height="17" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          </a>
+          <a id="ceoLink" class="head-icon-link" href="/ceo" title="CEO-дашборд" aria-label="CEO-дашборд" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l4 3 5-6 5 6 4-3-2 9H5L3 8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
+          </a>
         </div>
       </div>
     </header>
