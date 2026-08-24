@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>КФ — Согласование задач</title>
-  <link rel="stylesheet" href="/app.css?v=7">
+  <link rel="stylesheet" href="/app.css?v=8">
 </head>
 <body>
 <div class="page">
@@ -73,6 +73,14 @@
     <h3>Что нужно поправить?</h3>
     <p id="feedbackTitle"></p>
     <textarea id="feedbackText" placeholder="Напишите правки одним сообщением…"></textarea>
+    <div id="feedbackImagePreview" class="fb-image-preview" hidden></div>
+    <div class="fb-attach-row">
+      <button type="button" class="fb-attach-btn" data-action="pick-feedback-image" aria-label="Приложить фото" title="Приложить фото">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Приложить фото</span>
+      </button>
+      <input type="file" id="feedbackFileInput" accept="image/*" hidden>
+    </div>
     <div class="sheet-actions">
       <button class="btn changes" data-action="close-feedback">Отмена</button>
       <button class="btn approve" data-action="send-feedback">Отправить правки</button>
@@ -100,6 +108,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/app.js?v=7"></script>
+<script src="/app.js?v=8"></script>
 </body>
 </html>

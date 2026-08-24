@@ -716,7 +716,14 @@ app.post('/api/team/login', async (req, res) => {
     const sessionId = await teamAuth.createSession(token, user);
     teamAuth.setSessionCookie(res, sessionId);
     analytics.note('team', { actor: user.username || login, actorName: [user.first_name, user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
-    res.json({ user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name }, access: teamAuth.roleFor(user) });
+    const role = teamAuth.roleFor(user);
+    res.json({
+      user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name },
+      // staffProjectsPath only handed to admins — it's meant to stay
+      // unguessable (see config.js's comment on STAFF_PROJECTS_PATH), so
+      // non-admins never even see it in this response.
+      access: { ...role, staffProjectsPath: role.admin ? config.staffProjectsPath : undefined },
+    });
   } catch (err) {
     // Wrong password, unknown user, Mattermost unreachable — all land here.
     // 401 either way; the message (from mm.loginAs, Mattermost's own) is
@@ -737,9 +744,10 @@ app.post('/api/team/logout', (req, res) => {
 // show role-appropriate links (e.g. "Статистика" for those who may view it).
 app.get('/api/team/me', teamAuth.requireTeamAuth, (req, res) => {
   const { user } = req.teamSession;
+  const role = teamAuth.roleFor(user);
   res.json({
     user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name },
-    access: teamAuth.roleFor(user),
+    access: { ...role, staffProjectsPath: role.admin ? config.staffProjectsPath : undefined },
   });
 });
 
@@ -1186,6 +1194,50 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback', async (req, res) => {
     console.error('[api] feedback failed:', err.message);
     res.status(502).json({ error: 'feedback_failed', message: err.message });
   }
+});
+
+// POST /api/boards/:boardId/tasks/:taskId/feedback-image — multipart, field
+// "file". Lets the CLIENT attach a photo to their правки (see the
+// feedbackModal attach button in app.js) — uploads to disk.kontentferma via
+// diskUpload.js (same pipeline as the team cabinet's chat-upload) and hands
+// back the share link only; the frontend appends it as a trailing line to
+// the comment text before POSTing .../feedback below. taskMapper.js's
+// clientComments extraction (kind:'feedback') already knows how to pull a
+// trailing disk link back out as imageUrl — no changes needed there. Public
+// like /feedback itself (same obscured-boardId security model), not gated
+// by teamAuth.
+app.post('/api/boards/:boardId/tasks/:taskId/feedback-image', (req, res) => {
+  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'file_too_large' : 'upload_error',
+        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
+      });
+    }
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    try {
+      const { boardId, taskId } = req.params;
+      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+      const feedbackAuthorUserId = await getFeedbackAuthorId();
+      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, feedbackAuthorUserId });
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return res.status(404).json({ error: 'task_not_found' });
+      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `feedback_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+      const shareUrl = await diskUpload.uploadAndShare({
+        folderName: task.projectLabel || 'Без клиента',
+        filename,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+      });
+      res.json({ shareUrl });
+    } catch (err) {
+      console.error('[api] client feedback image upload failed:', err.message);
+      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
+      res.status(status).json({ error: err.code || 'feedback_image_failed', message: err.message });
+    }
+  });
 });
 
 // POST /api/boards/:boardId/tasks/:taskId/text — body: { text }

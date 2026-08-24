@@ -138,6 +138,7 @@ const loginSubmit = document.getElementById('loginSubmit');
 const loginError = document.getElementById('loginError');
 const teamUserName = document.getElementById('teamUserName');
 const statLink = document.getElementById('statLink');
+const adminLink = document.getElementById('adminLink');
 const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
@@ -157,6 +158,12 @@ function showApp(user, access) {
   teamApp.hidden = false;
   teamUserName.textContent = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Команда';
   statLink.hidden = !(access && access.stat);
+  // Руководители и лидеры — те, чей email в ADMIN_EMAILS (см. config.js) —
+  // видят кнопку «Админка», ведущую на internal-страницу клиентов/проектов.
+  // Путь берём с сервера (access.staffProjectsPath), а не хардкодим /projects
+  // — этот путь специально настраиваемый/неочевидный (STAFF_PROJECTS_PATH).
+  adminLink.hidden = !(access && access.admin);
+  if (access && access.admin) adminLink.href = access.staffProjectsPath || '/projects';
 }
 
 async function login() {

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>КФ — Кабинет команды</title>
-  <link rel="stylesheet" href="/app.css?v=7">
+  <link rel="stylesheet" href="/app.css?v=8">
   <link rel="stylesheet" href="/projects.css?v=5">
-  <link rel="stylesheet" href="/team.css?v=11">
+  <link rel="stylesheet" href="/team.css?v=12">
 </head>
 <body>
 <div class="page">
@@ -39,7 +39,12 @@
           <div class="client-brand">
             <strong id="teamUserName">…</strong>
           </div>
-          <a id="statLink" class="head-link" href="/stat" title="Статистика доступа" aria-label="Статистика доступа" hidden>Статистика</a>
+          <a id="adminLink" class="head-icon-link" href="/projects" title="Админка" aria-label="Админка" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          </a>
+          <a id="statLink" class="head-icon-link" href="/stat" title="Статистика доступа" aria-label="Статистика доступа" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="10" y="7" width="4" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="16" y="3" width="4" height="17" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          </a>
           <button id="logoutBtn" class="cal-toggle" type="button" title="Выйти" aria-label="Выйти">
             <span aria-hidden="true">⎋</span>
           </button>
@@ -72,6 +77,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=11"></script>
+<script src="/team.js?v=12"></script>
 </body>
 </html>

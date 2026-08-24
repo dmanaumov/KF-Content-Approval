@@ -27,6 +27,11 @@ let editingTextTaskId = '';
 let reorderTaskId = ''; // task currently open in the media-order modal, '' = closed
 let reorderIds = []; // working copy of that task's media ids, in the order being edited
 let expandedDialogIds = new Set(); // task ids whose client<->agency dialog is expanded
+// Photo attached to the правки being composed in feedbackModal, before
+// "Отправить правки" is pressed — { uploading: true } while in flight, or
+// { shareUrl } once done, or null. Uploaded eagerly on file pick (see
+// uploadFeedbackImage), same UX as the team cabinet's chat attach.
+let pendingFeedbackImage = null;
 let calYear = null; // calendar view's current year/month (0-indexed month) —
 let calMonth = null; // set lazily to today's month the first time it opens.
 
@@ -292,7 +297,7 @@ function cardHtml(task) {
   } else {
     actions = `<div class="actions">
            <button class="btn approve" ${busy ? 'disabled' : ''} data-action="approve" data-id="${task.id}">Согласовать</button>
-           <button class="btn changes" ${busy ? 'disabled' : ''} data-action="open-feedback" data-id="${task.id}">Есть правки</button>
+           <button class="btn changes" ${busy ? 'disabled' : ''} data-action="open-feedback" data-id="${task.id}">Правки/комментарии</button>
          </div>`;
   }
   const dateBadge = task.publishDate
@@ -794,7 +799,50 @@ function openFeedbackFor(id) {
   const task = state.tasks.find((t) => t.id === id);
   document.getElementById('feedbackTitle').textContent = task ? task.title : '';
   document.getElementById('feedbackText').value = '';
+  pendingFeedbackImage = null;
+  renderFeedbackImagePreview();
   document.getElementById('feedbackModal').classList.add('show');
+}
+
+// Превью прикреплённого к правкам фото — миниатюра + крестик убрать, либо
+// пусто, пока ничего не выбрано. Отдельная маленькая функция (не полный
+// render()), потому что модалка правок не участвует в общем цикле
+// перерисовки карточек.
+function renderFeedbackImagePreview() {
+  const el = document.getElementById('feedbackImagePreview');
+  if (!pendingFeedbackImage) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = `<div class="fb-pending-img${pendingFeedbackImage.uploading ? ' uploading' : ''}">
+    ${pendingFeedbackImage.shareUrl ? `<img src="${esc(pendingFeedbackImage.shareUrl)}" alt="">` : ''}
+    <button type="button" class="fb-pending-remove" data-action="remove-feedback-image" aria-label="Убрать фото">✕</button>
+  </div>`;
+}
+
+async function uploadFeedbackImage(taskId, file) {
+  pendingFeedbackImage = { uploading: true };
+  renderFeedbackImagePreview();
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/boards/${encodeURIComponent(boardId)}/tasks/${encodeURIComponent(taskId)}/feedback-image`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      pendingFeedbackImage = null;
+      toast(
+        data.error === 'disk_upload_not_configured'
+          ? 'Загрузка фото ещё не настроена — опишите правки текстом.'
+          : 'Не удалось загрузить фото: ' + (data.message || data.error || 'ошибка')
+      );
+      renderFeedbackImagePreview();
+      return;
+    }
+    pendingFeedbackImage = { uploading: false, shareUrl: data.shareUrl };
+    renderFeedbackImagePreview();
+  } catch (err) {
+    pendingFeedbackImage = null;
+    toast('Не удалось загрузить фото: ' + err.message);
+    renderFeedbackImagePreview();
+  }
 }
 
 // Tinder-style swipe approval, list view only (the cards in #stack — the
@@ -1049,9 +1097,33 @@ document.querySelector('[data-action="close-feedback"]').addEventListener('click
 
 document.querySelector('[data-action="send-feedback"]').addEventListener('click', () => {
   const text = document.getElementById('feedbackText').value.trim();
-  if (!text) { toast('Напишите комментарий'); return; }
+  const imageUrl = pendingFeedbackImage && pendingFeedbackImage.shareUrl;
+  if (!text && !imageUrl) { toast('Напишите комментарий или приложите фото'); return; }
+  if (pendingFeedbackImage && pendingFeedbackImage.uploading) { toast('Фото ещё загружается…'); return; }
   document.getElementById('feedbackModal').classList.remove('show');
-  sendFeedback(feedbackTaskId, text);
+  // Ссылка на фото уходит последней строкой того же текста — тот же
+  // формат, что уже понимает taskMapper.js на бэкенде (см. imageUrl в
+  // clientComments), плюс сама СОГЛАСОВАНО/ПРАВКИ-обработка ничего не
+  // теряет: карточка Mattermost получает и текст, и ссылку одним комментом.
+  const comment = imageUrl ? `${text}${text ? '\n' : ''}${imageUrl}` : text;
+  sendFeedback(feedbackTaskId, comment);
+});
+
+document.querySelector('[data-action="pick-feedback-image"]').addEventListener('click', () => {
+  document.getElementById('feedbackFileInput').click();
+});
+
+document.getElementById('feedbackFileInput').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (file && feedbackTaskId) uploadFeedbackImage(feedbackTaskId, file);
+});
+
+document.getElementById('feedbackImagePreview').addEventListener('click', (e) => {
+  if (e.target.closest('[data-action="remove-feedback-image"]')) {
+    pendingFeedbackImage = null;
+    renderFeedbackImagePreview();
+  }
 });
 
 document.getElementById('attention').addEventListener('click', (e) => {
