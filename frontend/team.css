@@ -231,3 +231,78 @@
 .tm-attach-link-row input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .tm-attach-link-btn{flex:0 0 auto;width:34px;height:34px;border:0;border-radius:10px;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer}
 .tm-attach-link-btn svg{width:16px;height:16px;display:block}
+
+/* --- «Запланировать публикацию» — плавающая кнопка + модалка создания ---
+   Единственное действие в этом кабинете, которое заводит НОВУЮ карточку
+   (а не редактирует существующую, как всё остальное здесь) — поэтому
+   намеренно самое заметное: акцентный градиент + мягкое дыхание тени,
+   вместо ещё одной серой пилюли рядом со статусом/датой. --spark (жёлтый)
+   до этого нигде не был подключён (см. app.css) — здесь он наконец
+   используется, тёплым отсветом внутри градиента и в пульсе тени. */
+.fab-create{
+  position:fixed;
+  right:16px;
+  bottom:calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index:40;
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  border:0;
+  border-radius:999px;
+  padding:15px 22px 15px 15px;
+  background:linear-gradient(120deg, var(--kf-green) 0%, #0E8477 60%, #E8B23A 145%);
+  color:#fff;
+  font-size:13.5px;
+  font-weight:850;
+  letter-spacing:.005em;
+  white-space:nowrap;
+  cursor:pointer;
+  box-shadow:0 12px 28px rgba(0,70,67,.32), 0 3px 10px rgba(0,70,67,.22);
+  animation:fab-breathe 3.4s ease-in-out infinite;
+  transition:transform .18s ease, box-shadow .18s ease;
+}
+.fab-create:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 16px 34px rgba(0,70,67,.38), 0 4px 12px rgba(0,70,67,.26)}
+.fab-create:active{transform:translateY(0) scale(.97)}
+.fab-create-icon{
+  flex:0 0 auto;
+  display:inline-flex;align-items:center;justify-content:center;
+  width:24px;height:24px;border-radius:50%;
+  background:rgba(255,255,255,.24);
+  font-size:17px;line-height:1;font-weight:900;
+}
+@keyframes fab-breathe{
+  0%,100%{box-shadow:0 12px 28px rgba(0,70,67,.32), 0 3px 10px rgba(0,70,67,.22), 0 0 0 0 rgba(246,233,90,0)}
+  50%{box-shadow:0 12px 28px rgba(0,70,67,.32), 0 3px 10px rgba(0,70,67,.22), 0 0 0 7px rgba(246,233,90,.16)}
+}
+@media (max-width:480px){
+  .fab-create-label{display:none}
+  .fab-create{padding:15px;gap:0}
+}
+
+.create-card{max-width:520px}
+.create-body{padding:22px 22px calc(22px + env(safe-area-inset-bottom, 0px))}
+.create-head{text-align:center;margin-bottom:18px}
+.create-head-icon{width:52px;height:52px;margin:0 auto 10px;border-radius:16px;background:linear-gradient(135deg, #EAF3F1, #FBF3D9);display:grid;place-items:center;font-size:24px}
+.create-title{margin:0 0 6px;font-size:19px;font-weight:850;letter-spacing:-.01em}
+.create-subtitle{margin:0;font-size:12.5px;color:var(--muted);line-height:1.5}
+.create-form{display:flex;flex-direction:column}
+.create-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.create-optional{text-transform:none;font-weight:600;color:var(--muted);letter-spacing:0}
+.create-form textarea{margin-top:2px;min-height:90px}
+.create-form .error-box{margin-top:14px;padding:11px 14px;font-size:12px}
+.fab-create-submit{
+  width:100%;
+  margin-top:18px;
+  border:0;
+  border-radius:14px;
+  padding:15px 12px;
+  font-size:14px;
+  font-weight:850;
+  color:#fff;
+  cursor:pointer;
+  background:linear-gradient(120deg, var(--kf-green) 0%, #0E8477 65%, #E8B23A 150%);
+  box-shadow:0 10px 22px rgba(0,70,67,.28);
+  transition:transform .15s ease, box-shadow .15s ease;
+}
+.fab-create-submit:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(0,70,67,.34)}
+.fab-create-submit:disabled{opacity:.6;cursor:default;transform:none;box-shadow:none}

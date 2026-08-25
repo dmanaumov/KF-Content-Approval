@@ -940,6 +940,67 @@ function teamActorName(req) {
   return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'команда';
 }
 
+// GET /api/team/projects — every "Проект" option (id+label), NOTHING else —
+// powers the project dropdown in the "Запланировать публикацию" create-post
+// form (frontend/team.js). Deliberately minimal compared to
+// GET /api/automation/projects: no projectSettings enrichment (publish time,
+// posts/month, manager, start date) and definitely no social_credentials —
+// the team cabinet only ever needs to know which projects exist and what to
+// call them in a <select>.
+app.get('/api/team/projects', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    if (!projectProp) {
+      return res.status(500).json({
+        error: 'project_property_not_found',
+        message: `Свойство "${config.projectPropertyName}" не найдено на борде.`,
+      });
+    }
+    const projects = (projectProp.options || []).map((o) => ({ id: o.id, label: o.value }));
+    res.json({ projects });
+  } catch (err) {
+    console.error('[api] team projects failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// POST /api/team/tasks — body: { title, network?, projectId, text?,
+// publishDate?, status?, media?: string[] }. This is the "Запланировать
+// публикацию" button in the team cabinet — creates a brand-new card from
+// scratch (the team member didn't have a post yet, unlike every other
+// /api/team/tasks/:taskId/* route above/below, which all edit an EXISTING
+// one). Reuses createAutomationTask's Mattermost Blocks-API plumbing
+// (confirmed live 2026-08-25, see its own comment for the id-reassignment
+// gotcha it already works around) with two team-specific differences:
+//   1. assigneeUserId is ALWAYS the creating team member — without this the
+//      new card would silently never show up in their own cabinet, since
+//      GET /api/team/tasks filters strictly by assigneeId === the logged-in
+//      user's id (see that route above). A card created here with no
+//      assignee would exist in Mattermost but look, from the team member's
+//      own screen, like nothing happened.
+//   2. actorLabel is the real team member's name (teamActorName), not
+//      AUTOMATION_ACTOR — so the audit comment on the new card reads
+//      "КАРТОЧКА СОЗДАНА (Имя Фамилия)", consistent with every other
+//      audit comment this cabinet leaves (status/media/text changes, etc.).
+app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const task = await createAutomationTask(boardId, {
+      ...(req.body || {}),
+      assigneeUserId: req.teamSession.user.id,
+      actorLabel: teamActorName(req),
+    });
+    res.status(201).json({ task });
+  } catch (err) {
+    console.error('[api] team create task failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
+  }
+});
+
 // POST /api/team/tasks/:taskId/status — body: { status: <raw label> }.
 // Unlike setApprovalStatus (client-facing, only the 5 statusOptionLabels
 // keys), this accepts ANY option on the "Статус" property — a team member
@@ -1961,21 +2022,30 @@ async function publishAutomationTask(boardId, taskId, url) {
 
 // Creates a brand-new task card — for content-generation automations that
 // produce the post from scratch, as opposed to attaching media to a card
-// staff already created (addTeamMediaLink above covers that case).
-// UNCONFIRMED against the live server — this app has never created a card
-// itself before now; every other write here PATCHes or comments on an
-// EXISTING one. This mirrors the base Block model already CONFIRMED to work
-// for text/comment child blocks (addCardComment/addBlocks above) by analogy:
-// a card is the same Block shape with type:'card', its property values under
-// fields.properties. Test with ONE card by hand (or one real n8n run,
-// watched) before trusting this in an unattended loop — if the shape is
-// wrong somewhere, refetchTeamTask below will fail to find the card and this
-// throws a clear error rather than reporting false success.
+// staff already created (addTeamMediaLink above covers that case). Also the
+// engine behind the team cabinet's "Запланировать публикацию" button (see
+// POST /api/team/tasks above), which passes assigneeUserId/actorLabel —
+// everything else about card creation is identical between the two callers.
+// CONFIRMED against the live server 2026-08-25 (see the id-reassignment
+// comment further down — Mattermost Boards doesn't honor client-supplied
+// block ids, this already works around that).
+//
+// opts.assigneeUserId (optional, Mattermost user id): if given, sets the
+// "Исполнитель" property to this user — the ONLY caller that needs this
+// today is POST /api/team/tasks, which always passes the creating team
+// member's own id (otherwise the new card wouldn't show up in THEIR OWN
+// "my tasks" list — see that route's comment). Automation callers never
+// pass this; a card created without it just has no assignee, same as
+// before this parameter existed.
+// opts.actorLabel (optional, defaults to AUTOMATION_ACTOR): whose name goes
+// in the "КАРТОЧКА СОЗДАНА (...)" audit comment — the real team member's
+// name for team-created cards, AUTOMATION_ACTOR for everything else.
 async function createAutomationTask(boardId, opts) {
   const { board } = await loadBoard(boardId, { fresh: true });
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
+  const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
 
   const title = String(opts.title || '').trim();
   if (!title) throw badRequest('title_required', 'title обязателен.');
@@ -2031,6 +2101,14 @@ async function createAutomationTask(boardId, opts) {
   properties[projectProp.id] = projectId;
   if (statusOptionId) properties[approvalProp.id] = statusOptionId;
   if (publishDateValue) properties[publishDateProp.id] = publishDateValue;
+  // Best-effort: an automation caller never sends assigneeUserId, and even
+  // for a team-cabinet caller a misconfigured/renamed "Исполнитель" property
+  // shouldn't block card creation outright — the card just comes back
+  // unassigned (team member won't see it in "my tasks" until fixed, but
+  // nothing is lost/duplicated, and every other property still gets set).
+  if (opts.assigneeUserId && assigneeProp) {
+    properties[assigneeProp.id] = String(opts.assigneeUserId);
+  }
 
   const fullTitle = network ? `${network}: ${title}` : title;
 
@@ -2084,7 +2162,7 @@ async function createAutomationTask(boardId, opts) {
   }
   const actualCardId = createdCard.id;
 
-  await mm.addCardComment(boardId, actualCardId, `${formatMoscowTimestamp()} КАРТОЧКА СОЗДАНА (${AUTOMATION_ACTOR})`);
+  await mm.addCardComment(boardId, actualCardId, `${formatMoscowTimestamp()} КАРТОЧКА СОЗДАНА (${opts.actorLabel || AUTOMATION_ACTOR})`);
   invalidate(boardId);
 
   // Small retry margin kept as a safety net for genuine read-after-write

@@ -56,6 +56,7 @@ let statusOptions = []; // [{id,label}] — every raw "Статус" option, fro
 let keywordsPropertyFound = false;
 let boardId = null; // only needed to build /api/files/:boardId/:fileId src urls — see loadTasks()
 let currentUser = null;
+let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
 const FILTERS_KEY = 'kf.team.filters.v1';
 
 // --- Модалка карточки: состояние открытой карточки ---
@@ -147,6 +148,17 @@ const taskModal = document.getElementById('taskModal');
 const tmHead = document.getElementById('tmHead');
 const tmTabbar = document.getElementById('tmTabbar');
 const tmBody = document.getElementById('tmBody');
+const fabCreate = document.getElementById('fabCreate');
+const createModal = document.getElementById('createModal');
+const createForm = document.getElementById('createForm');
+const cfTitle = document.getElementById('cfTitle');
+const cfProject = document.getElementById('cfProject');
+const cfNetwork = document.getElementById('cfNetwork');
+const cfDate = document.getElementById('cfDate');
+const cfStatus = document.getElementById('cfStatus');
+const cfText = document.getElementById('cfText');
+const createError = document.getElementById('createError');
+const cfSubmit = document.getElementById('cfSubmit');
 
 function showLogin() {
   loginApp.hidden = false;
@@ -385,6 +397,117 @@ function openTaskModal(taskId) {
 function closeTaskModal() {
   taskModal.hidden = true;
   modalTaskId = null;
+}
+
+// --- «Запланировать публикацию» — создание НОВОЙ карточки с нуля ---
+// (см. POST /api/team/tasks в backend/src/index.js). Единственное место в
+// этом кабинете, где карточки ещё не существует — везде остальном (медиа,
+// текст, статус/дата/сеть, чаты) речь об уже существующей.
+
+// "ЗАПЛАНИРОВАНО" — реальная опция на свойстве "Статус" этого борда,
+// отдельная от 5 клиентских статусов (см. GRAY_STATUSES выше) — то, что
+// команда сама называет "запланировано" в своём внутреннем пайплайне.
+// Подставляется по умолчанию в форму, если такая опция вообще есть на
+// борде; если нет (переименовали/убрали) — просто первая опция в списке,
+// форма всё равно рабочая, просто без "умного" дефолта.
+const DEFAULT_CREATE_STATUS_LABEL = 'ЗАПЛАНИРОВАНО';
+
+function populateNetworkSelect() {
+  cfNetwork.innerHTML = '<option value="">Не выбрана</option>' +
+    Object.entries(SOCIAL_MAP).map(([key, s]) => `<option value="${esc(key)}">${esc(s.label)}</option>`).join('');
+}
+
+function populateStatusSelect() {
+  if (!statusOptions.length) {
+    cfStatus.innerHTML = '<option value="">(нет опций статуса на борде)</option>';
+    return;
+  }
+  cfStatus.innerHTML = statusOptions.map((o) => `<option value="${esc(o.label)}">${esc(o.label)}</option>`).join('');
+  const preferred = statusOptions.find((o) => norm(o.label) === norm(DEFAULT_CREATE_STATUS_LABEL));
+  cfStatus.value = preferred ? preferred.label : statusOptions[0].label;
+}
+
+async function populateProjectSelect() {
+  if (!teamProjects) {
+    try {
+      const data = await teamApi('/projects');
+      teamProjects = data.projects || [];
+    } catch (err) {
+      cfProject.innerHTML = '<option value="" disabled selected>Не удалось загрузить проекты</option>';
+      toast('Не удалось загрузить список проектов: ' + err.message);
+      return;
+    }
+  }
+  if (!teamProjects.length) {
+    cfProject.innerHTML = '<option value="" disabled selected>Нет ни одного проекта на борде</option>';
+    return;
+  }
+  cfProject.innerHTML = '<option value="" disabled selected>Выберите проект…</option>' +
+    teamProjects.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+}
+
+function todayIsoDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function openCreateModal() {
+  createForm.reset();
+  createError.hidden = true;
+  cfDate.min = todayIsoDate();
+  cfDate.value = '';
+  populateNetworkSelect();
+  populateStatusSelect();
+  populateProjectSelect(); // async — fine, form is usable the moment it resolves
+  createModal.hidden = false;
+  // Чуть отложенный фокус — модалка ещё доигрывает открытие (см. tm-modal),
+  // мгновенный focus() на некоторых мобильных браузерах дёргает раскладку.
+  setTimeout(() => cfTitle.focus(), 60);
+}
+
+function closeCreateModal() {
+  createModal.hidden = true;
+}
+
+async function submitCreateForm(e) {
+  e.preventDefault();
+  createError.hidden = true;
+  const title = cfTitle.value.trim();
+  const projectId = cfProject.value;
+  const date = cfDate.value;
+  if (!title || !projectId || !date) {
+    createError.textContent = 'Заполните заголовок, проект и дату публикации.';
+    createError.hidden = false;
+    return;
+  }
+  cfSubmit.disabled = true;
+  const originalLabel = cfSubmit.innerHTML;
+  cfSubmit.innerHTML = 'Планируем…';
+  try {
+    const data = await teamApi('/tasks', {
+      method: 'POST',
+      body: {
+        title,
+        projectId,
+        network: cfNetwork.value || undefined,
+        publishDate: date,
+        status: cfStatus.value || undefined,
+        text: cfText.value.trim() || undefined,
+      },
+    });
+    applyUpdatedTask(data.task);
+    closeCreateModal();
+    toast('Публикация запланирована на ' + date.split('-').reverse().join('.'));
+    // Сразу открываем свежесозданную карточку — обычно после «запланировать»
+    // логично сразу докинуть медиа/текст, а не искать её в списке заново.
+    openTaskModal(data.task.id);
+  } catch (err) {
+    createError.textContent = err.message;
+    createError.hidden = false;
+  } finally {
+    cfSubmit.disabled = false;
+    cfSubmit.innerHTML = originalLabel;
+  }
 }
 
 function closeAllPopovers() {
@@ -1294,6 +1417,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (lightboxEl && !lightboxEl.hidden) { closeLightbox(); return; }
+  if (!createModal.hidden) { closeCreateModal(); return; }
   if (!taskModal.hidden) closeTaskModal();
 });
 
@@ -1335,5 +1459,10 @@ teamList.addEventListener('click', (e) => {
 // close — a dedicated button/element, not a wrapper-level inference.
 document.querySelector('#taskModal .tm-backdrop').addEventListener('click', closeTaskModal);
 document.getElementById('tmClose').addEventListener('click', closeTaskModal);
+
+fabCreate.addEventListener('click', openCreateModal);
+document.querySelector('#createModal .tm-backdrop').addEventListener('click', closeCreateModal);
+document.getElementById('createClose').addEventListener('click', closeCreateModal);
+createForm.addEventListener('submit', submitCreateForm);
 
 init();

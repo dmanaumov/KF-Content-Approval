@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=9">
   <link rel="stylesheet" href="/projects.css?v=6">
-  <link rel="stylesheet" href="/team.css?v=13">
+  <link rel="stylesheet" href="/team.css?v=14">
 </head>
 <body>
 <div class="page">
@@ -59,6 +59,66 @@
     <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
     <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
     <main id="teamList" class="team-list"></main>
+
+    <button id="fabCreate" class="fab-create" type="button" aria-label="Запланировать публикацию">
+      <span class="fab-create-icon" aria-hidden="true">+</span>
+      <span class="fab-create-label">Запланировать публикацию</span>
+    </button>
+  </div>
+</div>
+
+<div id="createModal" class="tm-modal" hidden>
+  <div class="tm-backdrop"></div>
+  <div class="tm-card create-card">
+    <button id="createClose" class="tm-close" type="button" aria-label="Закрыть">✕</button>
+    <div class="create-body">
+      <div class="create-head">
+        <div class="create-head-icon" aria-hidden="true">🗓️</div>
+        <h2 class="create-title">Запланировать публикацию</h2>
+        <p class="create-subtitle">Новая карточка появится у вас в списке задач сразу после сохранения.</p>
+      </div>
+      <form id="createForm" class="create-form" novalidate>
+        <label class="field-label" for="cfTitle">Заголовок поста</label>
+        <input id="cfTitle" class="field-input" type="text" placeholder="Например: анонс акции" required maxlength="200">
+
+        <div class="create-row">
+          <div>
+            <label class="field-label" for="cfProject">Проект</label>
+            <select id="cfProject" class="field-input" required>
+              <option value="" disabled selected>Загружаем…</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="cfNetwork">Соцсеть</label>
+            <select id="cfNetwork" class="field-input">
+              <option value="">Не выбрана</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="create-row">
+          <div>
+            <label class="field-label" for="cfDate">Дата публикации</label>
+            <input id="cfDate" class="field-input" type="date" required>
+          </div>
+          <div>
+            <label class="field-label" for="cfStatus">Статус</label>
+            <select id="cfStatus" class="field-input">
+              <option value="" disabled selected>Загружаем…</option>
+            </select>
+          </div>
+        </div>
+
+        <label class="field-label" for="cfText">Текст поста <span class="create-optional">(необязательно, можно дописать позже)</span></label>
+        <textarea id="cfText" class="tm-textarea" placeholder="Можно оставить пустым и дописать позже прямо в карточке"></textarea>
+
+        <div id="createError" class="error-box" hidden></div>
+
+        <button id="cfSubmit" type="submit" class="fab-create-submit">
+          <span aria-hidden="true">＋</span> Запланировать публикацию
+        </button>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -80,6 +140,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=12"></script>
+<script src="/team.js?v=13"></script>
 </body>
 </html>
