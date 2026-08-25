@@ -128,6 +128,19 @@ module.exports = {
   // convention the team asked for — sub-folder per client is created lazily
   // (MKCOL) on first upload for that project, not pre-provisioned.
   diskUploadRootPath: (process.env.DISK_UPLOAD_ROOT_PATH || 'SMM').replace(/^\/+|\/+$/g, ''),
+  // Separate, longer timeout for WebDAV/OCS calls to disk.kontentferma
+  // (diskUpload.js) — kept apart from requestTimeoutMs (Mattermost API calls)
+  // because an upload is a genuinely heavier operation (MKCOL + PUT + share,
+  // three sequential round trips) and, under a burst of several concurrent
+  // uploads from n8n, Nextcloud can legitimately take longer to answer than
+  // a lightweight Mattermost call would. Found via a real incident
+  // (2026-08-25): n8n fired ~30 media-upload calls for 7 cards within 1.5s,
+  // and several individual WebDAV calls exceeded the shared 15s timeout and
+  // got aborted (node-fetch's "The user aborted a request." error) — see
+  // also the media-upload concurrency limiter in index.js, which addresses
+  // the same incident from the other side (don't let that many uploads hit
+  // Nextcloud at once in the first place).
+  diskWebdavTimeoutMs: parseInt(process.env.DISK_WEBDAV_TIMEOUT_MS || '30000', 10),
 
   // Prints raw Mattermost block/property JSON to the server log — turn this
   // on while calibrating taskMapper.js against your real board.

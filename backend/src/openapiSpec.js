@@ -253,6 +253,34 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/tasks/{taskId}/media-import': {
+        post: {
+          summary: 'Сервер сам скачивает файл по внешней ссылке и заливает на disk.kontentferma — без multipart',
+          description:
+            'Альтернатива media-upload: вместо того чтобы n8n сам скачивал байты и слал multipart/form-data, ' +
+            'достаточно прислать { url } обычным JSON — сервер скачает файл сам и приложит его к карточке ' +
+            'точно так же, как media-upload. ОГРАНИЧЕНИЕ: это простой неавторизованный GET — если по ссылке ' +
+            'файл доступен только залогиненной сессии/с cookies/по токену, сервер его скачать не сможет и ' +
+            'вернёт 502 media_fetch_failed с upstreamStatus 401/403 — в этом случае нужен media-upload, а не ' +
+            'media-import. При любой ошибке (таймаут 504, 4xx/5xx от источника, файл слишком большой 413) ' +
+            'ничего не пишется на диск и ничего не прикрепляется к карточке — повторный вызов безопасен.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['url'], properties: { url: { type: 'string', description: 'Публичная http(s) ссылка на файл (например, прямая CDN-ссылка)' } } } } },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'url отсутствует или некорректен', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            404: { description: 'Карточка не найдена' },
+            413: { description: 'Файл больше 80 МБ' },
+            502: { description: 'Источник не отдал файл — см. upstreamStatus (401/403 = нужна авторизованная сессия, используйте media-upload)' },
+            504: { description: 'Источник не ответил за 20 секунд' },
+          },
+        },
+      },
       '/api/automation/tasks/{taskId}/media-order': {
         post: {
           summary: 'Задать порядок показа медиа',

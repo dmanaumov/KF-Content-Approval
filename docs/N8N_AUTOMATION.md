@@ -50,9 +50,40 @@ POST /api/automation/tasks                         — создать карто
                                                        media?: [url,...]}
 POST /api/automation/tasks/{taskId}/media-link      — прикрепить готовую ссылку
                                                       disk.kontentferma {url}
+                                                      (ТОЛЬКО уже существующую
+                                                      ссылку вида disk.kontentferma/s/...
+                                                      — сервер НИЧЕГО не скачивает
+                                                      по этому методу, это просто
+                                                      "запиши эту ссылку в карточку")
 POST /api/automation/tasks/{taskId}/media-upload     — загрузить файл напрямую
                                                       (multipart, поле "file")
                                                       — нужен DISK_WEBDAV_* в Dokploy
+POST /api/automation/tasks/{taskId}/media-import     — НОВОЕ: сервер САМ скачивает
+                                                      файл по внешней ссылке (напр.
+                                                      прямая CDN-ссылка Instagram) и
+                                                      заливает на disk.kontentferma —
+                                                      {url}, обычный JSON, без
+                                                      multipart вообще. Используйте
+                                                      это вместо media-upload, если
+                                                      проблема именно в сборке
+                                                      multipart/form-data на стороне
+                                                      n8n (see ниже про баг с
+                                                      httpRequest+formData).
+                                                      ОГРАНИЧЕНИЕ: это простой
+                                                      неавторизованный GET — если
+                                                      ссылка требует залогиненной
+                                                      сессии/cookies/токена, сервер
+                                                      её скачать не сможет и вернёт
+                                                      502 media_fetch_failed с
+                                                      upstreamStatus: 401/403 — тогда
+                                                      нужен media-upload, а не
+                                                      media-import, для этой ссылки.
+                                                      При ЛЮБОЙ ошибке (таймаут 20с,
+                                                      4xx/5xx источника, файл больше
+                                                      80 МБ) ничего не пишется на
+                                                      диск и не прикрепляется к
+                                                      карточке — повторный вызов
+                                                      всегда безопасен
 POST /api/automation/tasks/{taskId}/media-order      — задать порядок показа
                                                       медиа {order: [id, ...]}
 POST /api/automation/tasks/{taskId}/publish          — отметить «Опубликовано»

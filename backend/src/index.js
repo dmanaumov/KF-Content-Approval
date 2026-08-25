@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const fetch = require('node-fetch');
 const multer = require('multer');
 const config = require('./config');
 const mm = require('./mattermostClient');
@@ -333,6 +334,50 @@ function badRequest(code, message) {
   err.httpStatus = 400;
   return err;
 }
+
+// Concurrency limiter for the two automation routes that push bytes to
+// disk.kontentferma (media-upload, media-import) — added after a real
+// incident (2026-08-25): n8n fired ~30 media-upload calls for only 7 cards
+// within 1.5 seconds (looks like a retry/loop bug on the n8n side, worth
+// fixing there too), and each upload is 2-3 sequential WebDAV/OCS round
+// trips to Nextcloud — so that burst meant 40-90 simultaneous requests
+// hitting disk.kontentferma at once, slow enough that several individual
+// calls exceeded the timeout and got aborted (502 media_upload_failed).
+// Regardless of what triggers a burst on the caller's side, OUR server
+// shouldn't fail requests just because several arrived close together — so
+// this queues anything beyond MEDIA_UPLOAD_MAX_CONCURRENT and runs it as
+// soon as a slot frees up, instead of letting them all hit Nextcloud at
+// once. Callers simply wait a little longer under a burst; nothing about
+// the API's shape or response changes.
+const MEDIA_UPLOAD_MAX_CONCURRENT = 4;
+function createLimiter(maxConcurrent) {
+  let active = 0;
+  const queue = [];
+  function runNext() {
+    if (active >= maxConcurrent || queue.length === 0) return;
+    active++;
+    const { fn, resolve, reject } = queue.shift();
+    fn().then(
+      (value) => {
+        active--;
+        resolve(value);
+        runNext();
+      },
+      (err) => {
+        active--;
+        reject(err);
+        runNext();
+      }
+    );
+  }
+  return function withLimit(fn) {
+    return new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject });
+      runNext();
+    });
+  };
+}
+const mediaUploadLimiter = createLimiter(MEDIA_UPLOAD_MAX_CONCURRENT);
 
 // "Бусинки" on the staff project card — one bead per post planned THIS month
 // (same Moscow-current-month set as computeScheduleStatus above, so the KPI
@@ -2089,28 +2134,225 @@ app.post('/api/automation/tasks/:taskId/media-upload', requireAutomationAuth, (r
     if (!boardId) return;
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     try {
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === req.params.taskId);
-      if (!task) return res.status(404).json({ error: 'task_not_found' });
-      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
-      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
-      const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
-      const shareUrl = await diskUpload.uploadAndShare({
-        folderName: task.projectLabel || 'Без клиента',
-        filename,
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
+      // Queued behind mediaUploadLimiter — see its definition above for why
+      // (n8n bursts, Nextcloud under concurrent load).
+      await mediaUploadLimiter(async () => {
+        const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+        const feedbackAuthorUserId = await getFeedbackAuthorId();
+        const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+        const task = tasks.find((t) => t.id === req.params.taskId);
+        if (!task) {
+          res.status(404).json({ error: 'task_not_found' });
+          return;
+        }
+        const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+        const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+        const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+        const shareUrl = await diskUpload.uploadAndShare({
+          folderName: task.projectLabel || 'Без клиента',
+          filename,
+          buffer: req.file.buffer,
+          mimeType: req.file.mimetype,
+        });
+        const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, AUTOMATION_ACTOR);
+        res.json({ task: updated });
       });
-      const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, AUTOMATION_ACTOR);
-      res.json({ task: updated });
     } catch (err) {
       console.error('[api] automation media upload failed:', err.message);
       const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
       res.status(status).json({ error: err.code || 'media_upload_failed', message: err.message });
     }
   });
+});
+
+// Server-side fetch backing POST /api/automation/tasks/:taskId/media-import
+// (below). Downloads an arbitrary external URL (e.g. a CDN link an n8n flow
+// received from the social network) and returns its bytes so the route can
+// push them into disk.kontentferma exactly like a manual media-upload would.
+// This exists so n8n never has to construct multipart/form-data itself — it
+// sends { url } as plain JSON and the SERVER does the downloading instead.
+//
+// IMPORTANT LIMITATION — this is a plain, unauthenticated HTTP(S) GET. It
+// works for genuinely public URLs (e.g. a signed/expiring CDN link) but
+// CANNOT fetch anything that requires a logged-in session, cookies, or a
+// bearer token that only n8n/the client holds — there is no way for this
+// server to present those credentials on the source's behalf. If the
+// upstream needs auth it will answer 401/403 (or sometimes redirect to a
+// login page), and this function fails loudly with `media_fetch_failed` /
+// `upstreamStatus` set — it NEVER silently succeeds with a wrong/empty file.
+// The caller (n8n) sees that in the API response and should fall back to
+// media-upload (download the bytes itself, where it may already hold the
+// right session/cookies, and push them here as multipart) for that link.
+const MEDIA_IMPORT_MAX_BYTES = 80 * 1024 * 1024; // same ceiling as media-upload
+const MEDIA_IMPORT_TIMEOUT_MS = 20000;
+
+function isBlockedImportHost(hostname) {
+  // Best-effort SSRF guard for literal private/loopback/link-local hosts —
+  // not a full DNS-resolution check (a public hostname that RESOLVES to a
+  // private IP slips through, same tradeoff most simple "fetch this URL"
+  // endpoints make). Good enough given this endpoint is gated by the
+  // automation API key, not open to the public internet.
+  const h = String(hostname || '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost') || h === '::1' || h === '0.0.0.0') return true;
+  if (/^127\./.test(h)) return true;
+  if (/^10\./.test(h)) return true;
+  if (/^192\.168\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^169\.254\./.test(h)) return true;
+  return false;
+}
+
+async function fetchExternalMediaBuffer(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl || ''));
+  } catch {
+    const err = new Error('Некорректный URL.');
+    err.code = 'invalid_url';
+    err.httpStatus = 400;
+    throw err;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    const err = new Error('Поддерживаются только http/https ссылки.');
+    err.code = 'invalid_url';
+    err.httpStatus = 400;
+    throw err;
+  }
+  if (isBlockedImportHost(parsed.hostname)) {
+    const err = new Error('Этот хост недоступен для импорта.');
+    err.code = 'invalid_url';
+    err.httpStatus = 400;
+    throw err;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MEDIA_IMPORT_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(parsed.toString(), {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': 'KF-Content-Approval-media-import/1.0' },
+    });
+  } catch (fetchErr) {
+    clearTimeout(timer);
+    if (fetchErr.name === 'AbortError') {
+      const err = new Error(`Файл не скачался за ${MEDIA_IMPORT_TIMEOUT_MS / 1000} сек — источник не ответил вовремя.`);
+      err.code = 'media_fetch_timeout';
+      err.httpStatus = 504;
+      throw err;
+    }
+    const err = new Error(`Не удалось подключиться к источнику файла: ${fetchErr.message}`);
+    err.code = 'media_fetch_failed';
+    err.httpStatus = 502;
+    throw err;
+  }
+  clearTimeout(timer);
+
+  if (!response.ok) {
+    const authIssue = response.status === 401 || response.status === 403;
+    const err = new Error(
+      authIssue
+        ? `Источник вернул ${response.status} — похоже, файл доступен только авторизованной сессии, и сервер скачать его так не может. Используйте media-upload вместо media-import для этой ссылки.`
+        : `Источник вернул ${response.status} при скачивании файла.`
+    );
+    err.code = 'media_fetch_failed';
+    err.httpStatus = 502;
+    err.upstreamStatus = response.status;
+    throw err;
+  }
+
+  const contentLengthHeader = response.headers.get('content-length');
+  if (contentLengthHeader && Number(contentLengthHeader) > MEDIA_IMPORT_MAX_BYTES) {
+    const err = new Error(`Файл слишком большой (${contentLengthHeader} байт, максимум ${MEDIA_IMPORT_MAX_BYTES}).`);
+    err.code = 'media_too_large';
+    err.httpStatus = 413;
+    throw err;
+  }
+
+  const buffer = await response.buffer();
+  if (buffer.length > MEDIA_IMPORT_MAX_BYTES) {
+    const err = new Error(`Файл слишком большой (${buffer.length} байт, максимум ${MEDIA_IMPORT_MAX_BYTES}).`);
+    err.code = 'media_too_large';
+    err.httpStatus = 413;
+    throw err;
+  }
+  if (!buffer.length) {
+    const err = new Error('Источник вернул пустой файл.');
+    err.code = 'media_fetch_failed';
+    err.httpStatus = 502;
+    throw err;
+  }
+
+  const mimeType = (response.headers.get('content-type') || '').split(';')[0].trim() || 'application/octet-stream';
+  return { buffer, mimeType };
+}
+
+// POST /api/automation/tasks/:taskId/media-import — body: { url }. Server
+// downloads `url` itself (see fetchExternalMediaBuffer above) and pushes the
+// bytes to disk.kontentferma exactly like media-upload does — n8n sends
+// plain JSON, no multipart/form-data required. Use this instead of
+// media-upload when file transport through n8n (formData/multipart) is the
+// problem, not the file's availability.
+//
+// FAILURE BEHAVIOR: fetchExternalMediaBuffer throws BEFORE anything is
+// written to disk.kontentferma or attached to the card, so any error here —
+// timeout, non-2xx from the source (401/403 = auth-gated, 404 = gone, etc.),
+// or oversize — leaves the task exactly as it was. Nothing partial is ever
+// attached. The JSON error response always includes `error` (a stable code
+// to branch on in n8n) and, for upstream HTTP failures, `upstreamStatus`
+// (the source's own status code) so the caller can tell "source needs a
+// login" (401/403) apart from "source URL is just wrong/expired" (404) apart
+// from "our server timed out talking to the source" (504/media_fetch_timeout)
+// — and decide whether to retry, fall back to media-upload, or alert a human.
+app.post('/api/automation/tasks/:taskId/media-import', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const sourceUrl = String((req.body && req.body.url) || '').trim();
+  if (!sourceUrl) return res.status(400).json({ error: 'url_required' });
+  try {
+    // Queued behind mediaUploadLimiter — same reasoning as media-upload above
+    // (n8n bursts, Nextcloud under concurrent load); media-import ends in the
+    // exact same uploadAndShare() call against disk.kontentferma.
+    await mediaUploadLimiter(async () => {
+      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+      const feedbackAuthorUserId = await getFeedbackAuthorId();
+      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+      const task = tasks.find((t) => t.id === req.params.taskId);
+      if (!task) {
+        res.status(404).json({ error: 'task_not_found' });
+        return;
+      }
+
+      const { buffer, mimeType } = await fetchExternalMediaBuffer(sourceUrl);
+
+      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+      const extFromUrl = (() => {
+        try {
+          const m = new URL(sourceUrl).pathname.match(/\.[a-zA-Z0-9]{2,5}$/);
+          return m ? m[0] : '';
+        } catch {
+          return '';
+        }
+      })();
+      const filename = `${dateStr}_${Date.now().toString(36)}${extFromUrl}`;
+
+      const shareUrl = await diskUpload.uploadAndShare({
+        folderName: task.projectLabel || 'Без клиента',
+        filename,
+        buffer,
+        mimeType,
+      });
+      const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, AUTOMATION_ACTOR);
+      res.json({ task: updated });
+    });
+  } catch (err) {
+    console.error('[api] automation media import failed:', err.message);
+    const status = err.httpStatus || (err.code === 'disk_upload_not_configured' ? 501 : 502);
+    const payload = { error: err.code || 'media_import_failed', message: err.message };
+    if (err.upstreamStatus) payload.upstreamStatus = err.upstreamStatus;
+    res.status(status).json(payload);
+  }
 });
 
 // POST /api/automation/tasks/:taskId/media-order — body: { order: string[] }.
