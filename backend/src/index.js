@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const multer = require('multer');
 const config = require('./config');
 const mm = require('./mattermostClient');
@@ -13,6 +14,7 @@ const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
 const mailer = require('./mailer');
 const analytics = require('./analytics');
+const { buildOpenApiSpec } = require('./openapiSpec');
 
 const app = express();
 app.use(express.json());
@@ -289,6 +291,47 @@ function requireStaffBoardId(res) {
     return null;
   }
   return config.mattermostBoardId;
+}
+
+// ---------------------------------------------------------------------------
+// Automation API (n8n and similar) — gated by a single shared secret
+// (config.automationApiKey, header "X-Api-Key") instead of a real staff
+// Mattermost login, specifically so a vendor/developer building an
+// automation flow never needs an actual team member's password. See the
+// route group below (search "/api/automation/") and docs/N8N_AUTOMATION.md.
+// ---------------------------------------------------------------------------
+const AUTOMATION_ACTOR = 'n8n-автоматизация';
+
+function requireAutomationAuth(req, res, next) {
+  if (!config.automationApiKey) {
+    return res.status(503).json({
+      error: 'automation_api_disabled',
+      message: 'AUTOMATION_API_KEY не задан — см. комментарий в config.js.',
+    });
+  }
+  const provided = String(req.headers['x-api-key'] || '');
+  const expected = config.automationApiKey;
+  // Constant-time comparison so a wrong guess can't be narrowed down via
+  // response-time differences. Buffers must match in length for
+  // timingSafeEqual — a length mismatch is itself decisive, so short-
+  // circuiting on it leaks nothing an attacker doesn't already know
+  // (that their guess was wrong).
+  const ok = provided.length === expected.length && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!ok) {
+    return res.status(401).json({ error: 'invalid_api_key' });
+  }
+  next();
+}
+
+// Small helper so automation route handlers can throw a validation error
+// with both a machine-readable code and the right HTTP status, instead of
+// every caller re-deriving status from err.code the way the rest of this
+// file's write endpoints do.
+function badRequest(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  err.httpStatus = 400;
+  return err;
 }
 
 // "Бусинки" on the staff project card — one bead per post planned THIS month
@@ -1638,6 +1681,409 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
   return refetchTeamTask(boardId, taskId);
 }
 
+// ---------------------------------------------------------------------------
+// Automation API core (n8n and similar) — read + write helpers behind
+// requireAutomationAuth (see its definition near requireStaffBoardId above).
+// Deliberately separate from the /team functions above even where the
+// underlying write is identical (addTeamMediaLink, updateTaskMediaOrderTeam
+// are reused directly) — this whole section exists so an external flow only
+// ever needs the automation API key, never a real staff Mattermost login.
+// ---------------------------------------------------------------------------
+
+// GET /api/automation/projects — every "Проект" option plus the scheduling
+// fields already stored for it in Postgres (see projectSettings.js). NOT the
+// same payload as the internal /api/projects (staffAuth) — this deliberately
+// leaves out the client cabinet link token and logo, neither of which an
+// automation needs, so this key can't be used to enumerate live client
+// links. social_credentials is ALSO left out on purpose — that stays a
+// direct-Postgres read via the dedicated n8n role (see
+// docs/N8N_AUTOMATION.md §1), so a leaked automation API key alone can never
+// hand over publishing credentials for every social network.
+async function getAutomationProjects(boardId) {
+  const { board } = await loadBoard(boardId);
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
+  if (!projectProp) {
+    throw badRequest('project_property_not_found', `Свойство "${config.projectPropertyName}" не найдено на борде.`);
+  }
+  return Promise.all(
+    (projectProp.options || []).map(async (o) => {
+      const settings = await projectSettings.getSettings(boardId, o.id);
+      return {
+        id: o.id,
+        label: o.value,
+        publishTimeMsk: settings.publishTimeMsk,
+        postsPerMonth: settings.postsPerMonth,
+        projectManager: settings.projectManager,
+        startDate: settings.startDate,
+      };
+    })
+  );
+}
+
+// GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
+// General-purpose task query — project is optional (omit for "across every
+// client"), status is REQUIRED: either one of the 5 friendly codes this app
+// already uses everywhere (waiting/changes/approved/published/archived) or
+// the EXACT raw Mattermost option text, so an internal-only production stage
+// ("В процессе", "ТЗ РАЙТЕРУ", ...) can be queried too, not just the 5
+// client-facing ones. `date` is an optional extra narrowing (e.g.
+// status=approved&date=today for "what's due to publish today" — the old
+// /api/automation/tasks/today is exactly this call now).
+//
+// Every task comes back FULLY enriched regardless of which status was
+// asked for, since different statuses need different fields and there's no
+// reason to force a second request to get them:
+//   - network (parsed from the title prefix, same rule as frontend/app.js's
+//     detectSocial — see updateTaskNetwork above) + recommendedPublishTime
+//     (project_settings.publish_time_msk) — for "ready to publish".
+//   - clientComments (the full client correspondence timeline — approve/
+//     правки/сообщения, see taskMapper.js) + feedback (latest correction
+//     text) — already part of every task object, for "на редактировании".
+// Media comes back kind-resolved and in the CLIENT-CHOSEN order
+// (resolveDiskMediaKinds + mediaOrder.applyStoredOrder), exactly like every
+// other read in this app — never read task_media_order directly yourself.
+async function getAutomationTasks(boardId, { project, status, date } = {}) {
+  if (!status) {
+    throw badRequest(
+      'status_required',
+      `status обязателен — один из кодов (${Object.keys(config.statusOptionLabels).join('/')}) или точный текст статуса в Mattermost.`
+    );
+  }
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const opts = project
+    ? { projectFilter: project, includeAllStatuses: true, feedbackAuthorUserId }
+    : { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId };
+  const { tasks, meta } = buildTasks(board, cards, blocks, opts);
+  if (project && !meta.projectFilterMatched) {
+    throw badRequest('project_not_found', `project "${project}" не найден в свойстве "Проект".`);
+  }
+
+  // Friendly code (waiting/changes/approved/published/archived) matches by
+  // the already-normalized t.status; anything else is treated as the exact
+  // raw Mattermost option label (whitespace/case-insensitive, same
+  // tolerance taskMapper.js's normLabel already applies everywhere else),
+  // so internal-only stages that statusEnumFromLabel() maps to null are
+  // still reachable here.
+  const friendlyKey = Object.keys(config.statusOptionLabels).find((k) => k.toLowerCase() === String(status).trim().toLowerCase());
+  const normLoose = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  let matched = friendlyKey
+    ? tasks.filter((t) => t.status === friendlyKey)
+    : tasks.filter((t) => normLoose(t.statusLabel) === normLoose(status));
+
+  if (date) {
+    const resolvedDate =
+      date === 'today' ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date()) : date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(resolvedDate)) {
+      throw badRequest('invalid_date', `Некорректная дата "${date}" — ожидался формат YYYY-MM-DD или "today".`);
+    }
+    matched = matched.filter((t) => t.publishDate === resolvedDate);
+  }
+
+  await resolveDiskMediaKinds(matched);
+  await mediaOrder.applyStoredOrder(boardId, matched);
+
+  const settingsCache = new Map();
+  const result = [];
+  for (const t of matched) {
+    if (!settingsCache.has(t.projectId)) {
+      settingsCache.set(t.projectId, await projectSettings.getSettings(boardId, t.projectId));
+    }
+    const settings = settingsCache.get(t.projectId);
+    const networkMatch = String(t.title || '').match(SOCIAL_PREFIX_RE);
+    result.push({
+      ...t,
+      network: networkMatch ? networkMatch[1].toLowerCase() : null,
+      recommendedPublishTime: settings.publishTimeMsk || null,
+    });
+  }
+  return result;
+}
+
+// POST /api/automation/tasks/:taskId/publish — flips a card to
+// "ОПУБЛИКОВАНО" and records the live post URL, in ONE safe PATCH (merges
+// into the card's FULL existing properties — see the big warning on
+// patchCardProperty in mattermostClient.js and docs/N8N_AUTOMATION.md §5;
+// this endpoint exists specifically so an external automation never has to
+// get that merge right itself). Re-reads the card after writing and throws
+// if the status didn't actually change, same caution as setStatusByRawLabel.
+async function publishAutomationTask(boardId, taskId, url) {
+  const trimmedUrl = String(url || '').trim();
+  if (!trimmedUrl) throw badRequest('url_required', 'url обязателен — ссылка на реально опубликованный пост.');
+  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const approvalProp = findPropertyDef(board, config.approvalPropertyName);
+  const urlProp = findPropertyDef(board, config.urlPropertyName);
+  if (!approvalProp) throw badRequest('approval_property_not_found', `Свойство "${config.approvalPropertyName}" не найдено на борде.`);
+  const publishedLabel = config.statusOptionLabels.published;
+  const publishedOptionId = optionIdByLabel(approvalProp, publishedLabel);
+  if (!publishedOptionId) {
+    throw badRequest('published_option_not_found', `Опция "${publishedLabel}" не найдена в свойстве "${config.approvalPropertyName}".`);
+  }
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw badRequest('task_not_found', `Карточка ${taskId} не найдена.`);
+  const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: publishedOptionId };
+  if (urlProp) mergedProperties[urlProp.id] = trimmedUrl;
+  await mm.patchCardProperty(boardId, taskId, mergedProperties);
+  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ОПУБЛИКОВАНО (${AUTOMATION_ACTOR}): ${trimmedUrl}`);
+  invalidate(boardId);
+  const updated = await refetchTeamTask(boardId, taskId);
+  if (updated.status !== 'published') {
+    throw new Error(
+      `Mattermost принял запрос, но после повторного чтения карточки ${taskId} статус остался "${updated.statusLabel || '(нет)'}", ` +
+        `а не "${publishedLabel}". Проверьте права аккаунта, от имени которого работает приложение.`
+    );
+  }
+  return updated;
+}
+
+// Creates a brand-new task card — for content-generation automations that
+// produce the post from scratch, as opposed to attaching media to a card
+// staff already created (addTeamMediaLink above covers that case).
+// UNCONFIRMED against the live server — this app has never created a card
+// itself before now; every other write here PATCHes or comments on an
+// EXISTING one. This mirrors the base Block model already CONFIRMED to work
+// for text/comment child blocks (addCardComment/addBlocks above) by analogy:
+// a card is the same Block shape with type:'card', its property values under
+// fields.properties. Test with ONE card by hand (or one real n8n run,
+// watched) before trusting this in an unattended loop — if the shape is
+// wrong somewhere, refetchTeamTask below will fail to find the card and this
+// throws a clear error rather than reporting false success.
+async function createAutomationTask(boardId, opts) {
+  const { board } = await loadBoard(boardId, { fresh: true });
+  const approvalProp = findPropertyDef(board, config.approvalPropertyName);
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
+  const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
+
+  const title = String(opts.title || '').trim();
+  if (!title) throw badRequest('title_required', 'title обязателен.');
+
+  const network = String(opts.network || '').trim().toLowerCase();
+  if (network && !SOCIAL_LABELS[network]) {
+    throw badRequest('invalid_network', `Неизвестная соцсеть "${opts.network}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
+  }
+
+  if (!projectProp) throw badRequest('project_property_not_found', `Свойство "${config.projectPropertyName}" не найдено на борде.`);
+  const projectId = String(opts.projectId || '').trim();
+  if (!projectId) throw badRequest('project_id_required', 'projectId обязателен — id опции свойства "Проект" (см. GET /api/automation/projects).');
+  const projectOption = (projectProp.options || []).find((o) => o.id === projectId);
+  if (!projectOption) {
+    const available = (projectProp.options || []).map((o) => `${o.value} (${o.id})`).join(', ') || '(нет опций)';
+    throw badRequest('project_not_found', `projectId "${projectId}" не найден в свойстве "Проект". Доступные: ${available}.`);
+  }
+
+  let statusOptionId = null;
+  if (opts.status) {
+    if (!approvalProp) throw badRequest('approval_property_not_found', `Свойство "${config.approvalPropertyName}" не найдено на борде.`);
+    statusOptionId = optionIdByLabel(approvalProp, opts.status);
+    if (!statusOptionId) {
+      const available = (approvalProp.options || []).map((o) => `«${o.value}»`).join(', ') || '(нет опций)';
+      throw badRequest('status_not_found', `Статус "${opts.status}" не найден. Доступные: ${available}.`);
+    }
+  }
+
+  let publishDateValue = null;
+  if (opts.publishDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.publishDate)) {
+      throw badRequest('invalid_publish_date', `Некорректная дата "${opts.publishDate}" — ожидался формат YYYY-MM-DD.`);
+    }
+    if (!publishDateProp) throw badRequest('publish_date_property_not_found', `Свойство "${config.publishDatePropertyName}" не найдено на борде.`);
+    publishDateValue = JSON.stringify({ from: Date.parse(`${opts.publishDate}T00:00:00.000Z`) });
+  }
+
+  const mediaUrls = Array.isArray(opts.media) ? opts.media.map((u) => String(u || '').trim()).filter(Boolean) : [];
+  const validatedMedia = [];
+  for (const raw of mediaUrls) {
+    const validated = parseAndValidateShareUrl(raw);
+    if (!validated) throw badRequest('invalid_media_url', `"${raw}" не похоже на ссылку с disk.kontentferma.`);
+    validatedMedia.push(validated);
+  }
+
+  const nowMs = Date.now();
+  const genId = (offset) => `${(nowMs + offset).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const cardId = genId(0);
+  const descId = genId(1);
+  const text = String(opts.text || '').trim();
+
+  const properties = {};
+  properties[projectProp.id] = projectId;
+  if (statusOptionId) properties[approvalProp.id] = statusOptionId;
+  if (publishDateValue) properties[publishDateProp.id] = publishDateValue;
+
+  const fullTitle = network ? `${network}: ${title}` : title;
+
+  const blocks = [
+    {
+      id: cardId,
+      boardId,
+      parentId: boardId,
+      type: 'card',
+      title: fullTitle,
+      schema: 1,
+      createAt: nowMs,
+      updateAt: nowMs,
+      fields: { properties, contentOrder: text ? [descId] : [], icon: '', isTemplate: false },
+    },
+  ];
+  if (text) {
+    blocks.push({
+      id: descId, boardId, parentId: cardId, type: 'text', title: text,
+      schema: 1, createAt: nowMs + 1, updateAt: nowMs + 1, fields: {},
+    });
+  }
+  validatedMedia.forEach((shareUrl, i) => {
+    blocks.push({
+      id: genId(2 + i), boardId, parentId: cardId, type: 'text', title: shareUrl,
+      schema: 1, createAt: nowMs + 2 + i, updateAt: nowMs + 2 + i, fields: {},
+    });
+  });
+
+  await mm.addBlocks(boardId, blocks, 'createAutomationTask');
+  await mm.addCardComment(boardId, cardId, `${formatMoscowTimestamp()} КАРТОЧКА СОЗДАНА (${AUTOMATION_ACTOR})`);
+  invalidate(boardId);
+
+  const created = await refetchTeamTask(boardId, cardId).catch(() => null);
+  if (!created) {
+    throw new Error(
+      `Запрос на создание карточки ${cardId} прошёл без ошибки Mattermost, но карточка не нашлась при повторном ` +
+        `чтении борда — вероятна проблема с форматом блока (это неподтверждённый вызов, см. комментарий над ` +
+        `createAutomationTask). Проверьте карточку в Mattermost вручную и сообщите об этой ошибке.`
+    );
+  }
+  return created;
+}
+
+// GET /api/automation/projects
+app.get('/api/automation/projects', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const projects = await getAutomationProjects(boardId);
+    res.json({ projects });
+  } catch (err) {
+    console.error('[api] automation projects failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'automation_projects_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
+// status is required — see getAutomationTasks above for the two shapes it
+// accepts. project and date are both optional narrowing.
+app.get('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const project = String(req.query.project || '').trim() || null;
+  const status = String(req.query.status || '').trim() || null;
+  const date = String(req.query.date || '').trim() || null;
+  try {
+    const tasks = await getAutomationTasks(boardId, { project, status, date });
+    res.json({ tasks });
+  } catch (err) {
+    console.error('[api] automation tasks query failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'automation_tasks_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks — body: { title, network?, projectId, text?,
+// publishDate?, status?, media?: string[] }. See createAutomationTask above.
+app.post('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const task = await createAutomationTask(boardId, req.body || {});
+    res.status(201).json({ task });
+  } catch (err) {
+    console.error('[api] automation create task failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks/:taskId/media-link — body: { url }. Same as the
+// /team route of the same shape, just behind the automation API key.
+app.post('/api/automation/tasks/:taskId/media-link', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const shareUrl = parseAndValidateShareUrl(String((req.body && req.body.url) || '').trim());
+  if (!shareUrl) {
+    return res.status(400).json({ error: 'invalid_disk_url', message: 'Это не похоже на ссылку с disk.kontentferma.' });
+  }
+  try {
+    const task = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, AUTOMATION_ACTOR);
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] automation media link add failed:', err.message);
+    res.status(502).json({ error: 'media_link_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks/:taskId/media-upload — multipart, field "file".
+// Same WebDAV-upload-then-attach flow as the /team route; needs
+// DISK_WEBDAV_* configured (see config.js) exactly like that one does.
+app.post('/api/automation/tasks/:taskId/media-upload', requireAutomationAuth, (req, res) => {
+  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'file_too_large' : 'upload_error',
+        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
+      });
+    }
+    const boardId = requireStaffBoardId(res);
+    if (!boardId) return;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    try {
+      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+      const feedbackAuthorUserId = await getFeedbackAuthorId();
+      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+      const task = tasks.find((t) => t.id === req.params.taskId);
+      if (!task) return res.status(404).json({ error: 'task_not_found' });
+      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+      const shareUrl = await diskUpload.uploadAndShare({
+        folderName: task.projectLabel || 'Без клиента',
+        filename,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+      });
+      const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, AUTOMATION_ACTOR);
+      res.json({ task: updated });
+    } catch (err) {
+      console.error('[api] automation media upload failed:', err.message);
+      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
+      res.status(status).json({ error: err.code || 'media_upload_failed', message: err.message });
+    }
+  });
+});
+
+// POST /api/automation/tasks/:taskId/media-order — body: { order: string[] }.
+app.post('/api/automation/tasks/:taskId/media-order', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const order = Array.isArray(req.body && req.body.order) ? req.body.order.map(String) : null;
+  if (!order || !order.length) return res.status(400).json({ error: 'order_required' });
+  try {
+    const updated = await updateTaskMediaOrderTeam(boardId, req.params.taskId, order, AUTOMATION_ACTOR);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] automation media order update failed:', err.message);
+    const status = err.code === 'stale_media_order' ? 409 : 502;
+    res.status(status).json({ error: err.code || 'media_order_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks/:taskId/publish — body: { url }.
+app.post('/api/automation/tasks/:taskId/publish', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const task = await publishAutomationTask(boardId, req.params.taskId, req.body && req.body.url);
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] automation publish failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'publish_failed', message: err.message });
+  }
+});
+
 // Posts a message TO the client — unlike every other team-cabinet marker,
 // this one is deliberately included in taskMapper.js's clientComments
 // (kind: 'agency'), because the whole point is for the client to see it,
@@ -1803,6 +2249,43 @@ app.get('/stat', requireStatAuth, (req, res) => res.sendFile(path.join(frontendD
 // is on config.ceoEmails; the data API (/api/ceo/overview) is gated the same
 // way regardless, so even the shell holds no data.
 app.get('/ceo', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'ceo.html')));
+
+// GET /api/ceo/openapi.json + GET /ceo/api-docs — Swagger/OpenAPI
+// description of the automation API (see backend/src/openapiSpec.js),
+// gated the same way as /ceo above — real /team login + email on
+// config.ceoEmails. This describes ENDPOINTS AND SHAPES, not secrets (the
+// automation API key itself is never in this document, only the header
+// name it's expected under) — CEO-only anyway because it's a map of every
+// write this app's automation surface can make, not something to leave
+// world-readable.
+app.get('/api/ceo/openapi.json', teamAuth.requireCeoAuth, (req, res) => {
+  res.json(buildOpenApiSpec());
+});
+
+app.get('/ceo/api-docs', teamAuth.requireCeoAuth, (req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>КФ — API для автоматизации</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  window.ui = SwaggerUIBundle({
+    url: '/api/ceo/openapi.json',
+    dom_id: '#swagger-ui',
+    presets: [SwaggerUIBundle.presets.apis],
+    layout: 'BaseLayout',
+  });
+</script>
+</body>
+</html>`);
+});
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns

@@ -242,4 +242,18 @@ module.exports = {
   smtpUser: process.env.SMTP_USER || '',
   smtpPassword: process.env.SMTP_PASSWORD || '',
   smtpFrom: process.env.SMTP_FROM || '',
+
+  // Shared secret for the machine-to-machine automation API (see the
+  // /api/automation/* routes in index.js — n8n publishing/content flows use
+  // these, NOT a real staff Mattermost login, so a vendor/developer never
+  // needs an actual team member's password). Blank (default) = every
+  // /api/automation/* route responds 503 rather than silently accepting
+  // requests with no check at all — you must explicitly set this to turn the
+  // automation API on. Generate one long random value, e.g.:
+  //   openssl rand -hex 32
+  // and set it as AUTOMATION_API_KEY in Dokploy; give n8n that value only
+  // (as an HTTP Header Auth credential — header name "X-Api-Key"), never
+  // your own Mattermost password. Rotate by changing this value and updating
+  // n8n's credential to match.
+  automationApiKey: process.env.AUTOMATION_API_KEY || '',
 };
