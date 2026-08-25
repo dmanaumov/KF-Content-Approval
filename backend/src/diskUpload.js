@@ -37,6 +37,34 @@ function fetchWithAuth(url, opts) {
   return fetchWithTimeout(url, Object.assign({}, opts, { headers: headers }), config.diskWebdavTimeoutMs);
 }
 
+// Nextcloud's own bruteforce/rate-limit protection can answer a WebDAV/OCS
+// call with 429 — and, characteristic of that protection, it DELAYS the 429
+// itself (tens of seconds) instead of rejecting instantly, as an
+// anti-bruteforce throttle. Confirmed live in production (2026-08-25):
+// createPublicShare() got "share API: 429" after 22-28 seconds under a burst
+// of concurrent uploads, and most of the burst failed the same way. A 429 is
+// exactly the case where retrying (ideally after backing off) is the right
+// response rather than giving up immediately — so every WebDAV/OCS call goes
+// through this wrapper: on 429 it waits (honoring the server's Retry-After
+// header when present, otherwise a fixed backoff) and tries once more before
+// surfacing the failure. See also MEDIA_UPLOAD_MAX_CONCURRENT in index.js,
+// which reduces how often this gets triggered in the first place.
+async function fetchWithAuthRetry429(url, opts, attempts) {
+  attempts = attempts || 2;
+  let res;
+  for (let i = 0; i < attempts; i++) {
+    res = await fetchWithAuth(url, opts);
+    if (res.status !== 429) return res;
+    if (i < attempts - 1) {
+      const retryAfterHeader = res.headers.get('retry-after');
+      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
+      const delayMs = Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 4000 * (i + 1);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return res;
+}
+
 // Nextcloud WebDAV paths are percent-encoded per segment (spaces, Cyrillic,
 // etc. all need it) — encodeURIComponent per segment, NOT the whole path
 // (that would also encode the "/" separators).
@@ -67,7 +95,7 @@ async function ensureRemoteDir(relPath) {
   let cur = '';
   for (const seg of segments) {
     cur += '/' + seg;
-    const res = await fetchWithAuth(webdavUrl(cur), { method: 'MKCOL' });
+    const res = await fetchWithAuthRetry429(webdavUrl(cur), { method: 'MKCOL' });
     if (res.status !== 201 && res.status !== 405) {
       throw new Error('Не удалось создать папку "' + cur + '" на диске (MKCOL, статус ' + res.status + ').');
     }
@@ -76,9 +104,20 @@ async function ensureRemoteDir(relPath) {
 
 async function putFile(relPath, buffer, mimeType) {
   const headers = mimeType ? { 'Content-Type': mimeType } : {};
-  const res = await fetchWithAuth(webdavUrl(relPath), { method: 'PUT', body: buffer, headers: headers });
+  const res = await fetchWithAuthRetry429(webdavUrl(relPath), { method: 'PUT', body: buffer, headers: headers });
   if (res.status !== 201 && res.status !== 204) {
     throw new Error('Не удалось загрузить файл на диск (PUT, статус ' + res.status + ').');
+  }
+}
+
+// Best-effort cleanup for the case below (putFile succeeded, createPublicShare
+// didn't) — deliberately swallows its own errors so a failed cleanup never
+// masks the original, more useful error from createPublicShare.
+async function deleteFile(relPath) {
+  try {
+    await fetchWithAuth(webdavUrl(relPath), { method: 'DELETE' });
+  } catch (_err) {
+    // best-effort only — nothing to do if even the cleanup fails
   }
 }
 
@@ -92,7 +131,7 @@ async function createPublicShare(relPath) {
     shareType: '3', // public link
     permissions: '1', // read-only — the team uploads it, nobody needs write access via the share
   });
-  const res = await fetchWithAuth(origin + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
+  const res = await fetchWithAuthRetry429(origin + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
     method: 'POST',
     headers: { 'OCS-APIRequest': 'true', 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: body.toString(),
@@ -127,7 +166,18 @@ async function uploadAndShare(opts) {
   const relFile = relDir + '/' + sanitizeSegment(filename);
   await ensureRemoteDir(relDir);
   await putFile(relFile, buffer, mimeType);
-  return createPublicShare(relFile);
+  try {
+    return await createPublicShare(relFile);
+  } catch (shareErr) {
+    // The file already landed on disk via putFile above — if we can't link
+    // it (429 even after retrying, or any other share-API failure), don't
+    // leave it there as an orphan. Found live in production (2026-08-25):
+    // 31 files had piled up on disk.kontentferma this way, none of them
+    // attached to any card, because every failed share step before this fix
+    // left its already-uploaded file behind with nothing pointing at it.
+    await deleteFile(relFile);
+    throw shareErr;
+  }
 }
 
 module.exports = { uploadAndShare };

@@ -349,7 +349,17 @@ function badRequest(code, message) {
 // soon as a slot frees up, instead of letting them all hit Nextcloud at
 // once. Callers simply wait a little longer under a burst; nothing about
 // the API's shape or response changes.
-const MEDIA_UPLOAD_MAX_CONCURRENT = 4;
+//
+// Lowered from 4 to 2 after a second incident the same day: even at 4
+// concurrent uploads (= up to 12 simultaneous WebDAV/OCS calls, since each
+// upload is 3 sequential requests), Nextcloud's own bruteforce/rate-limit
+// protection started answering createPublicShare() with 429 — and delaying
+// that 429 by 20-28 seconds, characteristic of that protection's throttle —
+// so most of a burst failed outright. 2 concurrent uploads (≤6 simultaneous
+// WebDAV/OCS calls) plus the 429-retry in diskUpload.js (see
+// fetchWithAuthRetry429) is the combination meant to stay under whatever
+// threshold is triggering Nextcloud's throttle.
+const MEDIA_UPLOAD_MAX_CONCURRENT = 2;
 function createLimiter(maxConcurrent) {
   let active = 0;
   const queue = [];
