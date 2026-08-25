@@ -178,6 +178,28 @@ async function initSchema() {
     ALTER TABLE task_team_comments
       ADD COLUMN IF NOT EXISTS image_url text NOT NULL DEFAULT '';
   `);
+  // Who actually clicked "Запланировать публикацию" in the /team cabinet.
+  // Mattermost's own block.createdBy is USELESS for this: this app talks to
+  // Mattermost as ONE shared service account (MATTERMOST_LOGIN_ID or
+  // MATTERMOST_TOKEN, see mattermostClient.js) for every write it makes, so
+  // createdBy on every card this app creates is always that same shared
+  // account — never the real team member. This table is the only place that
+  // actually knows who created a given card. Written once, best-effort, by
+  // POST /api/team/tasks right after a card is created (see taskCreators.js);
+  // read by GET /api/team/tasks so a card's creator sees it in their list
+  // even when they're not the assignee (per the team's request). If this
+  // write ever fails, the card still exists — the creator just won't get
+  // the "I made this" visibility bonus, they'll still see it if/when
+  // they're also the assignee (which POST /api/team/tasks always sets).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_creators (
+      board_id text NOT NULL,
+      task_id text NOT NULL,
+      creator_user_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (board_id, task_id)
+    );
+  `);
   await ensureN8nRole();
 }
 

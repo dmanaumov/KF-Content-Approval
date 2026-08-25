@@ -11,6 +11,7 @@ const diskUpload = require('./diskUpload');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
+const taskCreators = require('./taskCreators');
 const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
 const mailer = require('./mailer');
@@ -890,7 +891,26 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       });
     }
     const myId = req.teamSession.user.id;
-    const mine = tasks.filter((t) => t.assigneeId === myId);
+    // Visibility rule (per the team's request, 2026-08-25):
+    //   - лидеры / СЕО и его зам (role.admin — see config.js's own comment
+    //     on adminEmails: "CEO + his deputy"; role.ceo folded in too for the
+    //     /ceo-dashboard owner in case that email is ever only on ceoEmails)
+    //     see EVERY card, same as before — the status-chip filter in the
+    //     frontend still applies on top of this, unaffected.
+    //   - everyone else sees a card if they're the assignee ("Исполнитель")
+    //     OR if they're the one who created it via "Запланировать
+    //     публикацию" — even when it's since been assigned to someone else.
+    //     Creation is tracked in our own task_creators table, NOT
+    //     Mattermost's block.createdBy (see taskCreators.js for why).
+    const role = teamAuth.roleFor(req.teamSession.user);
+    const seesAll = role.admin || role.ceo;
+    let mine;
+    if (seesAll) {
+      mine = tasks;
+    } else {
+      const creatorMap = await taskCreators.getCreators(boardId, tasks.map((t) => t.id));
+      mine = tasks.filter((t) => t.assigneeId === myId || creatorMap.get(t.id) === myId);
+    }
     await resolveDiskMediaKinds(mine);
     await mediaOrder.applyStoredOrder(boardId, mine);
     analytics.note('team', { actor: req.teamSession.user.username || '', actorName: [req.teamSession.user.first_name, req.teamSession.user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
@@ -994,6 +1014,9 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       assigneeUserId: req.teamSession.user.id,
       actorLabel: teamActorName(req),
     });
+    // Best-effort — see taskCreators.js. Never blocks the response: the
+    // card already exists in Mattermost by this point regardless.
+    await taskCreators.setCreator(boardId, task.id, req.teamSession.user.id);
     res.status(201).json({ task });
   } catch (err) {
     console.error('[api] team create task failed:', err.message);
