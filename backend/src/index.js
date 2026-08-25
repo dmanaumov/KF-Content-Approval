@@ -1937,20 +1937,78 @@ async function createAutomationTask(boardId, opts) {
     });
   });
 
-  await mm.addBlocks(boardId, blocks, 'createAutomationTask');
-  await mm.addCardComment(boardId, cardId, `${formatMoscowTimestamp()} КАРТОЧКА СОЗДАНА (${AUTOMATION_ACTOR})`);
+  // ROOT CAUSE (confirmed live, 2026-08-25): Mattermost Boards does NOT
+  // honor the client-supplied block id on insert — it reassigns its own
+  // server-generated id to every block, including the card itself. This
+  // app's OWN addCardComment already relies on the server's returned id
+  // (it never re-looks-up its own comment by id afterward, so the mismatch
+  // was invisible there) — createAutomationTask is the first place that
+  // needs to look a just-created block back up, and doing that with the
+  // locally-generated `cardId` was the actual bug: it doesn't exist in
+  // Mattermost under that id, so the reread always failed. Fix: read the
+  // real id back out of addBlocks' own response instead of trusting cardId.
+  const createResult = await mm.addBlocks(boardId, blocks, 'createAutomationTask');
+  const createdBlocks = Array.isArray(createResult) ? createResult : [];
+  const createdCard = createdBlocks.find((b) => b.type === 'card');
+  if (!createdCard) {
+    // Response didn't come back in the shape we expect — surface exactly
+    // what Mattermost sent instead of silently falling back to a
+    // definitely-wrong id, so this is diagnosable from the error alone.
+    throw new Error(
+      `Mattermost принял запрос на создание карточки, но в ответе не нашлось блока с type:"card" — ` +
+        `получено: ${JSON.stringify(createResult).slice(0, 1000)}. Обратитесь за диагностикой.`
+    );
+  }
+  const actualCardId = createdCard.id;
+
+  await mm.addCardComment(boardId, actualCardId, `${formatMoscowTimestamp()} КАРТОЧКА СОЗДАНА (${AUTOMATION_ACTOR})`);
   invalidate(boardId);
 
-  const created = await refetchTeamTask(boardId, cardId).catch(() => null);
+  // Small retry margin kept as a safety net for genuine read-after-write
+  // lag on top of the id fix above — cheap, and harmless if unneeded.
+  const REREAD_DELAYS_MS = [400, 800, 1600];
+  let created = null;
+  for (const delayMs of REREAD_DELAYS_MS) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    invalidate(boardId);
+    created = await refetchTeamTask(boardId, actualCardId).catch(() => null);
+    if (created) break;
+  }
   if (!created) {
     throw new Error(
-      `Запрос на создание карточки ${cardId} прошёл без ошибки Mattermost, но карточка не нашлась при повторном ` +
-        `чтении борда — вероятна проблема с форматом блока (это неподтверждённый вызов, см. комментарий над ` +
-        `createAutomationTask). Проверьте карточку в Mattermost вручную и сообщите об этой ошибке.`
+      `Карточка ${actualCardId} создана в Mattermost (запрос прошёл без ошибки), но не нашлась при повторном чтении ` +
+        `борда даже после нескольких попыток — проверьте карточку в Mattermost вручную (она может существовать) и ` +
+        `НЕ повторяйте запрос на всякий случай, это создаст дубликат. Сообщите об этой ошибке для диагностики.`
     );
   }
   return created;
 }
+
+// Temporary-but-safe request/response logging for the whole /api/automation/*
+// surface — gated behind the SAME DEBUG_MATTERMOST flag already used for the
+// low-level Mattermost-call dump (see asJsonOrThrow in mattermostClient.js),
+// so turning debug on shows both "what did n8n send/get" (this) and "what
+// did Mattermost itself say" (that) in one place. NEVER logs the API key
+// (headers aren't logged at all) or raw file bytes (multipart bodies are
+// logged as a placeholder, not their content). Meant to be temporary —
+// turn DEBUG_MATTERMOST back off once done diagnosing.
+app.use('/api/automation', (req, res, next) => {
+  if (!config.debug) return next();
+  const startedAt = Date.now();
+  const isMultipart = String(req.headers['content-type'] || '').startsWith('multipart/form-data');
+  console.log(
+    `[automation:debug] → ${req.method} ${req.originalUrl}` +
+      (isMultipart ? ' (multipart body, не логируется)' : ` body=${JSON.stringify(req.body || {}).slice(0, 2000)}`)
+  );
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    console.log(
+      `[automation:debug] ← ${req.method} ${req.originalUrl} status=${res.statusCode} (${Date.now() - startedAt}мс) body=${JSON.stringify(body).slice(0, 3000)}`
+    );
+    return originalJson(body);
+  };
+  next();
+});
 
 // GET /api/automation/projects
 app.get('/api/automation/projects', requireAutomationAuth, async (req, res) => {
