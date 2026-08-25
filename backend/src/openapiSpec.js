@@ -172,6 +172,53 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/projects/{projectId}/credentials': {
+        get: {
+          summary: 'Реальные креды публикации соцсетей для ОДНОГО проекта (опционально — для ОДНОЙ сети)',
+          description:
+            'Единственный эндпоинт автоматизации, который отдаёт настоящие секреты (то, что заполнено в попапе ' +
+            '"Редактировать" на /projects). Одна выдача — один проект: нельзя одним вызовом получить креды сразу ' +
+            'всех клиентов. Без параметра network — отдаёт объект со всеми настроенными сетями сразу (ключи из ' +
+            'ig/tg/vk/ok/max, только реально заполненные). С параметром network — отдаёт креды ТОЛЬКО этой сети ' +
+            '(меньше данных за вызов, если публикатор и так уже знает, в какую сеть публикует). Формат содержимого ' +
+            'каждой сети — на усмотрение разработчика автоматизации. Никогда не логируется даже при включённом ' +
+            'DEBUG_MATTERMOST.',
+          security: [{ automationApiKey: [] }],
+          parameters: [
+            { name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
+            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] }, description: 'если задан — отдать креды только этой сети, а не всех сразу' },
+          ],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      projectId: { type: 'string' },
+                      network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'], description: 'присутствует в ответе, только если был передан в запросе' },
+                      credentials: {
+                        description:
+                          'БЕЗ network в запросе — объект с ключами ig/tg/vk/ok/max (только заполненные). ' +
+                          'С network в запросе — объект с кредами именно этой сети напрямую (не вложен под ключ сети ' +
+                          'ещё раз), либо null, если для этой сети у проекта ничего не настроено.',
+                        oneOf: [
+                          { type: 'object', additionalProperties: true, example: { ig: { accessToken: '...', igUserId: '...' }, tg: { botToken: '...', chatId: '...' } } },
+                          { type: 'object', additionalProperties: true, example: { accessToken: '...', igUserId: '...' } },
+                          { type: 'null' },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'projectId не указан/не найден, либо network не из списка ig/tg/vk/ok/max', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
       '/api/automation/tasks': {
         get: {
           summary: 'Карточки по проекту и статусу',

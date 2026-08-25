@@ -301,7 +301,7 @@ function requireStaffBoardId(res) {
 // automation flow never needs an actual team member's password. See the
 // route group below (search "/api/automation/") and docs/N8N_AUTOMATION.md.
 // ---------------------------------------------------------------------------
-const AUTOMATION_ACTOR = 'n8n-автоматизация';
+const AUTOMATION_ACTOR = 'автоматизация';
 
 function requireAutomationAuth(req, res, next) {
   if (!config.automationApiKey) {
@@ -1750,10 +1750,9 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
 // same payload as the internal /api/projects (staffAuth) — this deliberately
 // leaves out the client cabinet link token and logo, neither of which an
 // automation needs, so this key can't be used to enumerate live client
-// links. social_credentials is ALSO left out on purpose — that stays a
-// direct-Postgres read via the dedicated n8n role (see
-// docs/N8N_AUTOMATION.md §1), so a leaked automation API key alone can never
-// hand over publishing credentials for every social network.
+// links. social_credentials is STILL left out of THIS response (bulk list of
+// every project) — it's only ever returned one project at a time, and only
+// by the dedicated endpoint below, never bundled into a listing call.
 async function getAutomationProjects(boardId) {
   const { board } = await loadBoard(boardId);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
@@ -1773,6 +1772,75 @@ async function getAutomationProjects(boardId) {
       };
     })
   );
+}
+
+// GET /api/automation/projects/:projectId/credentials — the ONE exception to
+// "the automation API never hands out real secrets" above. Added 2026-08-25
+// at Дмитрий's explicit request, to close the loop of the publishing flow
+// entirely through this API instead of needing a second connection: 1) GET
+// /api/automation/tasks — what's ready to publish; 2) THIS — the creds for
+// that task's project; 3) POST .../publish — report back. Direct-Postgres
+// access via the dedicated `n8n` role (docs/N8N_AUTOMATION.md §1) still
+// works exactly as before and stays documented as an alternative — this is
+// additive, not a replacement.
+//
+// Security tradeoff this accepts, spelled out because it's a real one: a
+// leaked/compromised AUTOMATION_API_KEY can now read real IG/TG/VK/OK/MAX
+// publishing credentials for any project on the board (one project per call,
+// see below — never a bulk dump of every client at once). Before this
+// endpoint, that key could only read/write task and project *metadata* —
+// none of it a live credential. Treat AUTOMATION_API_KEY with the same care
+// as any of the credentials it can now unlock (rotate it if the automation
+// side is ever suspected compromised).
+//
+// One project's worth of credentials per call, never every project at once —
+// so a single call can't be used to enumerate every client's secrets in one
+// shot; the caller still has to already know (or separately look up via
+// GET /api/automation/projects) which projectId it wants.
+//
+// `network` (optional, ?network=ig|tg|vk|ok|max) narrows further to ONE
+// network's credential object — added 2026-08-25 at Дмитрий's request so a
+// publisher that already knows which network it's about to post to doesn't
+// have to pull every OTHER network's secret along with it on every single
+// call (smaller payload, and each call now only ever carries the one secret
+// actually needed for that publish). Omit it to get the full per-network map
+// back, unchanged from before.
+//
+// NEVER logged: the /api/automation debug-response logger below explicitly
+// skips this route (see isCredentialsRoute there) so turning DEBUG_MATTERMOST
+// on for unrelated diagnosis never writes real secrets to stdout/logs.
+async function getAutomationProjectCredentials(boardId, projectId, network) {
+  const { board } = await loadBoard(boardId);
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
+  if (!projectProp) {
+    throw badRequest('project_property_not_found', `Свойство "${config.projectPropertyName}" не найдено на борде.`);
+  }
+  const id = String(projectId || '').trim();
+  if (!id) {
+    throw badRequest('project_id_required', 'projectId обязателен — id опции свойства "Проект" (см. GET /api/automation/projects).');
+  }
+  const projectOption = (projectProp.options || []).find((o) => o.id === id);
+  if (!projectOption) {
+    const available = (projectProp.options || []).map((o) => `${o.value} (${o.id})`).join(', ') || '(нет опций)';
+    throw badRequest('project_not_found', `projectId "${id}" не найден в свойстве "Проект". Доступные: ${available}.`);
+  }
+  const net = String(network || '').trim().toLowerCase();
+  if (net && !SOCIAL_LABELS[net]) {
+    throw badRequest('invalid_network', `Неизвестная соцсеть "${network}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
+  }
+  const settings = await projectSettings.getSettings(boardId, id);
+  // {} (not null/undefined) when nothing's been filled in yet — so the
+  // caller can uniformly do `credentials[network]` without a null-check,
+  // same convention socialCredentials already uses in projectSettings.js.
+  const all = settings.socialCredentials || {};
+  if (!net) return all;
+  // Single-network shape: the object for that network directly (not nested
+  // under its own key again — the caller already told us which network),
+  // or null if that specific network just isn't configured for this
+  // project yet (a normal, expected state — same "log and skip" case
+  // docs/N8N_AUTOMATION.md §4.4c already describes for the bulk shape, NOT
+  // an error on its own).
+  return net in all ? all[net] : null;
 }
 
 // GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
@@ -2047,8 +2115,16 @@ async function createAutomationTask(boardId, opts) {
 // (headers aren't logged at all) or raw file bytes (multipart bodies are
 // logged as a placeholder, not their content). Meant to be temporary —
 // turn DEBUG_MATTERMOST back off once done diagnosing.
+//
+// isCredentialsRoute: the ONE route on this surface that returns real
+// third-party secrets (see getAutomationProjectCredentials above) — its
+// response body is deliberately NEVER logged here, request or response,
+// regardless of config.debug, so flipping DEBUG_MATTERMOST on for an
+// unrelated media/task issue can't accidentally write live IG/TG/VK/OK/MAX
+// credentials to stdout/container logs.
 app.use('/api/automation', (req, res, next) => {
-  if (!config.debug) return next();
+  const isCredentialsRoute = /\/projects\/[^/]+\/credentials$/.test(req.path);
+  if (!config.debug || isCredentialsRoute) return next();
   const startedAt = Date.now();
   const isMultipart = String(req.headers['content-type'] || '').startsWith('multipart/form-data');
   console.log(
@@ -2075,6 +2151,46 @@ app.get('/api/automation/projects', requireAutomationAuth, async (req, res) => {
   } catch (err) {
     console.error('[api] automation projects failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'automation_projects_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/projects/:projectId/credentials?network=<ig|tg|vk|ok|max>
+// — real publishing credentials for ONE project, see
+// getAutomationProjectCredentials above for the security tradeoff this
+// accepts (deliberate, per Дмитрий 2026-08-25) and why the debug logger
+// above skips this route on purpose.
+//
+// Without ?network — response unchanged from before:
+//   { projectId, credentials: {"ig": {...}, "tg": {...}, "vk": {...}, "ok": {...}, "max": {...}} }
+// only whichever networks actually have something filled in via the staff
+// "Редактировать" popup; a network with nothing set simply isn't a key (not
+// an empty {} under it), so callers can do `if (credentials.ig)`.
+//
+// WITH ?network — added 2026-08-25 so a caller that already knows which
+// network it's about to publish to doesn't have to receive every other
+// network's secret on every call:
+//   { projectId, network, credentials: {...} | null }
+// `credentials` here is that ONE network's object directly (not nested
+// under an `ig`/`tg`/... key again), or `null` if that project simply
+// doesn't have that network configured yet (a normal, expected state — see
+// docs/N8N_AUTOMATION.md §4.4c — not an error on its own).
+app.get('/api/automation/projects/:projectId/credentials', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const network = req.query.network != null ? String(req.query.network).trim() : '';
+  try {
+    const credentials = await getAutomationProjectCredentials(boardId, req.params.projectId, network);
+    const payload = { projectId: req.params.projectId, credentials };
+    if (network) payload.network = network.toLowerCase();
+    res.json(payload);
+  } catch (err) {
+    // Deliberately NOT logging err in a way that could ever include
+    // credentials — err here only ever carries badRequest()'s validation
+    // messages (bad/missing projectId, unknown network), never the
+    // credentials themselves, but keep it that way if this catch block is
+    // ever touched again.
+    console.error('[api] automation project credentials failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'automation_credentials_failed', message: err.message });
   }
 });
 

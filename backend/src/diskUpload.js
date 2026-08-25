@@ -49,12 +49,33 @@ function fetchWithAuth(url, opts) {
 // header when present, otherwise a fixed backoff) and tries once more before
 // surfacing the failure. See also MEDIA_UPLOAD_MAX_CONCURRENT in index.js,
 // which reduces how often this gets triggered in the first place.
-async function fetchWithAuthRetry429(url, opts, attempts) {
+// `label` is just for the [disk:429] debug line below (which WebDAV/OCS step
+// this was) — not sent to Nextcloud.
+async function fetchWithAuthRetry429(url, opts, attempts, label) {
   attempts = attempts || 2;
   let res;
   for (let i = 0; i < attempts; i++) {
     res = await fetchWithAuth(url, opts);
     if (res.status !== 429) return res;
+    // Temporary diagnostic (same DEBUG_MATTERMOST flag as everything else
+    // under config.debug) — added 2026-08-25 because our blind retry
+    // (fixed ~4-8s backoff) is clearly NOT outlasting whatever is rate-
+    // limiting us: real traffic still gets 429 even on the retry attempt.
+    // Logs whatever Nextcloud actually says — a real Retry-After value (if
+    // it sends one) tells us the true lockout window instead of guessing;
+    // the body sometimes names the specific limiter/rule that tripped.
+    // res.clone() so this never consumes the body the caller still needs.
+    if (config.debug) {
+      let bodyPreview = '';
+      try {
+        bodyPreview = (await res.clone().text()).slice(0, 500);
+      } catch (_e) {
+        bodyPreview = '(не удалось прочитать тело)';
+      }
+      console.log(
+        `[disk:429] ${label || url} — попытка ${i + 1}/${attempts}; Retry-After: ${res.headers.get('retry-after') || '(отсутствует)'}; тело: ${bodyPreview}`
+      );
+    }
     if (i < attempts - 1) {
       const retryAfterHeader = res.headers.get('retry-after');
       const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
@@ -95,7 +116,7 @@ async function ensureRemoteDir(relPath) {
   let cur = '';
   for (const seg of segments) {
     cur += '/' + seg;
-    const res = await fetchWithAuthRetry429(webdavUrl(cur), { method: 'MKCOL' });
+    const res = await fetchWithAuthRetry429(webdavUrl(cur), { method: 'MKCOL' }, undefined, 'MKCOL');
     if (res.status !== 201 && res.status !== 405) {
       throw new Error('Не удалось создать папку "' + cur + '" на диске (MKCOL, статус ' + res.status + ').');
     }
@@ -104,7 +125,7 @@ async function ensureRemoteDir(relPath) {
 
 async function putFile(relPath, buffer, mimeType) {
   const headers = mimeType ? { 'Content-Type': mimeType } : {};
-  const res = await fetchWithAuthRetry429(webdavUrl(relPath), { method: 'PUT', body: buffer, headers: headers });
+  const res = await fetchWithAuthRetry429(webdavUrl(relPath), { method: 'PUT', body: buffer, headers: headers }, undefined, 'PUT');
   if (res.status !== 201 && res.status !== 204) {
     throw new Error('Не удалось загрузить файл на диск (PUT, статус ' + res.status + ').');
   }
@@ -131,11 +152,16 @@ async function createPublicShare(relPath) {
     shareType: '3', // public link
     permissions: '1', // read-only — the team uploads it, nobody needs write access via the share
   });
-  const res = await fetchWithAuthRetry429(origin + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
-    method: 'POST',
-    headers: { 'OCS-APIRequest': 'true', 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body: body.toString(),
-  });
+  const res = await fetchWithAuthRetry429(
+    origin + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json',
+    {
+      method: 'POST',
+      headers: { 'OCS-APIRequest': 'true', 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: body.toString(),
+    },
+    undefined,
+    'share-create'
+  );
   const data = await res.json().catch(() => null);
   const url = data && data.ocs && data.ocs.data && data.ocs.data.url;
   if (!res.ok || !url) {
