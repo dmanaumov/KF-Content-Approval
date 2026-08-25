@@ -1695,11 +1695,23 @@ app.get('/api/disk-embed', async (req, res) => {
   try {
     const upstream = await streamDiskFile(shareUrl, req.headers.range);
     res.status(upstream.status);
-    for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control']) {
+    for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range', 'etag', 'last-modified']) {
       const v = upstream.headers.get(h);
       if (v) res.setHeader(h, v);
     }
     if (!res.hasHeader('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
+    // Every request for this file goes agency-server → our Node process →
+    // disk.kontentferma → back — two hops, and disk.kontentferma isn't fast.
+    // A share link's bytes never change once uploaded (see comment on
+    // kindCache above), so it's safe to tell the browser to just keep its
+    // own copy for a week instead of re-walking that whole path on every
+    // repeat visit/reopen — this is what was making media feel "very slow"
+    // even for material already seen. Overrides whatever (if anything)
+    // disk.kontentferma itself sent, since a self-hosted Nextcloud share
+    // often sends weak/no caching by default.
+    if (upstream.status === 200 || upstream.status === 206) {
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    }
     upstream.body.pipe(res);
   } catch (err) {
     console.error('[api] disk-embed proxy failed:', err.message);
