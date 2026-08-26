@@ -281,12 +281,14 @@ function buildOpenApiSpec() {
           summary: 'Заменить ТЕКСТ поста (тело) на существующей карточке',
           description:
             'Перезаписывает caption (содержимое карточки — то же, что отдаёт GET .../tasks как caption). НЕ трогает ' +
-            'title (тему) и НЕ трогает keywords (ключевые слова) — для них POST .../keywords ниже.',
+            'title (тему) и НЕ трогает keywords (ключевые слова) — для них POST .../keywords ниже. Ответ включает ' +
+            'bytesSaved — UTF-8 размер СОХРАНЁННОГО текста в байтах, посчитан после повторного чтения карточки, а ' +
+            'не эхо запроса — так можно подтвердить, что сохранение реально прошло и ничего не обрезалось.',
           security: [{ automationApiKey: [] }],
           parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['text'], properties: { text: { type: 'string', description: 'новый текст поста, непустой' } } } } } },
           responses: {
-            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' }, bytesSaved: { type: 'integer', description: 'UTF-8 размер task.caption в байтах после сохранения, из свежего чтения карточки' } } } } } },
             400: { description: 'text пустой', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             401: { $ref: '#/components/responses/Unauthorized' },
             502: { description: 'Сбой записи в Mattermost', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
@@ -360,7 +362,7 @@ function buildOpenApiSpec() {
             },
           },
           responses: {
-            201: { description: 'Создано', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            201: { description: 'Создано', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' }, bytesSaved: { type: 'integer', description: 'UTF-8 размер task.caption в байтах, посчитан ПОСЛЕ повторного чтения карточки — подтверждает, что текст поста реально сохранился, а не эхо запроса' } } } } } },
             400: { description: 'Неверные параметры', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             401: { $ref: '#/components/responses/Unauthorized' },
           },

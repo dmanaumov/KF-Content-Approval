@@ -1017,7 +1017,10 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     // Best-effort — see taskCreators.js. Never blocks the response: the
     // card already exists in Mattermost by this point regardless.
     await taskCreators.setCreator(boardId, task.id, req.teamSession.user.id);
-    res.status(201).json({ task });
+    // task.caption comes from createAutomationTask's own fresh re-read after
+    // creation — bytesSaved lets the caller confirm the post text actually
+    // landed, same reasoning as the /text update routes below.
+    res.status(201).json({ task, bytesSaved: Buffer.byteLength(task.caption || '', 'utf8') });
   } catch (err) {
     console.error('[api] team create task failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
@@ -1054,7 +1057,12 @@ app.post('/api/team/tasks/:taskId/text', teamAuth.requireTeamAuth, async (req, r
   if (!text.trim()) return res.status(400).json({ error: 'text_required' });
   try {
     const updated = await updateTaskTextTeam(boardId, req.params.taskId, text, teamActorName(req));
-    res.json({ task: updated });
+    // updated.caption comes from a fresh re-read of the card (refetchTeamTask
+    // inside updateTaskTextTeam), NOT an echo of the request body — so
+    // bytesSaved genuinely confirms what Mattermost has right now, not just
+    // what was sent. Added 2026-08-26: the response had no way to tell "did
+    // this actually save" without eyeballing the whole caption.
+    res.json({ task: updated, bytesSaved: Buffer.byteLength(updated.caption || '', 'utf8') });
   } catch (err) {
     console.error('[api] team text update failed:', err.message);
     res.status(502).json({ error: 'text_update_failed', message: err.message });
@@ -2426,7 +2434,9 @@ app.post('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
   if (!boardId) return;
   try {
     const task = await createAutomationTask(boardId, req.body || {});
-    res.status(201).json({ task });
+    // See POST /api/automation/tasks/:taskId/text below for why this is a
+    // fresh-read byte count, not an echo of req.body.text.
+    res.status(201).json({ task, bytesSaved: Buffer.byteLength(task.caption || '', 'utf8') });
   } catch (err) {
     console.error('[api] automation create task failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
@@ -2473,7 +2483,15 @@ app.post('/api/automation/tasks/:taskId/text', requireAutomationAuth, async (req
   if (!text.trim()) return res.status(400).json({ error: 'text_required' });
   try {
     const updated = await updateTaskTextTeam(boardId, req.params.taskId, text, AUTOMATION_ACTOR);
-    res.json({ task: updated });
+    // bytesSaved = UTF-8 byte length of updated.caption, which comes from a
+    // FRESH re-read of the card after the write (see updateTaskTextTeam →
+    // refetchTeamTask) — not an echo of req.body.text. So this genuinely
+    // confirms what Mattermost is holding right now, including catching a
+    // silent truncation/mismatch (compare it to Buffer.byteLength(text,
+    // 'utf8') on your side — if they differ, the save did NOT go through as
+    // sent). Added 2026-08-26 per developer request — the response gave no
+    // way to verify a save actually stuck without diffing the whole caption.
+    res.json({ task: updated, bytesSaved: Buffer.byteLength(updated.caption || '', 'utf8') });
   } catch (err) {
     console.error('[api] automation text update failed:', err.message);
     res.status(502).json({ error: 'text_update_failed', message: err.message });
