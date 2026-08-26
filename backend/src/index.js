@@ -2500,6 +2500,32 @@ app.post('/api/automation/tasks/:taskId/keywords', requireAutomationAuth, async 
   }
 });
 
+// POST /api/automation/tasks/:taskId/status — body: { status: <raw label> }.
+// Moves an EXISTING card to ANY option of the "Статус" property — NOT just
+// the 5 client-facing ones (statusOptionLabels), same as the team cabinet's
+// own status control. Added 2026-08-26 for the exact gap the automation
+// developer asked about: a card generated in one internal stage (e.g.
+// "В процессе") needs to be moved to "На согласование" (or any other stage)
+// once generation/review is done — this is a DIFFERENT thing from
+// POST .../text (post body) and POST .../publish (the one-way "ОПУБЛИКОВАНО"
+// + URL flip below) — use THIS route for any other status transition.
+// Reuses setStatusByRawLabel — same function POST /api/team/tasks/:taskId/status
+// calls — which leaves a "СТАТУС ИЗМЕНЁН (...)" audit comment and re-reads
+// the card afterward to confirm the write actually stuck.
+app.post('/api/automation/tasks/:taskId/status', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const status = String((req.body && req.body.status) || '').trim();
+  if (!status) return res.status(400).json({ error: 'status_required', message: 'status обязателен — точный текст опции свойства "Статус" в Mattermost.' });
+  try {
+    const updated = await setStatusByRawLabel(boardId, req.params.taskId, status, AUTOMATION_ACTOR);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] automation status update failed:', err.message);
+    res.status(502).json({ error: 'status_update_failed', message: err.message });
+  }
+});
+
 // POST /api/automation/tasks/:taskId/media-link — body: { url }. Same as the
 // /team route of the same shape, just behind the automation API key.
 app.post('/api/automation/tasks/:taskId/media-link', requireAutomationAuth, async (req, res) => {

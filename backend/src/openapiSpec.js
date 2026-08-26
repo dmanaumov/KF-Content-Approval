@@ -366,6 +366,30 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/tasks/{taskId}/status': {
+        post: {
+          summary: 'Перевести карточку в ЛЮБОЙ статус (не только 5 клиентских)',
+          description:
+            'Например, перевести только что сгенерированную карточку из внутренней стадии в "На согласование". ' +
+            'Принимает точный текст ЛЮБОЙ опции свойства "Статус" в Mattermost — не только 5 клиентских ' +
+            '(waiting/changes/approved/published/archived), но и внутренние производственные стадии ("В процессе" ' +
+            'и т.п.), так же как статус-контрол в кабинете команды. Это ДРУГОЙ метод, чем POST .../text (текст ' +
+            'поста) и POST .../publish (специальный одноразовый переход в "ОПУБЛИКОВАНО" + запись ссылки) — для ' +
+            'любого ОСТАЛЬНОГО перехода статуса используйте именно этот.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['status'], properties: { status: { type: 'string', description: 'точный текст опции свойства "Статус" в Mattermost, например "На согласование"' } } } } },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'status не указан', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Опция не найдена на борде, либо сбой записи в Mattermost', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
       '/api/automation/tasks/{taskId}/media-link': {
         post: {
           summary: 'Прикрепить уже готовую ссылку disk.kontentferma к карточке',
