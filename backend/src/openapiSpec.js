@@ -156,6 +156,7 @@ function buildOpenApiSpec() {
                           properties: {
                             id: { type: 'string' },
                             label: { type: 'string' },
+                            isAiProject: { type: 'boolean', description: 'Staff-set "ИИ-проект" checkbox from the edit popup.' },
                             publishTimeMsk: { type: 'string', nullable: true, example: '10:00' },
                             postsPerMonth: { type: 'string', nullable: true },
                             projectManager: { type: 'string', nullable: true },

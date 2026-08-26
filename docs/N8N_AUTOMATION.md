@@ -19,8 +19,16 @@ n8n** — там помечено, что взято прямо из вашей 
 
 ```
 GET  /api/automation/projects                     — список проектов + их
-                                                      publishTimeMsk/postsPerMonth/
-                                                      projectManager/startDate
+                                                      isAiProject/publishTimeMsk/
+                                                      postsPerMonth/projectManager/
+                                                      startDate. isAiProject — это
+                                                      staff-флажок "ИИ-проект" из
+                                                      попапа "Редактировать" (галочка
+                                                      рядом с лого), НЕ признак
+                                                      заполненности промтов — можно
+                                                      фильтровать по нему, чтобы не
+                                                      хардкодить id/название проекта
+                                                      на стороне автоматизации
 GET  /api/automation/tasks?project=<id>&status=<..>&date=<..>
                                                       — карточки ПО ПРОЕКТУ И СТАТУСУ
                                                       (общий метод, не только "на

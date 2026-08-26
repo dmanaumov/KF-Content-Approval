@@ -61,6 +61,20 @@ async function initSchema() {
       ADD COLUMN IF NOT EXISTS post_prompt text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS image_prompt text NOT NULL DEFAULT '';
   `);
+  // Explicit "is this an AI project" toggle — a staff-set checkbox (see the
+  // "Настройки" tab's edit popup, next to the logo field), NOT derived from
+  // whether the 4 AI prompts below happen to be filled in. Added because the
+  // old prompts-filled-ness heuristic (see aiStatusOf() in projectSettings.js)
+  // misclassifies real projects as new AI clients start appearing — a
+  // project shouldn't light up as "AI" just because someone pasted text into
+  // a prompt box, and a real AI project should show as "needs attention"
+  // (not "regular project") even before any prompt is filled in yet. This
+  // column is now the ground truth; aiStatusOf() only distinguishes
+  // fully-configured vs needs-attention AMONG projects already flagged here.
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS is_ai_project boolean NOT NULL DEFAULT false;
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);

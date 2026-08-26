@@ -33,13 +33,24 @@
 }
 .proj-list{display:grid;gap:12px}
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
-/* AI-project cards: full AI (all four prompts filled) gets the AI accent —
-   20% tinted fill + purple frame; partially-configured projects get the
-   same avatar but an orange "needs attention" frame instead. */
-.proj-card.ai{background:rgba(155,90,246,.20);border-color:var(--ai);box-shadow:0 0 0 1px var(--ai) inset,0 10px 24px rgba(155,90,246,.16)}
+/* AI-project cards: driven by the "ИИ-проект" checkbox (project_settings.
+   is_ai_project), not by prompt completeness — see aiStatusOf() in
+   projectSettings.js. Flagged + all four prompts filled gets the AI accent;
+   flagged but not fully configured gets the same avatar with an orange
+   "needs attention" frame instead. Toned down ~50% from the original (was
+   too saturated) — halved alphas throughout, border softened from a solid
+   fill to a tinted one. */
+.proj-card.ai{background:rgba(155,90,246,.10);border-color:rgba(155,90,246,.5);box-shadow:0 0 0 1px rgba(155,90,246,.5) inset,0 10px 24px rgba(155,90,246,.08)}
 .proj-card.attention{background:rgba(238,130,8,.12);border-color:#EE8208;box-shadow:0 0 0 1px #EE8208 inset}
 .proj-ai-avatar-wrap{position:relative;display:inline-flex;margin-bottom:2px}
-.proj-ai-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px #fff,0 3px 10px rgba(155,90,246,.5),inset 0 -6px 9px rgba(0,0,0,.35),inset 0 5px 8px rgba(255,255,255,.10)}
+.proj-ai-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px #fff,0 3px 10px rgba(155,90,246,.25),inset 0 -6px 9px rgba(0,0,0,.35),inset 0 5px 8px rgba(255,255,255,.10)}
+
+/* "Это ИИ-проект" checkbox in the edit popup, next to the logo field. */
+.ai-flag-check{display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 10px;background:#FAFBFB;border:1px solid var(--line);border-radius:12px;font-size:13px;cursor:pointer}
+.ai-flag-check input{width:16px;height:16px;accent-color:var(--ai);cursor:pointer;flex:none}
+.ai-flag-avatar{width:22px;height:22px;border-radius:50%;object-fit:cover;flex:none;box-shadow:0 0 0 1px rgba(155,90,246,.35)}
+.ai-flag-check span{color:var(--ink)}
+.ai-flag-check i{color:var(--muted);font-style:normal}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
 .proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
 /* overflow was hidden here, but the KPI dot (and its tooltip) needs to

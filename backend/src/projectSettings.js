@@ -58,16 +58,13 @@ async function getToken(boardId, projectId) {
 // Token + logo URL in one go — used by the staff project-list page, which
 // needs both per project and would otherwise call ensureRow() twice (once
 // via getToken, once via getSettings) for every row. Also returns aiStatus —
-// whether the project is "AI" based on the four generation prompts (see
-// aiStatusOf() below), which the staff list renders as a highlight + avatar —
-// and postsPerMonth (the KPI target, reused as-is from the planning tab; see
-// computeScheduleStatus() in index.js for how it turns into a green/amber/red
-// "в графике" indicator).
+// whether the project is "AI" (see aiStatusOf() below), which the staff list
+// renders as a highlight + avatar (same treatment "кот Василий" already has).
 async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `SELECT link_token, logo_url, posts_per_month, strategy_prompt, planning_prompt,
+    `SELECT link_token, logo_url, is_ai_project, strategy_prompt, planning_prompt,
             post_prompt, image_prompt
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
@@ -77,18 +74,24 @@ async function getTokenAndLogo(boardId, projectId) {
     token: row.link_token || '',
     logoUrl: row.logo_url || '',
     aiStatus: aiStatusOf(row),
-    postsPerMonth: row.posts_per_month || '',
   };
 }
 
-// How "AI" a project is, purely from whether the four generation prompts are
-// filled in: all four non-empty = 'ai', at least one but not all = 'partial'
-// (needs attention), none = 'none' (a regular project). Kept in sync with
-// frontend/projects.js's own re-classification on save.
+// How "AI" a project is. Ground truth is the explicit `is_ai_project`
+// checkbox (staff-set, next to the logo field in the edit popup) — NOT
+// whether the four generation prompts happen to be filled in. A project not
+// flagged here never highlights as AI, no matter what's typed into the
+// prompt boxes ('none'). A project THAT IS flagged shows 'ai' once all four
+// prompts are filled in, or 'partial' (needs attention) otherwise — even at
+// zero prompts filled, since being flagged as AI but unconfigured is itself
+// something the team should notice. (Earlier version derived this purely
+// from prompt completeness, which started misclassifying real projects once
+// more AI clients began appearing — see db.js's comment on is_ai_project.)
 function aiStatusOf(row) {
+  if (!row.is_ai_project) return 'none';
   const filled = ['strategy_prompt', 'planning_prompt', 'post_prompt', 'image_prompt']
     .filter((k) => String(row[k] || '').trim()).length;
-  return filled === 4 ? 'ai' : filled > 0 ? 'partial' : 'none';
+  return filled === 4 ? 'ai' : 'partial';
 }
 
 // Generates and stores a brand new token, overwriting (invalidating)
@@ -123,7 +126,7 @@ async function getSettings(boardId, projectId) {
   await ensureRow(boardId, projectId); // guarantees a row exists to read
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `SELECT logo_url, social_credentials, start_date, posts_per_month,
+    `SELECT logo_url, social_credentials, is_ai_project, start_date, posts_per_month,
             publish_time_msk, project_manager, strategy_prompt, planning_prompt,
             post_prompt, image_prompt
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
@@ -133,6 +136,7 @@ async function getSettings(boardId, projectId) {
   return {
     logoUrl: row.logo_url || '',
     socialCredentials: row.social_credentials || {},
+    isAiProject: !!row.is_ai_project,
     startDate: row.start_date || '',
     postsPerMonth: row.posts_per_month || '',
     publishTimeMsk: row.publish_time_msk || '',
@@ -155,7 +159,7 @@ function textOrEmpty(value) {
 }
 
 async function updateSettings(boardId, projectId, {
-  logoUrl, socialCredentials,
+  logoUrl, socialCredentials, isAiProject,
   startDate, postsPerMonth, publishTimeMsk, projectManager,
   strategyPrompt, planningPrompt, postPrompt, imagePrompt,
 }) {
@@ -176,18 +180,19 @@ async function updateSettings(boardId, projectId, {
     `UPDATE project_settings
      SET logo_url = $3,
          social_credentials = $4::jsonb,
-         start_date = $5,
-         posts_per_month = $6,
-         publish_time_msk = $7,
-         project_manager = $8,
-         strategy_prompt = $9,
-         planning_prompt = $10,
-         post_prompt = $11,
-         image_prompt = $12,
+         is_ai_project = $5,
+         start_date = $6,
+         posts_per_month = $7,
+         publish_time_msk = $8,
+         project_manager = $9,
+         strategy_prompt = $10,
+         planning_prompt = $11,
+         post_prompt = $12,
+         image_prompt = $13,
          updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
     [
-      boardId, projectId, logoUrl, JSON.stringify(socialCredentials),
+      boardId, projectId, logoUrl, JSON.stringify(socialCredentials), !!isAiProject,
       textOrEmpty(startDate), textOrEmpty(postsPerMonth), textOrEmpty(publishTimeMsk),
       textOrEmpty(projectManager),
       textOrEmpty(strategyPrompt), textOrEmpty(planningPrompt),

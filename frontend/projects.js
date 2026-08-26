@@ -196,14 +196,6 @@ async function load() {
   const loading = document.getElementById('loading');
   loading.hidden = false;
   try {
-    // Роль текущего зрителя (кто из команды перед нами) — показываем кнопку
-    // «CEO-дашборд» только тем, у кого есть доступ к /ceo («Статистика»
-    // доступна всем админам, она не скрывается).
-    const meRes = await fetch('/api/staff/me');
-    if (meRes.ok) {
-      const me = await meRes.json();
-      document.getElementById('ceoLink').hidden = !(me.access && me.access.ceo);
-    }
     const res = await fetch('/api/projects');
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
@@ -307,6 +299,7 @@ async function openEdit(projectId, label) {
   document.getElementById('editError').hidden = true;
   document.getElementById('editLogoUrl').value = '';
   document.getElementById('editLogoPreview').hidden = true;
+  document.getElementById('editIsAiProject').checked = false;
   credTextareas().forEach((ta) => { ta.value = ''; });
   document.getElementById('editStartDate').value = '';
   document.getElementById('editProjectManager').value = '';
@@ -325,6 +318,7 @@ async function openEdit(projectId, label) {
     if (!res.ok) throw new Error(data.message || data.error);
     document.getElementById('editLogoUrl').value = data.logoUrl || '';
     updateLogoPreview();
+    document.getElementById('editIsAiProject').checked = !!data.isAiProject;
     document.getElementById('editStartDate').value = data.startDate || '';
     document.getElementById('editProjectManager').value = data.projectManager || '';
     document.getElementById('editPostsPerMonth').value = data.postsPerMonth || '';
@@ -389,6 +383,7 @@ async function saveEdit() {
       body: JSON.stringify({
         logoUrl,
         socialCredentials,
+        isAiProject: document.getElementById('editIsAiProject').checked,
         startDate: document.getElementById('editStartDate').value,
         projectManager: document.getElementById('editProjectManager').value.trim(),
         postsPerMonth: document.getElementById('editPostsPerMonth').value.trim(),

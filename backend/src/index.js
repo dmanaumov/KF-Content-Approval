@@ -1837,6 +1837,10 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
 // links. social_credentials is STILL left out of THIS response (bulk list of
 // every project) — it's only ever returned one project at a time, and only
 // by the dedicated endpoint below, never bundled into a listing call.
+// isAiProject (added 2026-08-26) — the staff-set "ИИ-проект" checkbox from
+// the edit popup (project_settings.is_ai_project), so an automation flow can
+// filter to just the projects it should be generating content for instead of
+// hardcoding project ids/names on its own side.
 async function getAutomationProjects(boardId) {
   const { board } = await loadBoard(boardId);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
@@ -1849,6 +1853,7 @@ async function getAutomationProjects(boardId) {
       return {
         id: o.id,
         label: o.value,
+        isAiProject: settings.isAiProject,
         publishTimeMsk: settings.publishTimeMsk,
         postsPerMonth: settings.postsPerMonth,
         projectManager: settings.projectManager,
