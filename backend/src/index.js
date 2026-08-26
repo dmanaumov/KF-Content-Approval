@@ -1932,6 +1932,46 @@ async function getAutomationProjectCredentials(boardId, projectId, network) {
   return net in all ? all[net] : null;
 }
 
+// GET /api/automation/projects/:projectId/settings — the planning/profile
+// side of a project's settings: isAiProject, projectManager, startDate,
+// postsPerMonth, publishTimeMsk, and the four AI generation prompts
+// (strategyPrompt/planningPrompt/postPrompt/imagePrompt — set by staff in
+// the "ИИ настройки" tab of the /projects edit popup). Deliberately does
+// NOT include socialCredentials (its own dedicated, one-project-at-a-time
+// endpoint above — never bundled with anything else) or logoUrl/link token
+// (staff-internal only, no automation ever needs them). Added 2026-08-26 so
+// a content-generation automation can read a project's own prompts directly
+// instead of hardcoding them — this is the ONLY place they're exposed
+// outside the staff-only GET /api/projects/:projectId/settings.
+async function getAutomationProjectSettings(boardId, projectId) {
+  const { board } = await loadBoard(boardId);
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
+  if (!projectProp) {
+    throw badRequest('project_property_not_found', `Свойство "${config.projectPropertyName}" не найдено на борде.`);
+  }
+  const id = String(projectId || '').trim();
+  if (!id) {
+    throw badRequest('project_id_required', 'projectId обязателен — id опции свойства "Проект" (см. GET /api/automation/projects).');
+  }
+  const projectOption = (projectProp.options || []).find((o) => o.id === id);
+  if (!projectOption) {
+    const available = (projectProp.options || []).map((o) => `${o.value} (${o.id})`).join(', ') || '(нет опций)';
+    throw badRequest('project_not_found', `projectId "${id}" не найден в свойстве "Проект". Доступные: ${available}.`);
+  }
+  const settings = await projectSettings.getSettings(boardId, id);
+  return {
+    isAiProject: settings.isAiProject,
+    projectManager: settings.projectManager,
+    startDate: settings.startDate,
+    postsPerMonth: settings.postsPerMonth,
+    publishTimeMsk: settings.publishTimeMsk,
+    strategyPrompt: settings.strategyPrompt,
+    planningPrompt: settings.planningPrompt,
+    postPrompt: settings.postPrompt,
+    imagePrompt: settings.imagePrompt,
+  };
+}
+
 // GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
 // General-purpose task query — project is optional (omit for "across every
 // client"), status is REQUIRED: either one of the 5 friendly codes this app
@@ -2012,6 +2052,34 @@ async function getAutomationTasks(boardId, { project, status, date } = {}) {
   return result;
 }
 
+// GET /api/automation/tasks/:taskId — single-task lookup by id, same shape
+// as one entry from getAutomationTasks above (network/recommendedPublishTime
+// included) but without needing to already know the card's project/status/
+// date to find it in a list. skipProjectFilter+includeAllStatuses so this
+// can find a card in ANY internal production stage, not just the 5
+// client-facing statuses — same reasoning as refetchTeamTask.
+async function getAutomationTaskById(boardId, taskId) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) {
+    const err = new Error(`Карточка ${taskId} не найдена на борде.`);
+    err.code = 'task_not_found';
+    err.httpStatus = 404;
+    throw err;
+  }
+  await resolveDiskMediaKinds([task]);
+  await mediaOrder.applyStoredOrder(boardId, [task]);
+  const settings = await projectSettings.getSettings(boardId, task.projectId);
+  const networkMatch = String(task.title || '').match(SOCIAL_PREFIX_RE);
+  return {
+    ...task,
+    network: networkMatch ? networkMatch[1].toLowerCase() : null,
+    recommendedPublishTime: settings.publishTimeMsk || null,
+  };
+}
+
 // POST /api/automation/tasks/:taskId/publish — flips a card to
 // "ОПУБЛИКОВАНО" and records the live post URL, in ONE safe PATCH (merges
 // into the card's FULL existing properties — see the big warning on
@@ -2074,6 +2142,7 @@ async function createAutomationTask(boardId, opts) {
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
   const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
+  const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
 
   const title = String(opts.title || '').trim();
   if (!title) throw badRequest('title_required', 'title обязателен.');
@@ -2136,6 +2205,14 @@ async function createAutomationTask(boardId, opts) {
   // nothing is lost/duplicated, and every other property still gets set).
   if (opts.assigneeUserId && assigneeProp) {
     properties[assigneeProp.id] = String(opts.assigneeUserId);
+  }
+  // opts.keywords (optional, free text): "Ключевые слова/мысли" — the ONLY
+  // place a post's topic/brief/keywords live in Mattermost (see taskMapper.js
+  // — this property is NOT the post text/body, see the `text` var below for
+  // that). Best-effort, same reasoning as assigneeProp above — a missing/
+  // renamed property shouldn't block card creation, just skip setting it.
+  if (opts.keywords != null && keywordsProp) {
+    properties[keywordsProp.id] = String(opts.keywords);
   }
 
   const fullTitle = network ? `${network}: ${title}` : title;
@@ -2300,6 +2377,21 @@ app.get('/api/automation/projects/:projectId/credentials', requireAutomationAuth
   }
 });
 
+// GET /api/automation/projects/:projectId/settings — see
+// getAutomationProjectSettings above for exactly what's in/out of this
+// response (prompts + planning fields, no credentials, no logo/link token).
+app.get('/api/automation/projects/:projectId/settings', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const settings = await getAutomationProjectSettings(boardId, req.params.projectId);
+    res.json({ projectId: req.params.projectId, ...settings });
+  } catch (err) {
+    console.error('[api] automation project settings failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'automation_settings_failed', message: err.message });
+  }
+});
+
 // GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
 // status is required — see getAutomationTasks above for the two shapes it
 // accepts. project and date are both optional narrowing.
@@ -2319,7 +2411,16 @@ app.get('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
 });
 
 // POST /api/automation/tasks — body: { title, network?, projectId, text?,
-// publishDate?, status?, media?: string[] }. See createAutomationTask above.
+// keywords?, publishDate?, status?, media?: string[] }. See
+// createAutomationTask above. `title` is the post's TOPIC/headline (with the
+// optional `network` prefix — ig/tg/vk/ok/max — added to it automatically);
+// `text` is the actual post BODY (goes into card content, see "КРИТИЧЕСКИ
+// ВАЖНО" in project notes / GET /api/automation/tasks/:taskId's `caption`
+// field below); `keywords` is the free-text brief/keywords property
+// ("Ключевые слова/мысли" in Mattermost) — a separate field from both, never
+// shown to clients, meant for internal planning notes; `media` is an array
+// of already-existing disk.kontentferma share URLs (use media-upload/
+// media-import below to attach a NEW file instead).
 app.post('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
@@ -2329,6 +2430,73 @@ app.post('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
   } catch (err) {
     console.error('[api] automation create task failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/tasks/:taskId — one task by id, in its CURRENT full
+// composition: title (topic/headline, with any network prefix), caption
+// (the actual post BODY — card content, see "КРИТИЧЕСКИ ВАЖНО" in project
+// notes), keywords (the separate "Ключевые слова/мысли" brief property),
+// media (every attached photo/video/disk-link, in the client's chosen
+// order), status/statusLabel, publishDate, projectId/projectLabel, url
+// (the live post link once published), plus network/recommendedPublishTime
+// like the list endpoint above adds. Added so an automation doesn't have to
+// pull the WHOLE list (GET /api/automation/tasks?status=...) just to look up
+// one card it already knows the id of — e.g. right after creating it, or
+// before deciding whether to update it.
+app.get('/api/automation/tasks/:taskId', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const task = await getAutomationTaskById(boardId, req.params.taskId);
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] automation get task failed:', err.message);
+    res.status(err.httpStatus || (err.code === 'task_not_found' ? 404 : 502)).json({ error: err.code || 'task_lookup_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks/:taskId/text — body: { text }. Rewrites the
+// post BODY (card content — see "КРИТИЧЕСКИ ВАЖНО" in project notes; this is
+// what GET .../tasks returns as `caption`) on an EXISTING card. Reuses the
+// exact same function the /team cabinet's own text editor uses
+// (updateTaskTextTeam) — no "flip to changes"/client-facing marker comment,
+// just a plain "ТЕКСТ ОБНОВЛЁН (автоматизация)" audit note, same as team
+// edits. This does NOT touch `title` (the topic/headline) or `keywords` (the
+// separate brief property) — use POST /api/automation/tasks/:taskId/keywords
+// for that, or PATCH the title via Mattermost directly if it ever needs to
+// change (no automation route for that today, ask if you need one).
+app.post('/api/automation/tasks/:taskId/text', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '').replace(/\r\n/g, '\n');
+  if (!text.trim()) return res.status(400).json({ error: 'text_required' });
+  try {
+    const updated = await updateTaskTextTeam(boardId, req.params.taskId, text, AUTOMATION_ACTOR);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] automation text update failed:', err.message);
+    res.status(502).json({ error: 'text_update_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks/:taskId/keywords — body: { text }. Rewrites the
+// "Ключевые слова/мысли" property on an EXISTING card — the free-text
+// topic/keywords/brief field (see createAutomationTask's opts.keywords doc
+// above for how this differs from `text`/post body and `title`/headline).
+// Team-only concept, never shown to clients, so no marker comment is left
+// (mirrors POST /api/team/tasks/:taskId/keywords exactly, just behind the
+// automation API key instead of a team login).
+app.post('/api/automation/tasks/:taskId/keywords', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '');
+  try {
+    const updated = await updateTaskKeywords(boardId, req.params.taskId, text);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] automation keywords update failed:', err.message);
+    res.status(502).json({ error: 'keywords_update_failed', message: err.message });
   }
 });
 

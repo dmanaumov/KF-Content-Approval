@@ -52,10 +52,56 @@ GET  /api/automation/tasks?project=<id>&status=<..>&date=<..>
                                                       нии"/changes) — сразу оба
                                                       набора полей, независимо от
                                                       того, какой status запрошен
+GET  /api/automation/projects/{projectId}/settings — НОВОЕ: настройки ОДНОГО
+                                                      проекта — isAiProject,
+                                                      projectManager, startDate,
+                                                      postsPerMonth, publishTimeMsk
+                                                      И четыре промта для
+                                                      генерации контента
+                                                      (strategyPrompt/
+                                                      planningPrompt/postPrompt/
+                                                      imagePrompt). НЕ включает
+                                                      social_credentials (для них
+                                                      отдельный метод выше) и
+                                                      logoUrl/токен ссылки
+                                                      (staff-only, автоматизации
+                                                      не нужны)
+GET  /api/automation/tasks/{taskId}                 — НОВОЕ: одна карточка по id,
+                                                      её ТЕКУЩИЙ полный состав —
+                                                      title (тема поста), caption
+                                                      (текст поста), keywords
+                                                      (ключевые слова/мысли),
+                                                      media[] (медиа в порядке
+                                                      клиента), status/statusLabel,
+                                                      publishDate, projectId,
+                                                      url и т.д. — не нужно тянуть
+                                                      весь список через
+                                                      GET /api/automation/tasks,
+                                                      если id карточки уже известен
 POST /api/automation/tasks                         — создать карточку с нуля
                                                       {title, network?, projectId,
-                                                       text?, publishDate?, status?,
+                                                       text?, keywords?,
+                                                       publishDate?, status?,
                                                        media?: [url,...]}
+                                                      — где что: title = ТЕМА/
+                                                      заголовок поста, text =
+                                                      ТЕКСТ поста (тело),
+                                                      keywords = ключевые слова/
+                                                      мысли (отдельное поле,
+                                                      только для команды, клиенту
+                                                      не показывается), media =
+                                                      готовые ссылки disk.kontent-
+                                                      ferma (для загрузки нового
+                                                      файла — media-upload/
+                                                      media-import ниже)
+POST /api/automation/tasks/{taskId}/text            — НОВОЕ: заменить ТЕКСТ поста
+                                                      (тело, то же самое, что
+                                                      придёт как caption в GET) на
+                                                      существующей карточке {text}
+POST /api/automation/tasks/{taskId}/keywords        — НОВОЕ: заменить ключевые
+                                                      слова/мысли (НЕ текст поста,
+                                                      отдельное поле) на
+                                                      существующей карточке {text}
 POST /api/automation/tasks/{taskId}/media-link      — прикрепить готовую ссылку
                                                       disk.kontentferma {url}
                                                       (ТОЛЬКО уже существующую
@@ -207,6 +253,152 @@ Postgres-пароль роли `n8n` дают доступ к настоящим
 (что бы вы ни выбрали) — обращайтесь с ними как с любым другим реальным
 credential (не коммитить в git, не логировать, ротировать при подозрении на
 утечку).
+
+### Где именно живут тема, ключевые слова, текст поста и медиа — сводка
+
+Это то, что чаще всего путают при интеграции, поэтому отдельно, одним местом:
+
+| Что | Где | Метод чтения | Метод записи |
+|---|---|---|---|
+| **Тема / заголовок поста** | `card.title` в Mattermost (с необязательным префиксом сети `ig:`/`tg:`/...) | `title` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | только при создании — `title` в `POST /api/automation/tasks`. Изменить у существующей карточки через `/api/automation/*` сейчас нельзя (скажите, если нужен отдельный метод) |
+| **Ключевые слова / мысли** | отдельное текстовое свойство карточки «Ключевые слова/мысли» — НЕ то же самое, что текст поста, для команды/агентства, клиенту не показывается | `keywords` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `keywords` в `POST /api/automation/tasks` (при создании) или `POST /api/automation/tasks/{taskId}/keywords` (у существующей карточки) |
+| **Текст поста (тело)** | НЕ свойство карточки, а её содержимое (text-блоки Mattermost, «описание» карточки) | `caption` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `text` в `POST /api/automation/tasks` (при создании) или `POST /api/automation/tasks/{taskId}/text` (у существующей карточки) |
+| **Медиа (фото/видео)** | вложения карточки + ссылки disk.kontentferma, в порядке, который выбрал клиент | `media[]` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` (каждый объект — `{id, kind, source, shareUrl/imageUrl, name,...}`) | `media` (массив готовых ссылок) в `POST /api/automation/tasks` при создании; либо `POST .../media-link` \| `.../media-upload` \| `.../media-import` для существующей карточки (см. раздел 0 выше), порядок — `.../media-order` |
+
+**Важно не перепутать `keywords` и `caption` («текст поста»)** — это два разных поля с разным назначением: `keywords` — внутренний бриф/мысли для копирайтера, никогда не попадает к клиенту; `caption` — это и есть готовый текст поста, который в итоге публикуется в соцсеть.
+
+### `GET /api/automation/projects/{projectId}/settings` — подробно
+
+Настройки и промты ОДНОГО проекта (то, что агентство заполняет в попапе
+«Редактировать» → вкладка «ИИ настройки» на `/projects`). Не включает
+`social_credentials` (отдельный метод, см. выше) и лого/токен ссылки
+(не нужны автоматизации).
+
+```
+GET /api/automation/projects/ajdkoks6pmti4bk388yuarrjdnr/settings
+X-Api-Key: <ваш ключ>
+```
+```json
+{
+  "projectId": "ajdkoks6pmti4bk388yuarrjdnr",
+  "isAiProject": true,
+  "projectManager": "Ирина",
+  "startDate": "2026-03-01",
+  "postsPerMonth": "20",
+  "publishTimeMsk": "10:00",
+  "strategyPrompt": "Ты — SMM-стратег для бренда...",
+  "planningPrompt": "Составь план постов на месяц...",
+  "postPrompt": "Напиши текст поста на тему {{тема}}...",
+  "imagePrompt": "Сгенерируй изображение в стиле..."
+}
+```
+Все текстовые поля (`projectManager`, промты и т.д.) приходят пустой строкой
+`""`, если агентство их ещё не заполнило — это ожидаемое состояние, не
+ошибка. `isAiProject` — тот же флажок, что и в `GET /api/automation/projects`
+(ground truth, не выводится из заполненности промтов).
+
+**Ошибки**: `400 project_id_required` / `400 project_not_found`, `401` без
+`X-Api-Key`.
+
+### `GET /api/automation/tasks/{taskId}` — подробно
+
+Одна карточка по id, в её текущем полном составе — удобно сразу после
+создания (см. ниже) или перед тем, как обновлять карточку, не поднимая весь
+список.
+
+```
+GET /api/automation/tasks/bxyz1234567890abcdefghijk
+X-Api-Key: <ваш ключ>
+```
+```json
+{
+  "task": {
+    "id": "bxyz1234567890abcdefghijk",
+    "title": "ig: Летняя коллекция",
+    "status": "approved",
+    "statusLabel": "Согласовано НА ПУБЛИКАЦИЮ",
+    "publishDate": "2026-09-01",
+    "caption": "Встречайте новую летнюю коллекцию! ...",
+    "keywords": "пляж, отпуск, скидка 20%, акцент на молодую аудиторию",
+    "media": [
+      { "id": "f1", "kind": "image", "source": "mattermost", "name": "photo1.jpg" },
+      { "id": "d2", "kind": "video", "source": "disk", "shareUrl": "https://disk.kontentferma.com/s/..." }
+    ],
+    "projectId": "ajdkoks6pmti4bk388yuarrjdnr",
+    "projectLabel": "Бренд Х",
+    "url": null,
+    "feedback": "",
+    "clientComments": [],
+    "network": "ig",
+    "recommendedPublishTime": "10:00"
+  }
+}
+```
+Карточка находится независимо от статуса (в том числе внутренние
+производственные стадии вроде «В процессе», «ТЗ РАЙТЕРУ» — не только 5
+клиентских статусов).
+
+**Ошибки**: `404 task_not_found` (нет такой карточки на борде), `401` без
+`X-Api-Key`.
+
+### Создание и обновление карточки — сквозной пример
+
+Тема поста, ключевые слова и текст задаются в РАЗНЫХ полях — сравните:
+
+**1) Создать карточку** — тема (`title`), сеть (`network`), текст поста
+(`text`), ключевые слова (`keywords`) и уже готовое медиа — всё одним
+вызовом:
+```
+POST /api/automation/tasks
+X-Api-Key: <ваш ключ>
+Content-Type: application/json
+
+{
+  "title": "Летняя коллекция",
+  "network": "ig",
+  "projectId": "ajdkoks6pmti4bk388yuarrjdnr",
+  "text": "Встречайте новую летнюю коллекцию! Скидка 20% до конца месяца.",
+  "keywords": "пляж, отпуск, скидка 20%, акцент на молодую аудиторию",
+  "publishDate": "2026-09-01",
+  "media": ["https://disk.kontentferma.com/s/abc123"]
+}
+```
+```json
+{ "task": { "id": "bxyz1234567890abcdefghijk", "title": "ig: Летняя коллекция", "caption": "Встречайте новую летнюю коллекцию!...", "keywords": "пляж, отпуск, скидка 20%, акцент на молодую аудиторию", ... } }
+```
+(`network` сам допишется префиксом к `title` — на входе не нужно писать
+`ig:` руками, а `GET`/список потом снова распознает сеть по этому же
+префиксу).
+
+**2) Обновить ТОЛЬКО текст поста** (тему и ключевые слова не трогает):
+```
+POST /api/automation/tasks/bxyz1234567890abcdefghijk/text
+X-Api-Key: <ваш ключ>
+Content-Type: application/json
+
+{ "text": "Обновлённый текст: скидка теперь 25%!" }
+```
+```json
+{ "task": { "id": "bxyz1234567890abcdefghijk", "caption": "Обновлённый текст: скидка теперь 25%!", ... } }
+```
+
+**3) Обновить ТОЛЬКО ключевые слова** (текст поста не трогает):
+```
+POST /api/automation/tasks/bxyz1234567890abcdefghijk/keywords
+X-Api-Key: <ваш ключ>
+Content-Type: application/json
+
+{ "text": "пляж, отпуск, скидка 25%, UGC-фото" }
+```
+```json
+{ "task": { "id": "bxyz1234567890abcdefghijk", "keywords": "пляж, отпуск, скидка 25%, UGC-фото", ... } }
+```
+
+**Ошибки** (обоих update-методов): `400 text_required` (только у `.../text`
+— пустой текст поста запрещён; у `.../keywords` пустая строка разрешена,
+это способ очистить поле), `502 text_update_failed` /
+`502 keywords_update_failed` при сбое записи в Mattermost, `401` без
+`X-Api-Key`.
 
 ## Что уже есть (не нужно строить заново)
 

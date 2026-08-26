@@ -64,7 +64,8 @@ function buildOpenApiSpec() {
             network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'], nullable: true, description: 'только в GET /api/automation/tasks — разобрано из префикса названия' },
             recommendedPublishTime: { type: 'string', nullable: true, example: '10:00', description: 'только в GET /api/automation/tasks — из project_settings.publish_time_msk' },
             publishDate: { type: 'string', format: 'date', nullable: true },
-            caption: { type: 'string', description: 'текст поста' },
+            caption: { type: 'string', description: 'текст поста (тело — не путать с keywords ниже)' },
+            keywords: { type: 'string', description: 'ключевые слова/мысли — отдельное поле-бриф для команды, клиенту не показывается, не текст поста' },
             media: { type: 'array', items: { $ref: '#/components/schemas/Media' } },
             feedback: { type: 'string', nullable: true, description: 'текст последней правки клиента — только пока status=changes' },
             clientComments: {
@@ -220,6 +221,94 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/projects/{projectId}/settings': {
+        get: {
+          summary: 'Настройки и промты ОДНОГО проекта (не креды)',
+          description:
+            'isAiProject, projectManager, startDate, postsPerMonth, publishTimeMsk и четыре промта генерации ' +
+            '(strategyPrompt/planningPrompt/postPrompt/imagePrompt) — то, что заполнено в попапе "Редактировать" ' +
+            'на /projects. НЕ включает socialCredentials (отдельный эндпоинт /credentials выше) и logoUrl/токен ' +
+            'ссылки (staff-only). Незаполненные текстовые поля приходят пустой строкой, это не ошибка.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      projectId: { type: 'string' },
+                      isAiProject: { type: 'boolean' },
+                      projectManager: { type: 'string', nullable: true },
+                      startDate: { type: 'string', nullable: true },
+                      postsPerMonth: { type: 'string', nullable: true },
+                      publishTimeMsk: { type: 'string', nullable: true, example: '10:00' },
+                      strategyPrompt: { type: 'string' },
+                      planningPrompt: { type: 'string' },
+                      postPrompt: { type: 'string' },
+                      imagePrompt: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'projectId не указан/не найден', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
+      '/api/automation/tasks/{taskId}': {
+        get: {
+          summary: 'Одна карточка по id, в её текущем полном составе',
+          description:
+            'title (тема/заголовок), caption (текст поста), keywords (ключевые слова/мысли), media[] (в порядке ' +
+            'клиента), status/statusLabel, publishDate, projectId/projectLabel, url и т.д. — то же самое, что одна ' +
+            'запись из GET /api/automation/tasks, но без необходимости знать заранее проект/статус/дату карточки. ' +
+            'Ищет карточку в ЛЮБОМ статусе, включая внутренние производственные стадии.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            404: { description: 'Карточка не найдена', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/automation/tasks/{taskId}/text': {
+        post: {
+          summary: 'Заменить ТЕКСТ поста (тело) на существующей карточке',
+          description:
+            'Перезаписывает caption (содержимое карточки — то же, что отдаёт GET .../tasks как caption). НЕ трогает ' +
+            'title (тему) и НЕ трогает keywords (ключевые слова) — для них POST .../keywords ниже.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['text'], properties: { text: { type: 'string', description: 'новый текст поста, непустой' } } } } } },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'text пустой', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Сбой записи в Mattermost', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/automation/tasks/{taskId}/keywords': {
+        post: {
+          summary: 'Заменить ключевые слова/мысли на существующей карточке',
+          description:
+            'Перезаписывает отдельное свойство "Ключевые слова/мысли" — НЕ текст поста (caption) и не title. ' +
+            'Пустая строка разрешена (способ очистить поле). Команда/агентство-only, клиенту не показывается.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['text'], properties: { text: { type: 'string', description: 'новые ключевые слова/мысли, может быть пустой строкой' } } } } } },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Сбой записи в Mattermost', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
       '/api/automation/tasks': {
         get: {
           summary: 'Карточки по проекту и статусу',
@@ -260,7 +349,8 @@ function buildOpenApiSpec() {
                     title: { type: 'string', description: 'без префикса соцсети' },
                     network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] },
                     projectId: { type: 'string', description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
-                    text: { type: 'string', description: 'текст поста' },
+                    text: { type: 'string', description: 'текст поста (тело)' },
+                    keywords: { type: 'string', description: 'ключевые слова/мысли — отдельное поле-бриф, не текст поста' },
                     publishDate: { type: 'string', format: 'date' },
                     status: { type: 'string', description: 'точный текст опции "Статус"; если не задан — статус остаётся пустым' },
                     media: { type: 'array', items: { type: 'string' }, description: 'готовые ссылки disk.kontentferma' },
