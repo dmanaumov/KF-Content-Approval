@@ -269,4 +269,14 @@ module.exports = {
   // your own Mattermost password. Rotate by changing this value and updating
   // n8n's credential to match.
   automationApiKey: process.env.AUTOMATION_API_KEY || '',
+
+  // Second, independent shared secret for a DIFFERENT integrator/flow —
+  // set as GOOGLE_DOCS_API_KEY in Dokploy (by analogy with AUTOMATION_API_KEY
+  // above; generate a long random value, e.g. `openssl rand -hex 32`). The
+  // route(s) gated by requireGoogleDocsAuth in index.js (header
+  // "X-Google-Docs-Key") accept ONLY this key — keep it separate from
+  // AUTOMATION_API_KEY so each vendor/flow gets its own credential that can
+  // be rotated/revoked on its own. Blank (default) = those routes respond
+  // 503 rather than silently accepting requests.
+  googleDocsApiKey: process.env.GOOGLE_DOCS_API_KEY || '',
 };

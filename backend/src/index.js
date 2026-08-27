@@ -325,6 +325,27 @@ function requireAutomationAuth(req, res, next) {
   next();
 }
 
+// Google Docs API — a SECOND, independent integrator (see config.
+// googleDocsApiKey / GOOGLE_DOCS_API_KEY). Same shape as requireAutomationAuth
+// (constant-time comparison, 503 when unset), but its own header
+// "X-Google-Docs-Key" and its own secret, so the Google-Docs flow gets its
+// own credential that can be rotated/revoked without touching n8n's.
+function requireGoogleDocsAuth(req, res, next) {
+  if (!config.googleDocsApiKey) {
+    return res.status(503).json({
+      error: 'google_docs_api_disabled',
+      message: 'GOOGLE_DOCS_API_KEY не задан — см. комментарий в config.js.',
+    });
+  }
+  const provided = String(req.headers['x-google-docs-key'] || '');
+  const expected = config.googleDocsApiKey;
+  const ok = provided.length === expected.length && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!ok) {
+    return res.status(401).json({ error: 'invalid_google_docs_api_key' });
+  }
+  next();
+}
+
 // Small helper so automation route handlers can throw a validation error
 // with both a machine-readable code and the right HTTP status, instead of
 // every caller re-deriving status from err.code the way the rest of this
@@ -2852,6 +2873,95 @@ app.post('/api/automation/tasks/:taskId/publish', requireAutomationAuth, async (
   } catch (err) {
     console.error('[api] automation publish failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'publish_failed', message: err.message });
+  }
+});
+
+// POST /api/google-docs/tasks/:taskId/client-message — добавить комментарий
+// в «Чат с клиентом» по карточке, под ОТДЕЛЬНЫМ ключом GOOGLE_DOCS_API_KEY
+// (header "X-Google-Docs-Key", см. requireGoogleDocsAuth) — свой секрет для
+// Google-Docs-интеграции, отдельно от n8n/AUTOMATION_API_KEY.
+// Переиспользуем sendClientMessage (маркер «СООБЩЕНИЕ», kind 'agency') — то
+// есть текст появляется в чате как сообщение Агентства, статус не трогаем,
+// в Mattermost идёт только комментарий.
+// body: { text } — обязателен; необязательный imageUrl — готовая ссылка
+// disk.kontentferma (картинка прикрепится к сообщению и отобразится как
+// превью).
+app.post('/api/google-docs/tasks/:taskId/client-message', requireGoogleDocsAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const body = req.body || {};
+  const text = String(body.text || '').trim();
+  const imageUrl = String(body.imageUrl || '').trim();
+  if (!text && !imageUrl) {
+    return res.status(400).json({ error: 'message_required', message: 'Укажите text (или imageUrl).' });
+  }
+  try {
+    const task = await sendClientMessage(boardId, req.params.taskId, text, 'Google Docs', imageUrl);
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] google-docs client-message failed:', err.message);
+    res.status(502).json({ error: 'client_message_failed', message: err.message });
+  }
+});
+
+// POST /api/google-docs/tasks/:taskId/title — править человеко-читаемый
+// заголовок карточки (под ключом Google Docs). Переиспользуем updateTaskTitle:
+// префикс соцсети (ig:/tg:/...) сохраняется отдельно.
+// body: { title } — новый заголовок без префикса соцсети, обязателен.
+app.post('/api/google-docs/tasks/:taskId/title', requireGoogleDocsAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const title = String((req.body && req.body.title) || '').trim();
+  if (!title) {
+    return res.status(400).json({ error: 'title_required', message: 'Укажите title.' });
+  }
+  try {
+    const task = await updateTaskTitle(boardId, req.params.taskId, title, 'Google Docs');
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] google-docs title failed:', err.message);
+    res.status(502).json({ error: 'title_failed', message: err.message });
+  }
+});
+
+// POST /api/google-docs/tasks/:taskId/date — поставить «Дедлайн (публикация)»
+// (= поле «Окончание работ») карточки (под ключом Google Docs). Переиспользуем
+// updateTaskDate: пишет {"from": epochMs} в config.publishDatePropertyName.
+// body: { date: 'YYYY-MM-DD' } — обязателен.
+app.post('/api/google-docs/tasks/:taskId/date', requireGoogleDocsAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const dateStr = String((req.body && req.body.date) || '').trim();
+  if (!dateStr) {
+    return res.status(400).json({ error: 'date_required', message: 'Укажите date (YYYY-MM-DD).' });
+  }
+  try {
+    const task = await updateTaskDate(boardId, req.params.taskId, dateStr);
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] google-docs date failed:', err.message);
+    res.status(502).json({ error: 'date_failed', message: err.message });
+  }
+});
+
+// POST /api/google-docs/tasks — СОЗДАТЬ карточку через Google-Docs API и сразу
+// поставить «Дедлайн (публикация)» (= поле «Окончание работ»). Это отдельный
+// вход для Google-Docs-интеграции (свой ключ GOOGLE_DOCS_API_KEY, header
+// X-Google-Docs-Key); переиспользуем createAutomationTask, поэтому принимаем
+// те же поля: { title, network?, projectId, date?, text?, status?, ... }.
+// "date" (YYYY-MM-DD) — это дедлайн/окончание работ; кладётся в publishDate
+// при создании одним запросом (не нужен отдельный вызов /date).
+app.post('/api/google-docs/tasks', requireGoogleDocsAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const body = req.body ? { ...(req.body || {}) } : {};
+  if (body.date && !body.publishDate) body.publishDate = body.date;
+  try {
+    const task = await createAutomationTask(boardId, { ...body, actorLabel: 'Google Docs' });
+    res.status(201).json({ task });
+  } catch (err) {
+    console.error('[api] google-docs create task failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
   }
 });
 
