@@ -1541,15 +1541,18 @@ async function saveDescriptionText(boardId, taskId, blocks, text) {
   const proseBlocks = allTextBlocks.filter((b) => !isPureDiskLinkBlock(b));
 
   const nowMs = Date.now();
+  let proseBlockId;
   if (proseBlocks.length) {
-    await mm.patchBlock(boardId, proseBlocks[0].id, { title: text });
+    proseBlockId = proseBlocks[0].id;
+    await mm.patchBlock(boardId, proseBlockId, { title: text });
     for (const extra of proseBlocks.slice(1)) {
       await mm.deleteBlock(boardId, extra.id);
     }
   } else {
+    proseBlockId = `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     await mm.addBlocks(boardId, [
       {
-        id: `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        id: proseBlockId,
         boardId,
         parentId: taskId,
         type: 'text',
@@ -1560,6 +1563,30 @@ async function saveDescriptionText(boardId, taskId, blocks, text) {
         fields: {},
       },
     ], 'addDescriptionBlock');
+  }
+
+  // BUGFIX 2026-08-27 (reported live, card
+  // https://messager.kontentferma.com/.../crc16ork6i3yo9ku8nayxom4xwy — was
+  // created with empty opts.text, so createAutomationTask left
+  // fields.contentOrder:[] on it, and the text added afterward via
+  // POST .../text never got added to contentOrder either): runs on EVERY
+  // save, not just when a brand-new block is created — a card can already
+  // have a real, correctly-worded prose block that's simply missing from
+  // contentOrder (exactly this bug, from an earlier /text call before this
+  // fix existed), and the plain title-patch above does nothing to repair
+  // that. This app's OWN caption reader (extractDescriptionText in
+  // taskMapper.js) scans children by parentId regardless of contentOrder, so
+  // GET .../tasks/:id's `caption` and bytesSaved both looked correct the
+  // whole time — but Mattermost's OWN Boards UI renders ONLY blocks listed
+  // in contentOrder (same rule already documented for createAutomationTask
+  // above), so the post body showed up empty there. Self-healing: if the
+  // prose block isn't in contentOrder yet, prepend it (leave already-correct
+  // orders untouched — cheap no-op skip, and doesn't fight any manual
+  // reordering staff did directly in Mattermost).
+  const cardBlock = (blocks || []).find((b) => b.id === taskId && b.type === 'card');
+  const existingOrder = cardBlock && cardBlock.fields && Array.isArray(cardBlock.fields.contentOrder) ? cardBlock.fields.contentOrder : [];
+  if (!existingOrder.includes(proseBlockId)) {
+    await mm.patchBlock(boardId, taskId, { updatedFields: { contentOrder: [proseBlockId, ...existingOrder] } });
   }
 }
 
