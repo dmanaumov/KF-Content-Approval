@@ -3033,7 +3033,7 @@ app.get('/api/ceo/openapi.json', teamAuth.requireCeoAuth, (req, res) => {
   res.json(buildOpenApiSpec());
 });
 
-app.get('/ceo/api-docs', teamAuth.requireCeoAuth, (req, res) => {
+function sendSwaggerUiPage(req, res) {
   res.type('html').send(`<!doctype html>
 <html lang="ru">
 <head>
@@ -3056,7 +3056,16 @@ app.get('/ceo/api-docs', teamAuth.requireCeoAuth, (req, res) => {
 </script>
 </body>
 </html>`);
-});
+}
+
+app.get('/ceo/api-docs', teamAuth.requireCeoAuth, sendSwaggerUiPage);
+
+// GET /swagger — shorter alias for /ceo/api-docs (added 2026-08-27, by
+// request — easier to remember/share than the /ceo-prefixed path). Same
+// handler, same gate (real /team login + email on config.ceoEmails) — this
+// is still a map of every write the automation API can make, not something
+// to leave world-readable just because the URL got friendlier.
+app.get('/swagger', teamAuth.requireCeoAuth, sendSwaggerUiPage);
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns
