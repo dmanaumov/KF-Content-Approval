@@ -118,6 +118,23 @@ POST /api/automation/tasks/{taskId}/status           — НОВОЕ: перев�
                                                       делает ТОЛЬКО в одну
                                                       сторону, для "ОПУБЛИКО-
                                                       ВАНО"
+POST /api/automation/tasks/{taskId}/client-message    — НОВОЕ: добавить сообщение
+                                                      в ЧАТ С КЛИЕНТОМ (по
+                                                      карточке) {text?,
+                                                      imageUrl?} — ДРУГОЕ, чем
+                                                      остальные комментарии
+                                                      автоматизации (КАРТОЧКА
+                                                      СОЗДАНА/ТЕКСТ ОБНОВЛЁН/
+                                                      СТАТУС ИЗМЕНЁН и т.п.) —
+                                                      те внутренние, staff-only,
+                                                      клиент их не видит вообще.
+                                                      Этот метод пишет туда же,
+                                                      куда пишет команда во
+                                                      вкладке "Чат с клиентом" —
+                                                      сообщение реально увидит
+                                                      клиент в своём кабинете
+                                                      согласования. Нужен хотя
+                                                      бы один из text/imageUrl
 POST /api/automation/tasks/{taskId}/media-link      — прикрепить готовую ссылку
                                                       disk.kontentferma {url}
                                                       (ТОЛЬКО уже существующую
@@ -282,6 +299,7 @@ credential (не коммитить в git, не логировать, роти�
 | **Ключевые слова / мысли** | отдельное текстовое свойство карточки «Ключевые слова/мысли» — НЕ то же самое, что текст поста, для команды/агентства, клиенту не показывается | `keywords` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `keywords` в `POST /api/automation/tasks` (при создании) или `POST /api/automation/tasks/{taskId}/keywords` (у существующей карточки) |
 | **Текст поста (тело)** | НЕ свойство карточки, а её содержимое (text-блоки Mattermost, «описание» карточки) | `caption` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `text` в `POST /api/automation/tasks` (при создании) или `POST /api/automation/tasks/{taskId}/text` (у существующей карточки) |
 | **Медиа (фото/видео)** | вложения карточки + ссылки disk.kontentferma, в порядке, который выбрал клиент | `media[]` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` (каждый объект — `{id, kind, source, shareUrl/imageUrl, name,...}`) | `media` (массив готовых ссылок) в `POST /api/automation/tasks` при создании; либо `POST .../media-link` \| `.../media-upload` \| `.../media-import` для существующей карточки (см. раздел 0 выше), порядок — `.../media-order` |
+| **Чат с клиентом** (НЕ внутренние аудит-комментарии автоматизации) | переписка команда↔клиент, видна клиенту в его кабинете согласования | `clientComments[]` (`kind: 'approved' \| 'feedback' \| 'agency' \| 'correction'`) в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `POST /api/automation/tasks/{taskId}/client-message` — {text?, imageUrl?} |
 
 **Важно не перепутать `keywords` и `caption` («текст поста»)** — это два разных поля с разным назначением: `keywords` — внутренний бриф/мысли для копирайтера, никогда не попадает к клиенту; `caption` — это и есть готовый текст поста, который в итоге публикуется в соцсеть.
 
@@ -447,6 +465,23 @@ Content-Type: application/json
 (опция с таким текстом не найдена в свойстве «Статус» на борде — сообщение
 ошибки перечисляет все реально существующие опции; либо сбой записи в
 Mattermost), `401` без `X-Api-Key`.
+
+**5) Написать клиенту прямо в чат** (НЕ внутренний аудит-комментарий — это
+реально видно клиенту в его кабинете согласования):
+```
+POST /api/automation/tasks/bxyz1234567890abcdefghijk/client-message
+X-Api-Key: <ваш ключ>
+Content-Type: application/json
+
+{ "text": "Добавили новую версию текста с учётом ваших пожеланий — посмотрите, пожалуйста!" }
+```
+```json
+{ "task": { "id": "bxyz1234567890abcdefghijk", "clientComments": [ { "kind": "agency", "text": "Добавили новую версию текста...", "createdAt": 1772140800000 }, ... ], ... } }
+```
+Можно отправить и только картинку (без текста) — `{ "imageUrl": "https://disk.kontentferma.com/s/..." }`, нужна ссылка disk.kontentferma (та же, что и в `media`/`media-link`). Хотя бы одно из полей `text`/`imageUrl` обязательно.
+
+**Ошибки**: `400 text_required` (оба поля пустые), `502 client_message_failed`
+(сбой записи в Mattermost), `401` без `X-Api-Key`.
 
 ## Что уже есть (не нужно строить заново)
 

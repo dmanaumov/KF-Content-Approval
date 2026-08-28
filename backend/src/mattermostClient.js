@@ -199,6 +199,24 @@ async function mmFetch(url, { headers: extraHeaders, ...opts } = {}, context) {
     headers = await authHeaders(extraHeaders, { forceRelogin: true });
     res = await fetchWithTimeout(url, { ...opts, headers });
   }
+  // Retry a couple of times on a transient 5xx from Mattermost's OWN server
+  // — GET-only (idempotent; a POST/PATCH/DELETE that came back 500 may have
+  // partially applied server-side already, so retrying those risks doubling
+  // an action — same reasoning as the 429-retry in diskUpload.js, applied
+  // here to Mattermost's side instead of Nextcloud's). Added 2026-08-28:
+  // reported live — listCards page=3 failed with a bare "internal server
+  // error" from Mattermost itself (nothing wrong with our request), and
+  // that single page's blip took down the WHOLE /projects list instead of
+  // a quick retry just recovering it.
+  const isGet = !opts.method || opts.method.toUpperCase() === 'GET';
+  const RETRY_DELAYS_MS = [400, 1200];
+  for (let i = 0; isGet && res.status >= 500 && i < RETRY_DELAYS_MS.length; i++) {
+    if (config.debug) {
+      console.log(`[mattermost:debug] ${context}: got ${res.status}, retrying in ${RETRY_DELAYS_MS[i]}ms (attempt ${i + 2}/${RETRY_DELAYS_MS.length + 1})`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[i]));
+    res = await fetchWithTimeout(url, { ...opts, headers });
+  }
   return res;
 }
 

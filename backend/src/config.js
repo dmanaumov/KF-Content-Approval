@@ -46,6 +46,10 @@ module.exports = {
   // if your board doesn't have a matching property. Default matches the
   // real "Задачи SMM-Team" board's date property (confirmed via debug dump).
   publishDatePropertyName: process.env.MM_PUBLISH_DATE_PROPERTY_NAME || 'Дедлайн (публикация)',
+  // Separate date property for the deadline when the work itself should be
+  // done (field "Окончание работ" — distinct from the publication date above;
+  // Google-Docs API sets it via workEndDate). Leave blank ('') to omit.
+  workEndPropertyName: process.env.MM_WORK_END_PROPERTY_NAME || 'Окончание работ',
   formatPropertyName: process.env.MM_FORMAT_PROPERTY_NAME || '',
   // URL of the live published post, shown as a link under the post text.
   // Only meaningful once a card reaches the "published" status below, but
