@@ -257,15 +257,62 @@ async function listCards(boardId) {
   const maxPages = 50;
   let all = [];
   for (let page = 0; page < maxPages; page++) {
-    const res = await mmFetch(
-      boardsUrl(`/boards/${boardId}/cards?page=${page}&per_page=${perPage}`),
-      {},
-      `listCards(${boardId},page=${page})`
-    );
-    const data = await asJsonOrThrow(res, `listCards(${boardId},page=${page})`);
-    const batch = Array.isArray(data) ? data : (data && data.cards) || [];
+    let batch;
+    let reachedEnd;
+    try {
+      const res = await mmFetch(
+        boardsUrl(`/boards/${boardId}/cards?page=${page}&per_page=${perPage}`),
+        {},
+        `listCards(${boardId},page=${page})`
+      );
+      const data = await asJsonOrThrow(res, `listCards(${boardId},page=${page})`);
+      batch = Array.isArray(data) ? data : (data && data.cards) || [];
+      reachedEnd = batch.length < perPage; // short/empty page = last page reached
+    } catch (err) {
+      // BUGFIX 2026-08-29 (reported live, confirmed REPRODUCIBLE — not a
+      // transient blip: mmFetch already retries a bare 5xx a couple of
+      // times, and the user separately confirmed Mattermost's own UI works
+      // fine, only this exact REST page keeps failing). Most likely one
+      // poisoned card on this page — malformed data that crashes
+      // Mattermost's own server-side serialization for that one record —
+      // was otherwise able to take the ENTIRE /projects list down forever,
+      // with nothing fixable on our side except finding and skipping the
+      // offending card. Fallback: re-fetch this page's range ONE CARD AT A
+      // TIME (per_page=1 keeps page=offset math integer-safe, unlike trying
+      // to binary-halve per_page=200 which drifts off exact page boundaries
+      // once the count stops dividing evenly) — skip whichever individual
+      // offset(s) still fail, logging loudly so the bad card is findable/
+      // fixable directly in Mattermost, and keep every other card on the
+      // board loading normally.
+      console.error(
+        `[mattermost] listCards(${boardId},page=${page}) failed even after retry (${err.message}) — ` +
+          `falling back to fetching this page one card at a time to isolate the bad record`
+      );
+      batch = [];
+      reachedEnd = false;
+      for (let offset = page * perPage; offset < (page + 1) * perPage; offset++) {
+        try {
+          const res1 = await mmFetch(
+            boardsUrl(`/boards/${boardId}/cards?page=${offset}&per_page=1`),
+            {},
+            `listCards(${boardId},page=${offset},per_page=1)`
+          );
+          const data1 = await asJsonOrThrow(res1, `listCards(${boardId},page=${offset},per_page=1)`);
+          const one = Array.isArray(data1) ? data1 : (data1 && data1.cards) || [];
+          if (!one.length) {
+            reachedEnd = true; // ran past the real end of the board
+            break;
+          }
+          batch.push(...one);
+        } catch (err1) {
+          console.error(`[mattermost] listCards(${boardId}): SKIPPING card at offset ${offset} — Mattermost itself keeps failing on it: ${err1.message}`);
+          // Deliberately swallowed — this one card is missing from the
+          // result, everything else on the board still loads.
+        }
+      }
+    }
     all = all.concat(batch);
-    if (batch.length < perPage) break; // last page reached
+    if (reachedEnd) break;
     if (page === maxPages - 1 && config.debug) {
       console.warn(`[mattermost] listCards(${boardId}): hit the ${maxPages}-page safety cap, some cards may be missing`);
     }
