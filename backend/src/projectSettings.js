@@ -64,7 +64,7 @@ async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `SELECT link_token, logo_url, is_ai_project, strategy_prompt, planning_prompt,
+    `SELECT link_token, logo_url, is_ai_project, is_archived, strategy_prompt, planning_prompt,
             post_prompt, image_prompt
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
@@ -74,6 +74,7 @@ async function getTokenAndLogo(boardId, projectId) {
     token: row.link_token || '',
     logoUrl: row.logo_url || '',
     aiStatus: aiStatusOf(row),
+    isArchived: !!row.is_archived,
   };
 }
 
@@ -126,7 +127,7 @@ async function getSettings(boardId, projectId) {
   await ensureRow(boardId, projectId); // guarantees a row exists to read
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `SELECT logo_url, social_credentials, is_ai_project, start_date, posts_per_month,
+    `SELECT logo_url, social_credentials, is_ai_project, is_archived, start_date, posts_per_month,
             publish_time_msk, project_manager, strategy_prompt, planning_prompt,
             post_prompt, image_prompt
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
@@ -137,6 +138,7 @@ async function getSettings(boardId, projectId) {
     logoUrl: row.logo_url || '',
     socialCredentials: row.social_credentials || {},
     isAiProject: !!row.is_ai_project,
+    isArchived: !!row.is_archived,
     startDate: row.start_date || '',
     postsPerMonth: row.posts_per_month || '',
     publishTimeMsk: row.publish_time_msk || '',
@@ -159,7 +161,7 @@ function textOrEmpty(value) {
 }
 
 async function updateSettings(boardId, projectId, {
-  logoUrl, socialCredentials, isAiProject,
+  logoUrl, socialCredentials, isAiProject, isArchived,
   startDate, postsPerMonth, publishTimeMsk, projectManager,
   strategyPrompt, planningPrompt, postPrompt, imagePrompt,
 }) {
@@ -189,6 +191,7 @@ async function updateSettings(boardId, projectId, {
          planning_prompt = $11,
          post_prompt = $12,
          image_prompt = $13,
+         is_archived = $14,
          updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
     [
@@ -197,6 +200,7 @@ async function updateSettings(boardId, projectId, {
       textOrEmpty(projectManager),
       textOrEmpty(strategyPrompt), textOrEmpty(planningPrompt),
       textOrEmpty(postPrompt), textOrEmpty(imagePrompt),
+      !!isArchived,
     ]
   );
 }

@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=9">
-  <link rel="stylesheet" href="/projects.css?v=6">
+  <link rel="stylesheet" href="/projects.css?v=7">
 </head>
 <body>
 <div class="page">
@@ -35,7 +35,13 @@
     </header>
 
     <div id="kpiBanner" class="attention" hidden></div>
-    <input id="search" class="proj-search" type="text" placeholder="Поиск по названию клиента…">
+    <div class="proj-search-row">
+      <input id="search" class="proj-search" type="text" placeholder="Поиск по названию клиента…">
+      <label class="archive-toggle-check" for="showArchived">
+        <input id="showArchived" type="checkbox">
+        <span>Архивные проекты</span>
+      </label>
+    </div>
 
     <div id="loading" class="loading">Загружаем список проектов из Mattermost…</div>
     <main id="list" class="proj-list"></main>
@@ -70,6 +76,12 @@
         <input id="editIsAiProject" type="checkbox">
         <img class="ai-flag-avatar" src="/ai-avatar.png" alt="">
         <span>Это ИИ-проект <i>— подсвечиваем в списке и показываем аватарку, как у «кот Василий»</i></span>
+      </label>
+
+      <label class="archive-flag-check">
+        <input id="editIsArchived" type="checkbox">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M10 13h4"></path></svg>
+        <span>Проект в архиве <i>— скрываем из основного списка, показываем серым с нашлепкой «АРХИВНЫЙ»</i></span>
       </label>
 
       <div class="cred-intro">
@@ -147,6 +159,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=4"></script>
+<script src="/projects.js?v=5"></script>
 </body>
 </html>

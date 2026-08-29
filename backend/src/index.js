@@ -430,7 +430,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // created lazily on first read, so every project already has a
         // working link (and, once set, a logo) the first time this list
         // loads.
-        const { token, logoUrl, aiStatus, postsPerMonth } = await projectSettings.getTokenAndLogo(boardId, o.id);
+        const { token, logoUrl, aiStatus, postsPerMonth, isArchived } = await projectSettings.getTokenAndLogo(boardId, o.id);
         // buildTasks() is pure computation over the board/cards/blocks
         // already fetched above — re-filtering per project here costs no
         // extra Mattermost calls, just re-running an in-memory filter once
@@ -442,7 +442,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
         const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
         const posts = postsForMonth(allTasks);
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, scheduleStatus, posts };
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts };
       })
     );
     const who = analytics.identify(req);
@@ -778,6 +778,7 @@ app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
 // PUT /api/projects/:projectId/settings — saves logo URL, social
 // credentials, and the planning/profile fields from the edit popup. Body:
 // { logoUrl: string, socialCredentials: { ig?, tg?, vk?, ok?, max? },
+//   isAiProject?, isArchived?,
 //   startDate?, postsPerMonth?, publishTimeMsk?, projectManager?,
 //   strategyPrompt?, planningPrompt?, postPrompt?, imagePrompt? } — each network's value is a
 // free-form JSON object; this app never reads any of it, it's stored purely

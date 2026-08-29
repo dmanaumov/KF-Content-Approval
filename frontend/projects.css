@@ -1,8 +1,19 @@
 /* Small additions on top of app.css's shared design tokens/components
    (--accent, --ink, .btn, .head, .loading, .empty, .error-box, .toast, ...)
    so this internal staff page matches the client cabinet's look. */
-.proj-search{width:100%;border:1px solid var(--line);background:#fff;border-radius:14px;padding:12px 14px;font-size:14px;margin:4px 0 16px;outline:none;font:inherit;color:var(--ink)}
+.proj-search-row{display:flex;align-items:center;gap:10px;margin:4px 0 16px}
+.proj-search{width:100%;border:1px solid var(--line);background:#fff;border-radius:14px;padding:12px 14px;font-size:14px;margin:0;outline:none;font:inherit;color:var(--ink);flex:1;min-width:0}
 .proj-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+/* "Архивные проекты" — выключен по умолчанию, показывает архивные проекты
+   вместе с активными (не вместо них, см. render() в projects.js). Пилюля,
+   а не чекбокс в рамке, чтобы не спорить визуально с полем поиска рядом. */
+.archive-toggle-check{flex:0 0 auto;display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:0 14px;height:44px;font-size:12.5px;font-weight:700;color:var(--muted);background:#fff;cursor:pointer;white-space:nowrap;user-select:none;transition:background .15s,border-color .15s,color .15s}
+.archive-toggle-check input{width:15px;height:15px;accent-color:#7B8482;cursor:pointer;flex:none}
+.archive-toggle-check:has(input:checked){color:var(--ink);border-color:#8b938f;background:#F1F2F2}
+@media(max-width:520px){
+  .proj-search-row{flex-wrap:wrap}
+  .archive-toggle-check{flex:1 1 100%;justify-content:center}
+}
 /* Staff header — the same .head card as the client cabinet, but richer: a
    teal→purple gradient accent line on top, logo + two-line title with the
    brand word gradient-highlighted, and a "team-only" live pill on the right.
@@ -51,6 +62,52 @@
 .ai-flag-avatar{width:22px;height:22px;border-radius:50%;object-fit:cover;flex:none;box-shadow:0 0 0 1px rgba(155,90,246,.35)}
 .ai-flag-check span{color:var(--ink)}
 .ai-flag-check i{color:var(--muted);font-style:normal}
+
+/* "Проект в архиве" toggle — same row/checkbox layout as .ai-flag-check
+   above, graphite instead of purple so it reads as "paused", not "featured". */
+.archive-flag-check{display:flex;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;background:#FAFBFB;border:1px solid var(--line);border-radius:12px;font-size:13px;cursor:pointer}
+.archive-flag-check input{width:16px;height:16px;accent-color:#7B8482;cursor:pointer;flex:none}
+.archive-flag-check svg{color:#7B8482;flex:none}
+.archive-flag-check span{color:var(--ink)}
+.archive-flag-check i{color:var(--muted);font-style:normal}
+
+/* Archived project card — desaturated/greyed-out variant of .proj-card,
+   deliberately declared AFTER .ai/.attention above so it wins the cascade
+   when a project is both AI-flagged and archived (pause outranks the AI
+   highlight — see the aiClass/archivedClass note in projects.js render()).
+   The "АРХИВНЫЙ" badge and logo stay visible so the card still reads
+   at a glance, just muted. */
+.proj-card.archived{background:#F5F6F6;border-color:var(--line);box-shadow:none}
+.proj-card.archived .proj-logo{background:#8b938f;border-color:#8b938f}
+.proj-card.archived .proj-logo img{filter:grayscale(1);opacity:.9}
+.proj-card.archived .proj-logo-fallback{opacity:.9}
+.proj-card.archived .proj-name{color:var(--muted)}
+.proj-card.archived .proj-link{background:#EEF0EF;color:#8b938f}
+.proj-card.archived .proj-actions-col{opacity:.6}
+.proj-card.archived .proj-posts{opacity:.55}
+.proj-name-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.archived-badge{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#fff;background:#7B8482;border-radius:6px;padding:3px 7px;text-transform:uppercase;white-space:nowrap;cursor:default}
+.archived-badge[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+  text-transform:none;
+  letter-spacing:normal;
+}
+.archived-badge[data-tip]:hover::after{opacity:1}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
 .proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
 /* overflow was hidden here, but the KPI dot (and its tooltip) needs to

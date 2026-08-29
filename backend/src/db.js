@@ -75,6 +75,16 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS is_ai_project boolean NOT NULL DEFAULT false;
   `);
+  // "Проект в архиве" toggle (staff-set, same "Настройки" tab of the edit
+  // popup as is_ai_project above) — projects on pause that the team still
+  // wants on record but doesn't want cluttering the default staff list. Ground
+  // truth for the /projects "Архивные проекты" checkbox filter and the grey
+  // "АРХИВНЫЙ" badge (see frontend/projects.js). Deliberately independent of
+  // is_ai_project — a project can be archived and AI-flagged at once.
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);

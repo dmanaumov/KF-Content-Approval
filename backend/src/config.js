@@ -283,4 +283,12 @@ module.exports = {
   // be rotated/revoked on its own. Blank (default) = those routes respond
   // 503 rather than silently accepting requests.
   googleDocsApiKey: process.env.GOOGLE_DOCS_API_KEY || '',
+
+  // Third shared secret, for the AI/content BOT (see /api/bot/* in index.js)
+  // — set as BOT_API_KEY in Dokploy. The bot uses it to register/refresh the
+  // list of channels it is added to (POST /api/bot/channels, header
+  // "X-Bot-Key"), which the staff edit popup then shows by NAME in a dropdown
+  // instead of making someone type channel ids by hand. Blank (default) =
+  // that route responds 503 rather than silently accepting requests.
+  botApiKey: process.env.BOT_API_KEY || '',
 };

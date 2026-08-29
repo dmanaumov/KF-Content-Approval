@@ -40,6 +40,18 @@ function buildOpenApiSpec() {
           name: 'X-Api-Key',
           description: 'Значение AUTOMATION_API_KEY, заданное в Dokploy. См. комментарий в backend/src/config.js.',
         },
+        googleDocsApiKey: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-Google-Docs-Key',
+          description: 'Значение GOOGLE_DOCS_API_KEY, заданное в Dokploy — отдельный секрет для Google-Docs-интеграции. См. комментарий в backend/src/config.js.',
+        },
+        botApiKey: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-Bot-Key',
+          description: 'Значение BOT_API_KEY, заданное в Dokploy — отдельный секрет для ИИ/контент-бота, который регистрирует свои каналы. См. комментарий в backend/src/config.js.',
+        },
       },
       schemas: {
         Media: {
@@ -503,6 +515,151 @@ function buildOpenApiSpec() {
           responses: {
             200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
             401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
+      '/api/google-docs/tasks/{taskId}/client-message': {
+        post: {
+          summary: 'Добавить комментарий в «Чат с клиентом» по карточке (под отдельным ключом Google Docs)',
+          description:
+            'Пишет сообщение от Агентства в чат с клиентом (маркер «СООБЩЕНИЕ», kind: agency) — появится в карточке ' +
+            'и клиенту в его кабинете. Статус согласования не трогает. Гейтится ОТДЕЛЬНЫМ ключом GOOGLE_DOCS_API_KEY ' +
+            '(header X-Google-Docs-Key), а не AUTOMATION_API_KEY.',
+          security: [{ googleDocsApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    text: { type: 'string', description: 'текст комментария (непустой, если нет imageUrl)' },
+                    imageUrl: { type: 'string', description: 'необязательно: готовая ссылка disk.kontentferma — прикрепится к сообщению как картинка' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'нет ни text, ни imageUrl', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Google-Docs-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/google-docs/tasks/{taskId}/title': {
+        post: {
+          summary: 'Править заголовок (тему) карточки (под ключом Google Docs)',
+          description:
+            'Заменяет человеко-читаемую часть названия карточки (title) — без префикса соцсети (ig:/tg:/vk:/ok:/max: ' +
+            'сохраняется отдельно). Гейтится отдельным ключом GOOGLE_DOCS_API_KEY.',
+          security: [{ googleDocsApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['title'], properties: { title: { type: 'string', description: 'новый заголовок (без префикса соцсети)' } } } } } },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'title пустой', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Google-Docs-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/google-docs/tasks/{taskId}/date': {
+        post: {
+          summary: 'Поставить «Дедлайн (публикация)» карточки (под ключом Google Docs)',
+          description:
+            'Ставит дату публикации (config.publishDatePropertyName, по умолчанию "Дедлайн (публикация)"). Отдельное ' +
+            'поле «Окончание работ» меняется методом /dates (workEndDate). Принимает YYYY-MM-DD.',
+          security: [{ googleDocsApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['date'], properties: { date: { type: 'string', format: 'date', description: 'YYYY-MM-DD — дата публикации' } } } } } },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'date отсутствует/некорректна', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Google-Docs-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/google-docs/tasks/{taskId}/dates': {
+        post: {
+          summary: 'Поставить обе даты карточки: «Дедлайн (публикация)» и «Окончание работ» (под ключом Google Docs)',
+          description:
+            'Универсальный метод для ОБЕИХ дат одним запросом: publishDate (свойство "Дедлайн (публикация)") и ' +
+            'workEndDate (отдельное свойство "Окончание работ"). Оба поля необязательны, но хотя бы одно должно быть ' +
+            'задано; каждое обновляется атомарно.',
+          security: [{ googleDocsApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    publishDate: { type: 'string', format: 'date', description: 'дата публикации (YYYY-MM-DD), необязательно' },
+                    workEndDate: { type: 'string', format: 'date', description: 'окончание работ (YYYY-MM-DD), необязательно' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'ни publishDate, ни workEndDate, либо дата некорректна', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Google-Docs-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/google-docs/tasks': {
+        post: {
+          summary: 'Создать карточку и сразу поставить даты «Дедлайн (публикация)» и «Окончание работ» (под ключом Google Docs)',
+          description:
+            'Создаёт новую карточку через Google-Docs API (отдельный ключ GOOGLE_DOCS_API_KEY) и в том же запросе ' +
+            'ставит обе даты: publishDate и workEndDate. Повторно использует ту же механику, что и /api/automation/tasks.',
+          security: [{ googleDocsApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['title', 'projectId'],
+                  properties: {
+                    title: { type: 'string', description: 'без префикса соцсети' },
+                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] },
+                    projectId: { type: 'string', description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
+                    text: { type: 'string', description: 'текст поста (тело)' },
+                    keywords: { type: 'string', description: 'ключевые слова/мысли — отдельное поле-бриф, не текст поста' },
+                    publishDate: { type: 'string', format: 'date', description: 'дата публикации / «Дедлайн (публикация)» (YYYY-MM-DD), необязательно' },
+                    workEndDate: { type: 'string', format: 'date', description: '«Окончание работ» (YYYY-MM-DD), необязательно' },
+                    status: { type: 'string', description: 'точный текст опции "Статус"; если не задан — статус остаётся пустым' },
+                    media: { type: 'array', items: { type: 'string' }, description: 'готовые ссылки disk.kontentferma' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: 'Создано', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
+            400: { description: 'Неверные параметры', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Google-Docs-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/bot/channels': {
+        post: {
+          summary: 'Бот регистрирует каналы, в которые он подключен',
+          description:
+            'Бот передаёт весь свой текущий список каналов; реестр заменяется атомарно ' +
+            '(DELETE + INSERT в одной транзакции). body: { channels: [{ key, name }, ...] }.',
+          security: [{ botApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['channels'], properties: { channels: { type: 'array', items: { type: 'object', required: ['key', 'name'], properties: { key: { type: 'string', description: 'внутренний id канала у бота' }, name: { type: 'string', description: 'человекочитаемое имя для выпадающего списка' } } } } } } } },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { channels: { type: 'array', items: { type: 'object', properties: { channel_key: { type: 'string' }, name: { type: 'string' } } } } } } } } },
+            401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
       },

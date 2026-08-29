@@ -111,7 +111,13 @@ function render(filterText) {
   // TODO (когда проектов станет >20): разделить ИИ-проекты и обычные через
   // закладки/фильтры — сейчас они вперемешку в одном списке.
   const needle = (filterText || '').trim().toLowerCase();
-  const visible = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
+  const showArchived = document.getElementById('showArchived').checked;
+  // Архивные проекты (project_settings.is_archived) скрыты по умолчанию —
+  // чекбокс "Архивные проекты" (выключен по умолчанию) их показывает вместе
+  // с активными, а не вместо них. Поиск при этом продолжает работать по
+  // всему видимому набору как обычно.
+  const base = showArchived ? options : options.filter((o) => !o.isArchived);
+  const visible = needle ? base.filter((o) => o.label.toLowerCase().includes(needle)) : base;
   document.getElementById('list').innerHTML =
     visible
       .map((o) => {
@@ -121,10 +127,14 @@ function render(filterText) {
         const logo = o.logoUrl
           ? `<img src="${esc(o.logoUrl)}" alt="">`
           : `<span class="proj-logo-fallback">${esc(initial)}</span>`;
+        // Архивная подсветка перекрывает ИИ-подсветку — проект на паузе не
+        // должен выглядеть "активным ИИ-проектом", даже если флаг ИИ тоже стоит.
         const aiClass = o.aiStatus === 'ai' ? ' ai' : o.aiStatus === 'partial' ? ' attention' : '';
-        const avatar = o.aiStatus === 'ai' || o.aiStatus === 'partial'
+        const archivedClass = o.isArchived ? ' archived' : '';
+        const avatar = !o.isArchived && (o.aiStatus === 'ai' || o.aiStatus === 'partial')
           ? `<span class="proj-ai-avatar-wrap" data-tip="${o.aiStatus === 'ai' ? 'ИИ-проект — промты заполнены полностью' : 'Заполнены не все промты ИИ — требуется внимание'}"><img class="proj-ai-avatar" src="/ai-avatar.png" alt="ИИ"></span>`
           : '';
+        const archivedBadge = o.isArchived ? '<span class="archived-badge" data-tip="Проект на паузе — снят с активного обслуживания">АРХИВНЫЙ</span>' : '';
         const kpi = o.scheduleStatus;
         const kpiTip = kpi
           ? kpi.tier === 'ontrack'
@@ -133,12 +143,15 @@ function render(filterText) {
             ? `Небольшое отклонение — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
             : `Не укладываемся в KPI — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
           : '';
-        const kpiDot = kpi ? `<span class="proj-kpi-dot ${kpi.tier}" data-tip="${esc(kpiTip)}"></span>` : '';
-        return `<div class="proj-card${aiClass}" id="proj-${esc(o.id)}">
+        const kpiDot = kpi && !o.isArchived ? `<span class="proj-kpi-dot ${kpi.tier}" data-tip="${esc(kpiTip)}"></span>` : '';
+        return `<div class="proj-card${aiClass}${archivedClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>
             <div class="proj-info">
-              <div class="proj-name">${esc(o.label)}</div>
+              <div class="proj-name-row">
+                <div class="proj-name">${esc(o.label)}</div>
+                ${archivedBadge}
+              </div>
               <div class="proj-row proj-link-row">
                 <span class="proj-row-label">Клиенту:</span>
                 <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
@@ -165,8 +178,12 @@ function render(filterText) {
 
 function renderKpiBanner() {
   const el = document.getElementById('kpiBanner');
-  const off = options.filter((o) => o.scheduleStatus && o.scheduleStatus.tier === 'off');
-  const minor = options.filter((o) => o.scheduleStatus && o.scheduleStatus.tier === 'minor');
+  // Архивные (проекты на паузе) не должны сюда попадать — они по умолчанию
+  // не видны в списке, и "горящий" баннер про проект, которого не видно,
+  // только сбивает с толку.
+  const active = options.filter((o) => !o.isArchived);
+  const off = active.filter((o) => o.scheduleStatus && o.scheduleStatus.tier === 'off');
+  const minor = active.filter((o) => o.scheduleStatus && o.scheduleStatus.tier === 'minor');
   if (!off.length && !minor.length) {
     el.hidden = true;
     return;
@@ -202,6 +219,10 @@ async function load() {
     const KPI_TIER_RANK = { off: 0, minor: 1, ontrack: 2 };
     const kpiRank = (o) => (o.scheduleStatus ? KPI_TIER_RANK[o.scheduleStatus.tier] : 3);
     options = data.options.slice().sort((a, b) => {
+      // Архивные — всегда последними (даже если включён показ архива и у
+      // проекта на паузе почему-то есть KPI-тир): пауза важнее графика.
+      const ar = (a.isArchived ? 1 : 0) - (b.isArchived ? 1 : 0);
+      if (ar !== 0) return ar;
       const r = kpiRank(a) - kpiRank(b);
       return r !== 0 ? r : a.label.localeCompare(b.label, 'ru');
     });
@@ -237,6 +258,7 @@ async function regenerateLink(projectId, label) {
 }
 
 document.getElementById('search').addEventListener('input', (e) => render(e.target.value));
+document.getElementById('showArchived').addEventListener('change', () => render(document.getElementById('search').value));
 
 document.getElementById('kpiBanner').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-scroll]');
@@ -300,6 +322,7 @@ async function openEdit(projectId, label) {
   document.getElementById('editLogoUrl').value = '';
   document.getElementById('editLogoPreview').hidden = true;
   document.getElementById('editIsAiProject').checked = false;
+  document.getElementById('editIsArchived').checked = false;
   credTextareas().forEach((ta) => { ta.value = ''; });
   document.getElementById('editStartDate').value = '';
   document.getElementById('editProjectManager').value = '';
@@ -319,6 +342,7 @@ async function openEdit(projectId, label) {
     document.getElementById('editLogoUrl').value = data.logoUrl || '';
     updateLogoPreview();
     document.getElementById('editIsAiProject').checked = !!data.isAiProject;
+    document.getElementById('editIsArchived').checked = !!data.isArchived;
     document.getElementById('editStartDate').value = data.startDate || '';
     document.getElementById('editProjectManager').value = data.projectManager || '';
     document.getElementById('editPostsPerMonth').value = data.postsPerMonth || '';
@@ -384,6 +408,7 @@ async function saveEdit() {
         logoUrl,
         socialCredentials,
         isAiProject: document.getElementById('editIsAiProject').checked,
+        isArchived: document.getElementById('editIsArchived').checked,
         startDate: document.getElementById('editStartDate').value,
         projectManager: document.getElementById('editProjectManager').value.trim(),
         postsPerMonth: document.getElementById('editPostsPerMonth').value.trim(),
