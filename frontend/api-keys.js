@@ -93,7 +93,7 @@ async function onAction(action, name) {
     return;
   }
   if (action === 'rotate') {
-    const sure = confirm(`Выпустить новое значение для «${name}»?\n\nСтарое значение перестанет действовать сразу же — все места, где оно вставлено (n8n, Dokploy и т.п.), нужно будет обновить новым.`);
+    const sure = confirm(`Выпустить новое значение для «${name}»?\n\nСтарое значение перестанет действовать сразу же — все места, где оно вставлено (внешние интеграции, переменные окружения и т.п.), нужно будет обновить новым.`);
     if (!sure) return;
     try {
       const res = await fetch(`/api/ceo/api-keys/${encodeURIComponent(name)}/rotate`, { method: 'POST' });
@@ -108,7 +108,7 @@ async function onAction(action, name) {
     return;
   }
   if (action === 'delete') {
-    const sure = confirm(`Удалить ключ «${name}»?\n\nВсё, что использует этот ключ (n8n и т.п.), сразу перестанет проходить проверку — если для него не задана резервная переменная окружения.`);
+    const sure = confirm(`Удалить ключ «${name}»?\n\nВсё, что использует этот ключ (внешние интеграции и т.п.), сразу перестанет проходить проверку — если для него не задана резервная переменная окружения.`);
     if (!sure) return;
     try {
       const res = await fetch(`/api/ceo/api-keys/${encodeURIComponent(name)}`, { method: 'DELETE' });

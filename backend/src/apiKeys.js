@@ -32,7 +32,7 @@ const config = require('./config');
 let cache = null; // Map<name, {name,label,value,created_at,updated_at}> | null until first load
 
 const BUILTIN_SEEDS = [
-  { name: 'AUTOMATION_API_KEY', label: 'SMM-автоматизация (n8n, публикация постов)', value: () => config.automationApiKey },
+  { name: 'AUTOMATION_API_KEY', label: 'SMM-автоматизация (публикация постов)', value: () => config.automationApiKey },
   { name: 'BOT_API_KEY', label: 'Telegram-бот «Кот Василий»', value: () => config.botApiKey },
   { name: 'GOOGLE_DOCS_API_KEY', label: 'Google Docs интеграция', value: () => config.googleDocsApiKey },
 ];
@@ -49,6 +49,23 @@ async function ensureSeeded() {
   }
 }
 
+// One-time text fixup for a label that already shipped to Postgres before
+// the wording changed (ON CONFLICT DO NOTHING in ensureSeeded means a brand
+// new default text never reaches an already-seeded row on its own). Only
+// touches rows whose label still matches the OLD text exactly, so it's a
+// no-op after the first run and never clobbers a label someone customized
+// by hand later (once that's a UI feature).
+const LABEL_MIGRATIONS = [
+  { name: 'AUTOMATION_API_KEY', from: 'SMM-автоматизация (n8n, публикация постов)', to: 'SMM-автоматизация (публикация постов)' },
+];
+
+async function migrateLegacyLabels() {
+  const pool = db.requirePool();
+  for (const m of LABEL_MIGRATIONS) {
+    await pool.query('UPDATE api_keys SET label = $1 WHERE name = $2 AND label = $3', [m.to, m.name, m.from]);
+  }
+}
+
 async function loadCache() {
   const pool = db.requirePool();
   const { rows } = await pool.query('SELECT name, label, value, created_at, updated_at FROM api_keys ORDER BY name');
@@ -58,6 +75,7 @@ async function loadCache() {
 async function init() {
   if (!db.pool) return; // DATABASE_URL not set — same "warn and continue" posture as db.initSchema()
   await ensureSeeded();
+  await migrateLegacyLabels();
   await loadCache();
 }
 

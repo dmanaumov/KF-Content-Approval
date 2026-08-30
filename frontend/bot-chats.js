@@ -46,7 +46,7 @@ function render(chats) {
     : '';
   const table = chats.length
     ? `<table class="stat-table"><thead><tr><th>Чат</th><th>Тип</th><th>Статус</th><th>Добавил</th><th>Когда</th></tr></thead><tbody>${rowsHtml}</tbody></table>`
-    : '<div class="muted">Бот пока никуда не добавлен — или n8n ещё не настроен слать сюда my_chat_member (см. docs/N8N_AUTOMATION.md).</div>';
+    : '<div class="muted">Бот пока никуда не добавлен — или автоматизация ещё не настроена присылать сюда эти события.</div>';
   root.innerHTML = `
     <div class="stat-cards">
       <div class="stat-card"><div class="stat-card-num">${chats.filter((c) => ACTIVE_STATUSES.has(c.status)).length}</div><div class="stat-card-label">активных чатов</div></div>

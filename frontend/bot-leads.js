@@ -101,7 +101,7 @@ function renderThread(chatId, lead, messages) {
       <textarea id="composeText" placeholder="Ответить от имени бота…" rows="1"></textarea>
       <button type="button" class="lead-send-btn" id="sendBtn" title="Отправить">➤</button>
     </div>
-    <div class="lead-compose-hint">Сообщение уходит не мгновенно — становится в очередь, и его реально доставляет n8n через Telegram.</div>
+    <div class="lead-compose-hint">Сообщение уходит не мгновенно — становится в очередь, и его реально доставляет автоматизация через Telegram.</div>
   `;
   const msgsBox = document.getElementById('leadMsgs');
   msgsBox.scrollTop = msgsBox.scrollHeight;
