@@ -7,8 +7,8 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=9">
-  <link rel="stylesheet" href="/projects.css?v=8">
+  <link rel="stylesheet" href="/app.css?v=10">
+  <link rel="stylesheet" href="/projects.css?v=9">
 </head>
 <body>
 <div class="page">
@@ -38,6 +38,10 @@
     </header>
 
     <div id="kpiBanner" class="attention" hidden></div>
+    <div id="projTabs" class="proj-tabs">
+      <button type="button" class="proj-tab" data-tab="smm">SMM проекты<span class="proj-tab-count" id="tabCountSmm"></span></button>
+      <button type="button" class="proj-tab ai" data-tab="ai"><img class="proj-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ проекты<span class="proj-tab-count" id="tabCountAi"></span></button>
+    </div>
     <div class="proj-search-row">
       <input id="search" class="proj-search" type="text" placeholder="Поиск по названию клиента…">
       <label class="archive-toggle-check" for="showArchived">
@@ -174,6 +178,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=6"></script>
+<script src="/projects.js?v=7"></script>
 </body>
 </html>

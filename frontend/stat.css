@@ -62,3 +62,25 @@
 .hm-zero{background:#fff;color:transparent}
 .hm-strong{color:#fff;font-weight:800}
 .hm-legend{margin-top:8px;font-size:11px;color:var(--muted);font-weight:650}
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#12181A;
+    --card:#1B2320;
+    --ink:#ECEFED;
+    --muted:#93A19C;
+    --line:#2A3532;
+    --accent:#3FA98F;
+  }
+  .stat-card{background:#262222}
+  .stat-section{background:#262222}
+  .month-btn{background:#262222}
+  .month-btn:hover:not(:disabled){background:#202725}
+  .hb-track{background:#222624}
+  .stat-table td{border-bottom:1px solid #3A4040}
+  .stat-proj{background:#202725}
+  .stat-dev{background:#202725;color:#ECEEEE}
+  .hm-table td:first-child{background:#262222}
+  .hm-weekend{background:#222622}
+  .hm-zero{background:#262222}
+}

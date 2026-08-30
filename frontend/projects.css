@@ -1,6 +1,21 @@
 /* Small additions on top of app.css's shared design tokens/components
    (--accent, --ink, .btn, .head, .loading, .empty, .error-box, .toast, ...)
    so this internal staff page matches the client cabinet's look. */
+/* SMM/ИИ tabs above the list — see tabOf()/render() in projects.js. Same
+   "purple = ИИ" visual language as .edit-tab.ai in the edit popup and the
+   avatar highlight on AI project cards, so it reads as one consistent idea
+   rather than a new color scheme. */
+.proj-tabs{display:flex;gap:8px;margin:4px 0 14px}
+.proj-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:14px;padding:12px 14px;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;transition:background .15s,border-color .15s,color .15s}
+.proj-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.proj-tab.ai.active{background:var(--ai);border-color:var(--ai);color:#fff;box-shadow:0 0 0 1px var(--ai) inset,0 4px 14px rgba(155,90,246,.3)}
+.proj-tab-ai-avatar{width:20px;height:20px;border-radius:50%;object-fit:cover;pointer-events:none}
+.proj-tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:21px;height:21px;padding:0 6px;border-radius:999px;background:rgba(0,0,0,.07);font-size:11.5px;font-weight:800}
+.proj-tab.active .proj-tab-count{background:rgba(255,255,255,.25)}
+@media(max-width:420px){
+  .proj-tab{font-size:12px;padding:11px 8px;gap:5px}
+  .proj-tab-ai-avatar{width:17px;height:17px}
+}
 .proj-search-row{display:flex;align-items:center;gap:10px;margin:4px 0 16px}
 .proj-search{width:100%;border:1px solid var(--line);background:#fff;border-radius:14px;padding:12px 14px;font-size:14px;margin:0;outline:none;font:inherit;color:var(--ink);flex:1;min-width:0}
 .proj-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
@@ -296,7 +311,7 @@
 .proj-mmid code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#F6F7F7;border-radius:4px;padding:1px 6px;color:#7B8482}
 .proj-mmid:hover code{background:#EDEFEF;color:var(--ink)}
 .field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
-.field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink)}
+.field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink);background:var(--card)}
 .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .logo-preview{display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 10px;background:#FAFBFB;border:1px solid var(--line);border-radius:12px}
 .logo-preview img{width:40px;height:40px;object-fit:contain;border-radius:9px;background:#fff;border:1px solid var(--line)}
@@ -304,7 +319,7 @@
 .cred-intro{font-size:12px;color:var(--muted);line-height:1.5;margin:16px 0 10px;padding:10px 12px;background:#FAFBFB;border-radius:12px}
 .proj-fields{display:grid;gap:2px}
 .proj-field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.field-textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5;resize:vertical;outline:none;font:inherit;color:var(--ink)}
+.field-textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5;resize:vertical;outline:none;font:inherit;color:var(--ink);background:var(--card)}
 .field-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .edit-tabs{display:flex;gap:6px;margin-bottom:12px}
 .edit-tab{flex:1;border:1px solid var(--line);background:#FAFBFB;color:var(--muted);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit}
@@ -321,7 +336,7 @@
 .cred-networks{display:grid;gap:10px}
 .cred-net label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:var(--ink);margin-bottom:5px}
 .net-dot{width:9px;height:9px;border-radius:3px;display:inline-block}
-.cred-net textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:9px 10px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;outline:none;color:var(--ink)}
+.cred-net textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:9px 10px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;outline:none;color:var(--ink);background:var(--card)}
 .cred-net textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 #editError{margin-top:14px}
 
@@ -354,3 +369,46 @@
    .head-icon-link теперь общий для всех трёх кабинетов стиль, объявлен в
    app.css (грузится и здесь, и в кабинете команды). */
 .staff-links{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#12181A;
+    --card:#1B2320;
+    --ink:#ECEFED;
+    --muted:#93A19C;
+    --line:#2A3532;
+    --accent:#3FA98F;
+  }
+  .proj-search{background:#262222}
+  .archive-toggle-check{background:#262222}
+  .archive-toggle-check:has(input:checked){background:#222626}
+  .staff-head-pill{background:#222626}
+  .proj-card{background:#262222}
+  .ai-flag-check{background:#222626}
+  .archive-flag-check{background:#222626}
+  .proj-card.archived{background:#222626}
+  .proj-card.archived .proj-link{background:#222624}
+  .proj-kpi-dot{border:2px solid #403A3A}
+  .proj-bead{border:2px solid #403A3A}
+  .proj-bead.internal{background:#222626}
+  .proj-link{background:#222626}
+  .attention.off{background:#2E1B19}
+  .attention.minor{background:#2E2B19}
+  .row-minor .attention-link{color:#E9D177}
+  .proj-mmid code{background:#222626}
+  .proj-mmid:hover code{background:#222626}
+  .logo-preview{background:#222626}
+  .logo-preview img{background:#262222}
+  .cred-intro{background:#222626}
+  .edit-tab{background:#222626}
+  .ref-thumb{background:#222525}
+  .ref-add-btn{background:#262222}
+  .ref-add-btn:hover{background:#222626}
+  .ref-upload-btn{background:#262222}
+  .ref-upload-btn:hover{background:#222626}
+  .fp-box{background:#262222}
+  .fp-intro code{background:#222626}
+  .fp-result{background:#222626}
+  .proj-tab{background:#262222}
+  .proj-tab-count{background:rgba(255,255,255,.10)}
+}

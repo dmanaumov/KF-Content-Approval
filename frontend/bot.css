@@ -67,7 +67,7 @@
 .lead-msg-meta .err{color:#C23B2E;font-weight:700}
 
 .lead-compose{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px;align-items:flex-end}
-.lead-compose textarea{flex:1;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;font-size:13px;resize:none;min-height:42px;max-height:120px;outline:none}
+.lead-compose textarea{flex:1;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;font-size:13px;resize:none;min-height:42px;max-height:120px;outline:none;background:var(--card);color:var(--ink)}
 .lead-compose textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .lead-compose textarea:disabled{opacity:.5}
 .lead-send-btn{flex:0 0 auto;border:0;background:var(--accent);color:#fff;border-radius:12px;width:42px;height:42px;font-size:16px;cursor:pointer}
@@ -79,7 +79,7 @@
    page's "добавить новый параметр" form; keep both in sync by eye if the
    design language changes. */
 .field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
-.field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink)}
+.field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink);background:var(--card)}
 .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 .cred-intro{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 16px;padding:10px 12px;background:#FAFBFB;border-radius:12px}
 
@@ -96,3 +96,33 @@
 @media(max-width:640px){.apikey-add-form{grid-template-columns:1fr}}
 .apikey-add-btn{white-space:nowrap;padding:11px 16px}
 #addKeyError{margin-top:12px}
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#12181A;
+    --card:#1B2320;
+    --ink:#ECEFED;
+    --muted:#93A19C;
+    --line:#2A3532;
+    --accent:#3FA98F;
+  }
+  .ceo-tab{background:#222626}
+  .bot-chat-type{background:#202725}
+  .bot-status-pill.active{color:#85DCA2}
+  .leads-shell{background:#262222}
+  .lead-row{border-bottom:1px solid #3A4040}
+  .lead-row:hover{background:#222626}
+  .lead-row.selected{background:#1E2927}
+  .lead-row.awaiting{background:#2E2919}
+  .lead-row.awaiting:hover{background:#38311E}
+  .lead-row.awaiting.selected{background:#38321E}
+  .lead-msg{background:#222626}
+  .lead-msg.out{background:#1E2927}
+  .lead-msg.out.failed{background:#2E1A19}
+  .cred-intro{background:#222626}
+  .apikey-name{background:#222626}
+  .apikey-btn{background:#262222}
+  .apikey-btn:hover{background:#222626}
+  .apikey-btn.danger{border-color:#4E2F2C}
+  .apikey-btn.danger:hover{background:#2E1A19}
+}

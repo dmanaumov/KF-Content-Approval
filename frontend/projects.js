@@ -75,6 +75,19 @@ async function copyToClipboard(text) {
 let options = [];
 let busyProjectId = null;
 
+// SMM/ИИ tabs above the list (added once AI projects stopped being rare
+// exceptions — see the old TODO this replaces). Ground truth for "which tab"
+// is the same o.aiStatus the avatar/highlight already use ('none' → SMM,
+// 'partial'/'ai' → ИИ) — a project only shows up in "ИИ проекты" once staff
+// actually ticks the "Это ИИ-проект" checkbox in the edit popup, same flag
+// as everywhere else in this file. Persisted per-browser so switching pages
+// or reloading doesn't dump you back on "SMM" every time.
+let activeTab = localStorage.getItem('kf-proj-tab') === 'ai' ? 'ai' : 'smm';
+
+function tabOf(o) {
+  return o.aiStatus === 'none' ? 'smm' : 'ai';
+}
+
 // Beads-on-a-thread strip at the bottom of each project card (see
 // postsForMonth in backend/src/index.js): one bead per post planned this
 // month, colored by the same status notation the client cabinet uses. A
@@ -107,9 +120,17 @@ function beadsHtml(o) {
   return `<div class="proj-posts">${beads}</div>`;
 }
 
+function updateTabCounts(base) {
+  const smmCount = base.filter((o) => tabOf(o) === 'smm').length;
+  const aiCount = base.filter((o) => tabOf(o) === 'ai').length;
+  document.getElementById('tabCountSmm').textContent = String(smmCount);
+  document.getElementById('tabCountAi').textContent = String(aiCount);
+  document.querySelectorAll('.proj-tab').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === activeTab);
+  });
+}
+
 function render(filterText) {
-  // TODO (когда проектов станет >20): разделить ИИ-проекты и обычные через
-  // закладки/фильтры — сейчас они вперемешку в одном списке.
   const needle = (filterText || '').trim().toLowerCase();
   const showArchived = document.getElementById('showArchived').checked;
   // Архивные проекты (project_settings.is_archived) скрыты по умолчанию —
@@ -117,7 +138,9 @@ function render(filterText) {
   // с активными, а не вместо них. Поиск при этом продолжает работать по
   // всему видимому набору как обычно.
   const base = showArchived ? options : options.filter((o) => !o.isArchived);
-  const visible = needle ? base.filter((o) => o.label.toLowerCase().includes(needle)) : base;
+  updateTabCounts(base);
+  const inTab = base.filter((o) => tabOf(o) === activeTab);
+  const visible = needle ? inTab.filter((o) => o.label.toLowerCase().includes(needle)) : inTab;
   document.getElementById('list').innerHTML =
     visible
       .map((o) => {
@@ -173,7 +196,14 @@ function render(filterText) {
           ${beadsHtml(o)}
         </div>`;
       })
-      .join('') || '<div class="empty">Ничего не найдено.</div>';
+      .join('') ||
+    `<div class="empty">${
+      needle
+        ? 'Ничего не найдено.'
+        : activeTab === 'ai'
+        ? 'Пока нет ни одного ИИ-проекта — включите «Это ИИ-проект» в настройках нужного проекта.'
+        : 'Пока нет ни одного SMM-проекта.'
+    }</div>`;
 }
 
 function renderKpiBanner() {
@@ -260,11 +290,29 @@ async function regenerateLink(projectId, label) {
 document.getElementById('search').addEventListener('input', (e) => render(e.target.value));
 document.getElementById('showArchived').addEventListener('change', () => render(document.getElementById('search').value));
 
+document.getElementById('projTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.proj-tab');
+  if (!btn || btn.dataset.tab === activeTab) return;
+  activeTab = btn.dataset.tab;
+  localStorage.setItem('kf-proj-tab', activeTab);
+  render(document.getElementById('search').value);
+});
+
 document.getElementById('kpiBanner').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-scroll]');
   if (!btn) return;
   const search = document.getElementById('search');
   if (search.value) { search.value = ''; render(''); }
+  // Баннер про "горящие" проекты намеренно считается по ВСЕМ проектам сразу
+  // (не только текущей вкладке) — иначе легко пропустить срыв KPI у клиента,
+  // просто потому что смотришь сейчас в другую вкладку. При клике — сначала
+  // переключаемся на вкладку нужного проекта, потом скроллим.
+  const target = options.find((o) => o.id === btn.dataset.scroll);
+  if (target && tabOf(target) !== activeTab) {
+    activeTab = tabOf(target);
+    localStorage.setItem('kf-proj-tab', activeTab);
+    render('');
+  }
   const el = document.getElementById(`proj-${btn.dataset.scroll}`);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
