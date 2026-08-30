@@ -106,6 +106,40 @@ function buildOpenApiSpec() {
             message: { type: 'string' },
           },
         },
+        BotChat: {
+          type: 'object',
+          description: 'Один чат/канал, где когда-либо был или сейчас есть бот — см. POST /api/bot/channels.',
+          properties: {
+            chat_id: { type: 'string' },
+            chat_type: { type: 'string' },
+            title: { type: 'string' },
+            status: { type: 'string' },
+            added_by_user_id: { type: 'string' },
+            added_by_name: { type: 'string' },
+            added_by_username: { type: 'string' },
+            first_seen_at: { type: 'string', format: 'date-time' },
+            status_updated_at: { type: 'string', format: 'date-time' },
+          },
+        },
+        BotMessage: {
+          type: 'object',
+          description: 'Одно сообщение в переписке бота — входящее или исходящее (см. POST /api/bot/messages и очередь /api/bot/messages/outgoing).',
+          properties: {
+            id: { type: 'integer' },
+            chat_id: { type: 'string' },
+            direction: { type: 'string', enum: ['in', 'out'] },
+            status: { type: 'string', description: "in: всегда 'received'; out: 'pending' → 'sent'/'failed'" },
+            telegram_message_id: { type: 'string' },
+            from_user_id: { type: 'string' },
+            from_name: { type: 'string' },
+            from_username: { type: 'string' },
+            text: { type: 'string' },
+            sent_by: { type: 'string', description: 'для исходящих — имя CEO, поставившего сообщение в очередь' },
+            error: { type: 'string' },
+            created_at: { type: 'string', format: 'date-time' },
+            sent_at: { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
       },
       responses: {
         Unauthorized: {
@@ -648,18 +682,145 @@ function buildOpenApiSpec() {
       },
       '/api/bot/channels': {
         post: {
-          summary: 'Бот регистрирует каналы, в которые он подключен',
+          summary: 'Бот сообщает об изменении своего членства в чате/канале (my_chat_member)',
           description:
-            'Бот передаёт весь свой текущий список каналов; реестр заменяется атомарно ' +
-            '(DELETE + INSERT в одной транзакции). body: { channels: [{ key, name }, ...] }.',
+            'Вызывать на КАЖДЫЙ апдейт my_chat_member от Telegram (бота добавили, удалили, ' +
+            'повысили до админа) — не только на "добавили". actorUserId/actorName/actorUsername ' +
+            '(my_chat_member.from) запоминаются только при ПЕРВОМ появлении чата — повторные события ' +
+            'обновляют title/status, но не перезаписывают "кто добавил". Заполняет вкладку "Бот" ' +
+            'в /ceo/bot-chats.',
           security: [{ botApiKey: [] }],
           requestBody: {
             required: true,
-            content: { 'application/json': { schema: { type: 'object', required: ['channels'], properties: { channels: { type: 'array', items: { type: 'object', required: ['key', 'name'], properties: { key: { type: 'string', description: 'внутренний id канала у бота' }, name: { type: 'string', description: 'человекочитаемое имя для выпадающего списка' } } } } } } } },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['chatId', 'status'],
+                  properties: {
+                    chatId: { type: 'string', description: 'Telegram chat.id (отрицательный для групп/каналов)' },
+                    chatType: { type: 'string', enum: ['group', 'supergroup', 'channel', 'private'] },
+                    title: { type: 'string' },
+                    status: { type: 'string', example: 'administrator', description: 'my_chat_member.new_chat_member.status: member/administrator/left/kicked/...' },
+                    actorUserId: { type: 'string', description: 'my_chat_member.from.id — кто выполнил действие' },
+                    actorName: { type: 'string' },
+                    actorUsername: { type: 'string' },
+                  },
+                },
+              },
+            },
           },
           responses: {
-            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { channels: { type: 'array', items: { type: 'object', properties: { channel_key: { type: 'string' }, name: { type: 'string' } } } } } } } } },
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { chat: { $ref: '#/components/schemas/BotChat' } } } } } },
+            400: { description: 'chatId/status не переданы', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/bot/messages': {
+        post: {
+          summary: 'Бот сообщает о входящем сообщении (личный чат)',
+          description:
+            'Вызывать на каждое входящее текстовое сообщение из личного чата с ботом — потенциальный ' +
+            'лид. Регистрирует и сам чат, если это первый контакт (у личных чатов нет my_chat_member ' +
+            'при первом сообщении — только при блокировке/разблокировке). Заполняет вкладку "Переписка" ' +
+            'в /ceo/bot-leads.',
+          security: [{ botApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['chatId'],
+                  properties: {
+                    chatId: { type: 'string' },
+                    chatType: { type: 'string', example: 'private' },
+                    chatTitle: { type: 'string', description: 'опционально — если пусто, берётся из fromName/fromUsername' },
+                    telegramMessageId: { type: 'string' },
+                    fromUserId: { type: 'string' },
+                    fromName: { type: 'string' },
+                    fromUsername: { type: 'string' },
+                    text: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: 'Создано', content: { 'application/json': { schema: { type: 'object', properties: { message: { $ref: '#/components/schemas/BotMessage' } } } } } },
+            400: { description: 'chatId не передан', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/bot/messages/outgoing': {
+        get: {
+          summary: 'Очередь исходящих сообщений, поставленных staff из /ceo/bot-leads',
+          description:
+            'Это приложение НЕ хранит токен Telegram-бота и не шлёт сообщения само — только копит ' +
+            'очередь. Опрашивайте этот эндпоинт (например, раз в 30-60с), реально отправляйте каждое ' +
+            'сообщение через Telegram Bot API своим credential\'ом, затем подтверждайте через ' +
+            'POST /api/bot/messages/{id}/ack — иначе строка так и останется "pending" и будет отдаваться ' +
+            'повторно на каждый опрос.',
+          security: [{ botApiKey: [] }],
+          parameters: [{ name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 50, maximum: 200 } }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      messages: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'integer', description: 'id строки — передать обратно в .../ack, это НЕ telegram_message_id' },
+                            chatId: { type: 'string' },
+                            text: { type: 'string' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/bot/messages/{id}/ack': {
+        post: {
+          summary: 'Подтверждение отправки одного исходящего сообщения',
+          description: 'id — числовой id строки из GET .../outgoing (не telegram_message_id).',
+          security: [{ botApiKey: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['status'],
+                  properties: {
+                    status: { type: 'string', enum: ['sent', 'failed'] },
+                    telegramMessageId: { type: 'string', description: 'опционально — реальный message_id из ответа Telegram, при status=sent' },
+                    error: { type: 'string', description: 'опционально — текст ошибки, при status=failed' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { message: { $ref: '#/components/schemas/BotMessage' } } } } } },
+            400: { description: 'status не sent/failed, или id не число', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            404: { description: 'Такой pending-строки нет (или уже подтверждена)', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
       },

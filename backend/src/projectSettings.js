@@ -129,7 +129,7 @@ async function getSettings(boardId, projectId) {
   const { rows } = await pool.query(
     `SELECT logo_url, social_credentials, is_ai_project, is_archived, start_date, posts_per_month,
             publish_time_msk, project_manager, strategy_prompt, planning_prompt,
-            post_prompt, image_prompt
+            post_prompt, image_prompt, image_references
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -147,7 +147,24 @@ async function getSettings(boardId, projectId) {
     planningPrompt: row.planning_prompt || '',
     postPrompt: row.post_prompt || '',
     imagePrompt: row.image_prompt || '',
+    imageReferences: Array.isArray(row.image_references) ? row.image_references : [],
   };
+}
+
+// Referenced images for AI generation — up to 10 URLs (pasted or uploaded to
+// disk.kontentferma via POST /api/projects/:id/reference-upload, see
+// index.js/diskUpload.js). Deliberately permissive validation (just "is it a
+// non-empty string, and at most 10 of them") — these are meant to be quick
+// working links for an automation to fetch, not something this app itself
+// dereferences, so no need to be stricter about exact URL shape here.
+const MAX_IMAGE_REFERENCES = 10;
+function normalizeImageReferences(value) {
+  const arr = Array.isArray(value) ? value : [];
+  const cleaned = arr.map((v) => String(v || '').trim()).filter(Boolean);
+  if (cleaned.length > MAX_IMAGE_REFERENCES) {
+    throw new Error(`Референсов не может быть больше ${MAX_IMAGE_REFERENCES} (передано ${cleaned.length}).`);
+  }
+  return cleaned;
 }
 
 // Same 5 shorthands the client cabinet already detects in a post title
@@ -164,6 +181,7 @@ async function updateSettings(boardId, projectId, {
   logoUrl, socialCredentials, isAiProject, isArchived,
   startDate, postsPerMonth, publishTimeMsk, projectManager,
   strategyPrompt, planningPrompt, postPrompt, imagePrompt,
+  imageReferences,
 }) {
   if (typeof logoUrl !== 'string') {
     throw new Error('logoUrl must be a string (may be empty).');
@@ -176,6 +194,7 @@ async function updateSettings(boardId, projectId, {
       throw new Error(`Unknown network key "${key}" — expected one of: ${KNOWN_NETWORKS.join(', ')}.`);
     }
   }
+  const references = normalizeImageReferences(imageReferences);
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   await pool.query(
@@ -192,6 +211,7 @@ async function updateSettings(boardId, projectId, {
          post_prompt = $12,
          image_prompt = $13,
          is_archived = $14,
+         image_references = $15::jsonb,
          updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
     [
@@ -201,6 +221,7 @@ async function updateSettings(boardId, projectId, {
       textOrEmpty(strategyPrompt), textOrEmpty(planningPrompt),
       textOrEmpty(postPrompt), textOrEmpty(imagePrompt),
       !!isArchived,
+      JSON.stringify(references),
     ]
   );
 }

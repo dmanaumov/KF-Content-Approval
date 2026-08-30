@@ -1,0 +1,98 @@
+/* Telegram bot control center (frontend/bot-chats.html + bot-leads.html) —
+   owner-only pages (see /ceo/bot-chats, /ceo/bot-leads in index.js). Layered
+   on app.css's shared tokens (--accent/--ink/--muted/--line) same as every
+   other internal page; stat.css is also loaded alongside this for
+   .stat-section/.stat-table/.stat-cards, reused as-is for the "Бот" list. */
+
+/* Shared 3-tab nav (SMM / Бот / Переписка) — same pill-tab visual language
+   as projects.html's edit-popup tabs (.edit-tab/.edit-tab.active), redrawn
+   here standalone since these pages don't load projects.css. "SMM" always
+   links out to /projects (a different auth realm — shared Basic Auth, not
+   the CEO session these two new tabs require); "Бот"/"Переписка" stay
+   inside the CEO-gated pages. */
+.ceo-tabs{display:flex;gap:6px;margin:14px 0 18px;padding:0 12px}
+.ceo-tab{flex:1;text-align:center;border:1px solid var(--line);background:#FAFBFB;color:var(--muted);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:800;text-decoration:none}
+.ceo-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+.bot-root{padding:2px 12px 32px;display:flex;flex-direction:column;gap:18px}
+
+/* "Бот" — список чатов, куда он добавлен. Ряд статуса переиспользует токены
+   успеха/тревоги, уже принятые в проекте (зелёный "участник", серый
+   "вышел/выгнали"). */
+.bot-chat-type{display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);background:#F2F6F5;border-radius:6px;padding:2px 7px}
+.bot-status-pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800}
+.bot-status-pill::before{content:"";width:8px;height:8px;border-radius:50%}
+.bot-status-pill.active::before{background:#216A39}
+.bot-status-pill.active{color:#216A39}
+.bot-status-pill.gone::before{background:#9AA3A1}
+.bot-status-pill.gone{color:var(--muted)}
+.bot-added-by{font-size:12px;color:var(--muted)}
+.bot-added-by b{color:var(--ink);font-weight:700}
+
+/* "Переписка" — двухпанельный лид-инбокс: список слева, тред+ответ справа. */
+.leads-shell{display:grid;grid-template-columns:300px 1fr;gap:16px;background:#fff;border:1px solid var(--line);border-radius:20px;overflow:hidden;min-height:520px}
+@media(max-width:760px){.leads-shell{grid-template-columns:1fr}}
+
+.leads-list{border-right:1px solid var(--line);overflow-y:auto;max-height:74vh}
+@media(max-width:760px){.leads-list{border-right:0;border-bottom:1px solid var(--line);max-height:220px}}
+.leads-list-empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:12.5px}
+.lead-row{display:block;width:100%;text-align:left;border:0;background:none;border-bottom:1px solid #F1F3F3;padding:12px 14px;cursor:pointer;font:inherit}
+.lead-row:hover{background:#FAFBFB}
+.lead-row.selected{background:#EAF3F1}
+.lead-row.awaiting{background:#FFF9E9}
+.lead-row.awaiting:hover{background:#FFF4D6}
+.lead-row.awaiting.selected{background:#F5E9C6}
+.lead-row-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.lead-name{font-weight:800;font-size:13.5px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lead-time{flex:0 0 auto;font-size:10.5px;color:var(--muted);font-weight:700}
+.lead-preview{margin-top:3px;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.lead-preview .dir{flex:0 0 auto;font-weight:800}
+.lead-preview .dir.in{color:#B8860B}
+.lead-preview .dir.out{color:var(--accent)}
+.lead-await-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#EE8208;margin-left:6px;flex:0 0 auto;box-shadow:0 0 0 3px rgba(238,130,8,.18)}
+
+.lead-thread{display:flex;flex-direction:column;min-height:0}
+.lead-thread-head{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.lead-thread-title{font-weight:800;font-size:14.5px;color:var(--ink)}
+.lead-thread-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+.lead-thread-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;padding:40px 20px;text-align:center}
+.lead-msgs{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;max-height:56vh}
+
+.lead-msg{background:#F7F8F8;border-radius:14px;padding:9px 12px;max-width:78%}
+.lead-msg.out{background:#EAF3F1;align-self:flex-end}
+.lead-msg.out.pending{opacity:.6}
+.lead-msg.out.failed{background:#FCEBEA;border:1px solid #E9A6A2}
+.lead-msg-text{font-size:13px;line-height:1.45;white-space:pre-wrap}
+.lead-msg-meta{font-size:9.5px;color:var(--muted);margin-top:4px;display:flex;gap:6px;align-items:center}
+.lead-msg-meta .err{color:#C23B2E;font-weight:700}
+
+.lead-compose{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px;align-items:flex-end}
+.lead-compose textarea{flex:1;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;font-size:13px;resize:none;min-height:42px;max-height:120px;outline:none}
+.lead-compose textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.lead-compose textarea:disabled{opacity:.5}
+.lead-send-btn{flex:0 0 auto;border:0;background:var(--accent);color:#fff;border-radius:12px;width:42px;height:42px;font-size:16px;cursor:pointer}
+.lead-send-btn:disabled{opacity:.45;cursor:default}
+.lead-compose-hint{font-size:11px;color:var(--muted);padding:0 16px 10px}
+
+/* Shared field/intro styles — duplicated (in miniature) from projects.css'
+   edit-popup styles rather than loading that whole stylesheet just for this
+   page's "добавить новый параметр" form; keep both in sync by eye if the
+   design language changes. */
+.field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
+.field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink)}
+.field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.cred-intro{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 16px;padding:10px 12px;background:#FAFBFB;border-radius:12px}
+
+/* "Управление" — API-key table (frontend/api-keys.html/js). */
+.apikey-table{width:100%}
+.apikey-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:#F6F7F7;border-radius:5px;padding:2px 6px;color:var(--ink)}
+.apikey-value{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+.apikey-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.apikey-btn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;padding:6px 10px;font-size:11.5px;font-weight:750;cursor:pointer;font-family:inherit}
+.apikey-btn:hover{background:#FAFBFB}
+.apikey-btn.danger{color:#C23B2E;border-color:#EFC9C6}
+.apikey-btn.danger:hover{background:#FCEBEA}
+.apikey-add-form{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}
+@media(max-width:640px){.apikey-add-form{grid-template-columns:1fr}}
+.apikey-add-btn{white-space:nowrap;padding:11px 16px}
+#addKeyError{margin-top:12px}

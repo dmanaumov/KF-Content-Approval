@@ -174,9 +174,15 @@ async function createPublicShare(relPath) {
 // folderName: per-client sub-folder under diskUploadRootPath (e.g. the
 // task's projectLabel — "SMM / Кот Василий / ..."). filename: should
 // already be a reasonably final, collision-resistant name (the index.js
-// route stamps date + a random suffix before calling this).
+// route stamps date + a random suffix before calling this). subFolder:
+// OPTIONAL extra path segment nested under folderName (e.g. "референсы" for
+// the project-level reference-image uploads — see POST /api/projects/:id/
+// reference-upload in index.js) — sanitized as its own segment, so it stays
+// a real subdirectory rather than getting flattened into folderName by
+// sanitizeSegment's own "/" → "_" substitution.
 async function uploadAndShare(opts) {
   const folderName = opts.folderName;
+  const subFolder = opts.subFolder;
   const filename = opts.filename;
   const buffer = opts.buffer;
   const mimeType = opts.mimeType;
@@ -188,7 +194,9 @@ async function uploadAndShare(opts) {
     throw err;
   }
   const root = config.diskUploadRootPath || 'SMM';
-  const relDir = root + '/' + sanitizeSegment(folderName);
+  const relDir = subFolder
+    ? root + '/' + sanitizeSegment(folderName) + '/' + sanitizeSegment(subFolder)
+    : root + '/' + sanitizeSegment(folderName);
   const relFile = relDir + '/' + sanitizeSegment(filename);
   await ensureRemoteDir(relDir);
   await putFile(relFile, buffer, mimeType);

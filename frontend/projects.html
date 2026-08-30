@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=9">
-  <link rel="stylesheet" href="/projects.css?v=7">
+  <link rel="stylesheet" href="/projects.css?v=8">
 </head>
 <body>
 <div class="page">
@@ -29,6 +29,9 @@
           </a>
           <a id="ceoLink" class="head-icon-link" href="/ceo" title="CEO-дашборд" aria-label="CEO-дашборд" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l4 3 5-6 5 6 4-3-2 9H5L3 8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
+          </a>
+          <a id="botLink" class="head-icon-link" href="/ceo/bot-chats" title="Бот «Кот Василий» — чаты и переписка" aria-label="Бот «Кот Василий»" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="13.5" r="1.3" fill="currentColor"/><circle cx="15" cy="13.5" r="1.3" fill="currentColor"/><path d="M12 8V4m-3 0h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           </a>
         </div>
       </div>
@@ -146,6 +149,18 @@
       <textarea id="editPostPrompt" class="field-textarea" rows="4" placeholder="Как писать тексты постов…"></textarea>
       <label class="field-label" for="editImagePrompt">Промт для генерации картинок</label>
       <textarea id="editImagePrompt" class="field-textarea" rows="4" placeholder="Как генерировать изображения…"></textarea>
+
+      <label class="field-label">Референсы картинок (до 10 шт.) — используются при генерации картинок для чата клиента</label>
+      <div id="refGallery" class="ref-gallery"></div>
+      <div class="ref-add-row">
+        <input id="refUrlInput" class="field-input ref-url-input" type="text" placeholder="Вставить ссылку на картинку…">
+        <button type="button" id="refUrlAddBtn" class="ref-add-btn">Добавить</button>
+        <label class="ref-upload-btn" id="refUploadBtn">
+          Загрузить файл
+          <input id="refFileInput" type="file" accept="image/*" hidden>
+        </label>
+      </div>
+      <div id="refError" class="error-box ref-error" hidden></div>
     </div>
 
     <div id="editError" class="error-box" hidden></div>
@@ -159,6 +174,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=5"></script>
+<script src="/projects.js?v=6"></script>
 </body>
 </html>

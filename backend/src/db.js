@@ -85,6 +85,16 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
   `);
+  // Референсы для генерации картинок (до 10 ссылок на изображения — либо
+  // вставлены вручную, либо загружены через POST /api/projects/:id/
+  // reference-upload на disk.kontentferma в подпапку "референсы", см.
+  // diskUpload.js). Читается автоматизацией через GET /api/automation/
+  // projects/:projectId/settings (getAutomationProjectSettings в index.js)
+  // как материал для генерации картинок в чат клиента.
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS image_references jsonb NOT NULL DEFAULT '[]'::jsonb;
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);
@@ -222,6 +232,79 @@ async function initSchema() {
       creator_user_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (board_id, task_id)
+    );
+  `);
+  // Бот «Кот Василий» (Telegram) — куда он добавлен + переписка с ним.
+  // Отдельная подсистема от project_settings/publication_log выше: тот же
+  // Postgres, но пишет и читает через свой собственный ключ (BOT_API_KEY /
+  // X-Bot-Key, см. requireBotAuth в index.js), НЕ через AUTOMATION_API_KEY
+  // n8n-потока публикаций — чтобы у Telegram-бота был свой независимый
+  // канал доступа, который можно ротировать/отозвать отдельно.
+  //
+  // chat_id хранится как text (не bigint/numeric) — Telegram присылает его и
+  // числом, и строкой в зависимости от узла n8n, а сравнивать/JOIN-ить проще
+  // и безопаснее строкой, не тратя силы на нормализацию типов на каждом
+  // запросе.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_chats (
+      chat_id text PRIMARY KEY,
+      chat_type text NOT NULL DEFAULT '',
+      title text NOT NULL DEFAULT '',
+      status text NOT NULL DEFAULT '',
+      added_by_user_id text NOT NULL DEFAULT '',
+      added_by_name text NOT NULL DEFAULT '',
+      added_by_username text NOT NULL DEFAULT '',
+      first_seen_at timestamptz NOT NULL DEFAULT now(),
+      status_updated_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  // Переписка (личные чаты — потенциальные лиды) + очередь исходящих.
+  // direction: 'in' (пришло от пользователя) | 'out' (написали от имени
+  // бота). Для 'out' status идёт pending → sent/failed — исходящее НЕ
+  // отправляется этим приложением напрямую (у него нет токена бота), только
+  // складывается в очередь; n8n вычитывает через GET /api/bot/messages/
+  // outgoing, реально шлёт через Telegram Bot API своим credential'ом и
+  // отчитывается через POST /api/bot/messages/:id/ack. Для 'in' status всегда
+  // 'received' — эти строки только читаются.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_messages (
+      id bigserial PRIMARY KEY,
+      chat_id text NOT NULL,
+      direction text NOT NULL,
+      status text NOT NULL DEFAULT 'received',
+      telegram_message_id text NOT NULL DEFAULT '',
+      from_user_id text NOT NULL DEFAULT '',
+      from_name text NOT NULL DEFAULT '',
+      from_username text NOT NULL DEFAULT '',
+      text text NOT NULL DEFAULT '',
+      sent_by text NOT NULL DEFAULT '',
+      error text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      sent_at timestamptz
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS bot_messages_chat_idx ON bot_messages (chat_id, created_at);`);
+  // Частичный индекс — быстрая выборка «что ещё не отправлено» для n8n-поллинга,
+  // не сканируя всю историю переписки на каждый тик.
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS bot_messages_pending_out_idx
+      ON bot_messages (created_at)
+      WHERE direction = 'out' AND status = 'pending';
+  `);
+  // Живой (не env-var) реестр секретов для машинных интеграций — заменяет
+  // AUTOMATION_API_KEY/BOT_API_KEY/GOOGLE_DOCS_API_KEY как источник правды
+  // на лету, без редеплоя: см. apiKeys.js. При старте seed'ится из тех же
+  // env-переменных (см. apiKeys.ensureSeeded), так что уже настроенные
+  // интеграции продолжают работать без ручной миграции. Управляется через
+  // CEO-only вкладку "Управление" (/ceo/api-keys).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      name text PRIMARY KEY,
+      label text NOT NULL DEFAULT '',
+      value text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
   await ensureN8nRole();

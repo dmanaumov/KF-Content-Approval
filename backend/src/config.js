@@ -284,11 +284,18 @@ module.exports = {
   // 503 rather than silently accepting requests.
   googleDocsApiKey: process.env.GOOGLE_DOCS_API_KEY || '',
 
-  // Third shared secret, for the AI/content BOT (see /api/bot/* in index.js)
-  // — set as BOT_API_KEY in Dokploy. The bot uses it to register/refresh the
-  // list of channels it is added to (POST /api/bot/channels, header
-  // "X-Bot-Key"), which the staff edit popup then shows by NAME in a dropdown
-  // instead of making someone type channel ids by hand. Blank (default) =
-  // that route responds 503 rather than silently accepting requests.
+  // Third shared secret, for the Telegram bot integration («Кот Василий» —
+  // see /api/bot/* in index.js, header "X-Bot-Key") — set as BOT_API_KEY in
+  // Dokploy. Deliberately separate from AUTOMATION_API_KEY so this
+  // integration's credential can be rotated/revoked on its own. n8n's
+  // Telegram Trigger workflow uses it to: report the bot's own my_chat_member
+  // changes (POST /api/bot/channels — powers /ceo/bot-chats, "куда
+  // добавлен"), report incoming private messages (POST /api/bot/messages —
+  // powers /ceo/bot-leads, "переписка"/leads), and poll+ack the outgoing-send
+  // queue (GET /api/bot/messages/outgoing, POST /api/bot/messages/:id/ack —
+  // this app holds no Telegram bot token, it only queues what staff type in
+  // /ceo/bot-leads; n8n does the actual send). See botStore.js and
+  // docs/N8N_AUTOMATION.md for the full wiring. Blank (default) = those
+  // routes respond 503 rather than silently accepting requests.
   botApiKey: process.env.BOT_API_KEY || '',
 };

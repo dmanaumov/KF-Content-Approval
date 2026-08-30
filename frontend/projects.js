@@ -296,9 +296,52 @@ document.getElementById('list').addEventListener('click', async (e) => {
 // (backend/src/projectSettings.js) --------------------------------------
 const NET_KEYS = ['ig', 'tg', 'vk', 'ok', 'max'];
 let editingProjectId = null;
+// Референсы картинок для ИИ-генерации (до 10 шт., project_settings.image_references) —
+// собираются локально в этом массиве (и добавлением ссылки, и загрузкой файла
+// на диск через /api/projects/:id/reference-upload), а сохраняются целиком
+// вместе с остальными настройками попапа по кнопке «Сохранить» — см. saveEdit().
+const MAX_IMAGE_REFERENCES = 10;
+let imageReferences = [];
 
 function credTextareas() {
   return NET_KEYS.map((k) => document.querySelector(`[data-net-field="${k}"]`));
+}
+
+function renderRefGallery() {
+  const gallery = document.getElementById('refGallery');
+  const addRow = document.querySelector('.ref-add-row');
+  if (!imageReferences.length) {
+    gallery.hidden = true;
+    gallery.innerHTML = '';
+  } else {
+    gallery.hidden = false;
+    gallery.innerHTML = imageReferences
+      .map((url, i) => `<div class="ref-thumb">
+        <img src="${esc(url)}" alt="" loading="lazy">
+        <button type="button" class="ref-thumb-remove" data-idx="${i}" title="Убрать" aria-label="Убрать">×</button>
+      </div>`)
+      .join('');
+    gallery.querySelectorAll('.ref-thumb-remove').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        imageReferences.splice(Number(btn.dataset.idx), 1);
+        renderRefGallery();
+      });
+    });
+  }
+  const atLimit = imageReferences.length >= MAX_IMAGE_REFERENCES;
+  addRow.hidden = atLimit;
+}
+
+function addImageReference(url) {
+  const clean = String(url || '').trim();
+  if (!clean) return false;
+  if (imageReferences.length >= MAX_IMAGE_REFERENCES) {
+    toast(`Референсов не может быть больше ${MAX_IMAGE_REFERENCES}`);
+    return false;
+  }
+  imageReferences.push(clean);
+  renderRefGallery();
+  return true;
 }
 
 function updateLogoPreview() {
@@ -332,6 +375,10 @@ async function openEdit(projectId, label) {
   document.getElementById('editPlanningPrompt').value = '';
   document.getElementById('editPostPrompt').value = '';
   document.getElementById('editImagePrompt').value = '';
+  imageReferences = [];
+  document.getElementById('refUrlInput').value = '';
+  document.getElementById('refError').hidden = true;
+  renderRefGallery();
   switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
@@ -351,6 +398,8 @@ async function openEdit(projectId, label) {
     document.getElementById('editPlanningPrompt').value = data.planningPrompt || '';
     document.getElementById('editPostPrompt').value = data.postPrompt || '';
     document.getElementById('editImagePrompt').value = data.imagePrompt || '';
+    imageReferences = Array.isArray(data.imageReferences) ? data.imageReferences.slice(0, MAX_IMAGE_REFERENCES) : [];
+    renderRefGallery();
     const creds = data.socialCredentials || {};
     credTextareas().forEach((ta) => {
       const net = ta.dataset.netField;
@@ -417,6 +466,7 @@ async function saveEdit() {
         planningPrompt: document.getElementById('editPlanningPrompt').value,
         postPrompt: document.getElementById('editPostPrompt').value,
         imagePrompt: document.getElementById('editImagePrompt').value,
+        imageReferences,
       }),
     });
     const data = await res.json();
@@ -443,10 +493,70 @@ document.getElementById('editMmid').addEventListener('click', async () => {
   }
 });
 document.getElementById('editLogoUrl').addEventListener('input', updateLogoPreview);
+
+document.getElementById('refUrlAddBtn').addEventListener('click', () => {
+  const input = document.getElementById('refUrlInput');
+  if (addImageReference(input.value)) input.value = '';
+});
+document.getElementById('refUrlInput').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  document.getElementById('refUrlAddBtn').click();
+});
+document.getElementById('refFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ''; // так же файл можно будет выбрать повторно
+  if (!file) return;
+  const refError = document.getElementById('refError');
+  refError.hidden = true;
+  if (imageReferences.length >= MAX_IMAGE_REFERENCES) {
+    toast(`Референсов не может быть больше ${MAX_IMAGE_REFERENCES}`);
+    return;
+  }
+  const uploadBtn = document.getElementById('refUploadBtn');
+  uploadBtn.classList.add('uploading');
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/reference-upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    addImageReference(data.shareUrl);
+  } catch (err) {
+    refError.textContent = 'Не удалось загрузить файл: ' + err.message;
+    refError.hidden = false;
+  } finally {
+    uploadBtn.classList.remove('uploading');
+  }
+});
 document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
 document.querySelector('[data-action="save-edit"]').addEventListener('click', saveEdit);
 document.querySelectorAll('.edit-tab').forEach((b) => {
   b.addEventListener('click', () => switchEditTab(b.dataset.tab));
 });
+
+// Показывает CEO-иконки в шапке (ceoLink/botLink) только когда браузер уже
+// залогинен в /team ПОД CEO-аккаунтом (config.ceoEmails) — не любым
+// staffAuth-доступом к этой же странице (тот проверяется отдельным общим
+// паролем и не завязан на личность, см. currentAccess() в index.js). Тихо
+// молчит и оставляет иконки скрытыми, если такой сессии в этом браузере нет
+// (обычная ситуация — /projects открывают по общему паролю, без /team).
+async function revealCeoLinksIfOwner() {
+  try {
+    const res = await fetch('/api/team/me');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.access && data.access.ceo) {
+      document.getElementById('ceoLink').hidden = false;
+      document.getElementById('botLink').hidden = false;
+    }
+  } catch (err) {
+    // молча — эта проверка сугубо косметическая
+  }
+}
+revealCeoLinksIfOwner();
 
 load();

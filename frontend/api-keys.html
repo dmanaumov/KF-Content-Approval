@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>КФ — Управление ключами</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css?v=9">
+  <link rel="stylesheet" href="/stat.css?v=8">
+  <link rel="stylesheet" href="/bot.css?v=2">
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div class="head-top">
+      <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+      <div class="head-right">
+        <div class="client-brand"><strong>Управление ключами API</strong></div>
+        <a class="cal-toggle" href="/ceo" title="К CEO-дашборду" aria-label="К CEO-дашборду">←</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="ceo-tabs">
+    <a class="ceo-tab" href="/projects">SMM</a>
+    <a class="ceo-tab" href="/ceo/bot-chats">Бот</a>
+    <a class="ceo-tab" href="/ceo/bot-leads">Переписка</a>
+    <a class="ceo-tab active" href="/ceo/api-keys">Управление</a>
+  </nav>
+
+  <div id="loading" class="loading">Загружаем ключи…</div>
+  <div id="errorBox" class="error-box stat-error" hidden></div>
+  <main id="root" class="bot-root" hidden>
+    <div class="cred-intro">
+      Ключи ниже действуют сразу — «выпустить новый» или «удалить» применяется на следующем же запросе, без правки переменных в Dokploy и без передеплоя. Значение видно только здесь (владельцу).
+    </div>
+    <section class="stat-section">
+      <h2>Ключи</h2>
+      <div id="keysTable"></div>
+    </section>
+    <section class="stat-section">
+      <h2>Добавить новый параметр</h2>
+      <form id="addKeyForm" class="apikey-add-form">
+        <div>
+          <label class="field-label" for="newKeyName">Имя (как переменная окружения)</label>
+          <input id="newKeyName" class="field-input" type="text" placeholder="MY_INTEGRATION_KEY" autocomplete="off">
+        </div>
+        <div>
+          <label class="field-label" for="newKeyLabel">Описание (необязательно)</label>
+          <input id="newKeyLabel" class="field-input" type="text" placeholder="Для чего этот ключ" autocomplete="off">
+        </div>
+        <button type="submit" class="btn approve apikey-add-btn">Добавить и выпустить</button>
+      </form>
+      <div id="addKeyError" class="error-box" hidden></div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/api-keys.js?v=1"></script>
+</body>
+</html>

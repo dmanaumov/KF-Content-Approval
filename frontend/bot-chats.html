@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>КФ — CEO</title>
+  <title>КФ — Бот: чаты</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -17,26 +17,24 @@
     <div class="head-top">
       <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
       <div class="head-right">
-        <div class="client-brand"><strong>CEO — дашборд</strong></div>
-        <a class="cal-toggle" href="/team" title="К кабинету команды" aria-label="К кабинету команды">←</a>
+        <div class="client-brand"><strong>Бот «Кот Василий»</strong></div>
+        <a class="cal-toggle" href="/ceo" title="К CEO-дашборду" aria-label="К CEO-дашборду">←</a>
       </div>
     </div>
   </header>
 
   <nav class="ceo-tabs">
     <a class="ceo-tab" href="/projects">SMM</a>
-    <a class="ceo-tab" href="/ceo/bot-chats">Бот</a>
+    <a class="ceo-tab active" href="/ceo/bot-chats">Бот</a>
     <a class="ceo-tab" href="/ceo/bot-leads">Переписка</a>
     <a class="ceo-tab" href="/ceo/api-keys">Управление</a>
   </nav>
 
-  <div id="ceoLoading" class="loading">Загружаем данные…</div>
-  <div id="ceoError" class="error-box stat-error" hidden></div>
-  <main id="ceoRoot" class="stat-root"></main>
+  <div id="loading" class="loading">Загружаем список чатов…</div>
+  <div id="errorBox" class="error-box stat-error" hidden></div>
+  <main id="root" class="bot-root" hidden></main>
 </div>
 
-<div id="toast" class="toast"></div>
-
-<script src="/ceo.js?v=2"></script>
+<script src="/bot-chats.js?v=1"></script>
 </body>
 </html>

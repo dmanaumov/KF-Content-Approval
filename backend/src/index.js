@@ -16,6 +16,8 @@ const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
 const mailer = require('./mailer');
 const analytics = require('./analytics');
+const botStore = require('./botStore');
+const apiKeys = require('./apiKeys');
 const { buildOpenApiSpec } = require('./openapiSpec');
 
 const app = express();
@@ -305,14 +307,19 @@ function requireStaffBoardId(res) {
 const AUTOMATION_ACTOR = 'автоматизация';
 
 function requireAutomationAuth(req, res, next) {
-  if (!config.automationApiKey) {
+  // apiKeys.getValueSync falls back to config.automationApiKey itself (env
+  // var) when Postgres has nothing under this name yet — see apiKeys.js's
+  // file comment. This call is the ONLY thing that changed here: the actual
+  // secret can now be live-rotated from the CEO "Управление" tab instead of
+  // requiring a Dokploy env var edit + redeploy.
+  const expected = apiKeys.getValueSync('AUTOMATION_API_KEY') || config.automationApiKey;
+  if (!expected) {
     return res.status(503).json({
       error: 'automation_api_disabled',
       message: 'AUTOMATION_API_KEY не задан — см. комментарий в config.js.',
     });
   }
   const provided = String(req.headers['x-api-key'] || '');
-  const expected = config.automationApiKey;
   // Constant-time comparison so a wrong guess can't be narrowed down via
   // response-time differences. Buffers must match in length for
   // timingSafeEqual — a length mismatch is itself decisive, so short-
@@ -321,6 +328,34 @@ function requireAutomationAuth(req, res, next) {
   const ok = provided.length === expected.length && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
   if (!ok) {
     return res.status(401).json({ error: 'invalid_api_key' });
+  }
+  next();
+}
+
+// ---------------------------------------------------------------------------
+// Bot API (Telegram bot «Кот Василий» and similar) — gated by its OWN shared
+// secret (config.botApiKey, header "X-Bot-Key"), deliberately separate from
+// AUTOMATION_API_KEY above so the Telegram integration's credential can be
+// rotated/revoked independently of the SMM-publishing n8n flow. Covers: the
+// bot reporting which chats it's in (POST /api/bot/channels), reporting
+// incoming private messages (POST /api/bot/messages), and the outgoing-send
+// queue (GET .../messages/outgoing + POST .../messages/:id/ack) — this app
+// never holds a Telegram bot token itself, see botStore.js's file comment.
+// ---------------------------------------------------------------------------
+function requireBotAuth(req, res, next) {
+  // See requireAutomationAuth above — same live-in-Postgres pattern via
+  // apiKeys.js, env var (config.botApiKey) only as a fallback.
+  const expected = apiKeys.getValueSync('BOT_API_KEY') || config.botApiKey;
+  if (!expected) {
+    return res.status(503).json({
+      error: 'bot_api_disabled',
+      message: 'BOT_API_KEY не задан — см. комментарий в config.js.',
+    });
+  }
+  const provided = String(req.headers['x-bot-key'] || '');
+  const ok = provided.length === expected.length && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!ok) {
+    return res.status(401).json({ error: 'invalid_bot_key' });
   }
   next();
 }
@@ -680,6 +715,139 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Telegram bot control center (frontend/bot-chats.html + bot-leads.html) —
+// owner-only, same requireCeoAuth as the rest of /api/ceo/*. Reads/writes
+// botStore.js (bot_chats/bot_messages) — the actual Telegram traffic itself
+// flows through n8n via the separate /api/bot/* routes below (X-Bot-Key),
+// this app never talks to Telegram directly. See docs/N8N_AUTOMATION.md.
+// ---------------------------------------------------------------------------
+
+// GET /api/ceo/telegram/chats — "куда добавлен": every group/channel/
+// supergroup the bot is currently (or was previously) a member of.
+app.get('/api/ceo/telegram/chats', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const chats = await botStore.listChats();
+    res.json({ chats });
+  } catch (err) {
+    console.error('[api] ceo telegram chats failed:', err.message);
+    res.status(500).json({ error: 'telegram_chats_unavailable', message: err.message });
+  }
+});
+
+// GET /api/ceo/telegram/leads — "переписка": every private chat with the
+// bot (potential lead), each with a preview of its last message so the UI
+// can list them and highlight the ones awaiting a reply (lastDirection==='in').
+app.get('/api/ceo/telegram/leads', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const rows = await botStore.listLeads();
+    const leads = rows.map((r) => ({
+      chatId: r.chat_id,
+      title: r.title,
+      status: r.status,
+      firstSeenAt: r.first_seen_at,
+      lastText: r.last_text || '',
+      lastDirection: r.last_direction || null,
+      lastAt: r.last_at || null,
+      lastStatus: r.last_status || null,
+      awaitingReply: r.last_direction === 'in',
+    }));
+    res.json({ leads });
+  } catch (err) {
+    console.error('[api] ceo telegram leads failed:', err.message);
+    res.status(500).json({ error: 'telegram_leads_unavailable', message: err.message });
+  }
+});
+
+// GET /api/ceo/telegram/leads/:chatId/messages — full thread for one chat.
+app.get('/api/ceo/telegram/leads/:chatId/messages', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const messages = await botStore.getThread(req.params.chatId);
+    res.json({ messages });
+  } catch (err) {
+    console.error('[api] ceo telegram thread failed:', err.message);
+    res.status(500).json({ error: 'telegram_thread_unavailable', message: err.message });
+  }
+});
+
+// POST /api/ceo/telegram/leads/:chatId/send — body: { text }. Queues an
+// outgoing message (status 'pending') — does NOT send it itself, see the
+// file comment on botStore.js. n8n picks it up via GET /api/bot/messages/
+// outgoing and acks it once actually delivered.
+app.post('/api/ceo/telegram/leads/:chatId/send', teamAuth.requireCeoAuth, async (req, res) => {
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text_required', message: 'Текст сообщения не может быть пустым.' });
+  try {
+    const actorName = [req.ceoUser.first_name, req.ceoUser.last_name].filter(Boolean).join(' ') || req.ceoUser.username || 'CEO';
+    const message = await botStore.queueOutgoing({ chatId: req.params.chatId, text, sentBy: actorName });
+    res.status(201).json({ message });
+  } catch (err) {
+    console.error('[api] ceo telegram send failed:', err.message);
+    res.status(400).json({ error: 'telegram_send_failed', message: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// API-key management (frontend/api-keys.html, the "Управление" tab) —
+// owner-only, same requireCeoAuth as the rest of /api/ceo/*. Backed by
+// apiKeys.js's live Postgres registry: a change here takes effect on the
+// very next automation/bot request, no Dokploy env var edit or redeploy
+// needed (that was Дмитрий's explicit requirement for this tab). Returns the
+// raw value (not masked) — the CEO needs it to paste into n8n/Dokploy, and
+// this whole route group is already CEO-only.
+// ---------------------------------------------------------------------------
+
+// GET /api/ceo/api-keys — every key currently known (built-in
+// AUTOMATION_API_KEY/BOT_API_KEY/GOOGLE_DOCS_API_KEY plus any custom ones
+// staff added via POST below).
+app.get('/api/ceo/api-keys', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const keys = await apiKeys.listKeys();
+    res.json({ keys });
+  } catch (err) {
+    console.error('[api] ceo api-keys list failed:', err.message);
+    res.status(500).json({ error: 'api_keys_unavailable', message: err.message });
+  }
+});
+
+// POST /api/ceo/api-keys — body: { name, label? }. "Добавить новый параметр"
+// — a brand-new named key with an auto-generated value; 400s if that name
+// already exists (use rotate below to replace an existing one's value).
+app.post('/api/ceo/api-keys', teamAuth.requireCeoAuth, async (req, res) => {
+  const name = String((req.body && req.body.name) || '').trim();
+  const label = String((req.body && req.body.label) || '');
+  try {
+    const key = await apiKeys.createKey(name, label);
+    res.status(201).json({ key });
+  } catch (err) {
+    res.status(400).json({ error: 'api_key_create_failed', message: err.message });
+  }
+});
+
+// POST /api/ceo/api-keys/:name/rotate — "выпустить новый ключ": same name,
+// a fresh random value, existing label kept.
+app.post('/api/ceo/api-keys/:name/rotate', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const key = await apiKeys.rotateKey(req.params.name);
+    res.json({ key });
+  } catch (err) {
+    res.status(400).json({ error: 'api_key_rotate_failed', message: err.message });
+  }
+});
+
+// DELETE /api/ceo/api-keys/:name — removes the key entirely. Whichever
+// requireAutomationAuth/requireBotAuth middleware relied on it falls back to
+// its env var (config.js), if any, on the very next request — see apiKeys.js.
+app.delete('/api/ceo/api-keys/:name', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    await apiKeys.deleteKey(req.params.name);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] ceo api-key delete failed:', err.message);
+    res.status(500).json({ error: 'api_key_delete_failed', message: err.message });
+  }
+});
+
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
 // view: rows are team members (actor username + full name from actor_name),
 // columns are the days of the viewed Moscow month, cells = how many sessions
@@ -780,9 +948,13 @@ app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
 // { logoUrl: string, socialCredentials: { ig?, tg?, vk?, ok?, max? },
 //   isAiProject?, isArchived?,
 //   startDate?, postsPerMonth?, publishTimeMsk?, projectManager?,
-//   strategyPrompt?, planningPrompt?, postPrompt?, imagePrompt? } — each network's value is a
+//   strategyPrompt?, planningPrompt?, postPrompt?, imagePrompt?,
+//   imageReferences?: string[] } — each network's value is a
 // free-form JSON object; this app never reads any of it, it's stored purely
 // so the publishing automation can read it directly from Postgres.
+// imageReferences: up to 10 URLs (pasted, or uploaded via POST
+// /api/projects/:projectId/reference-upload below) used as AI image-
+// generation references — see projectSettings.js's normalizeImageReferences.
 app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
@@ -794,6 +966,53 @@ app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
     console.error('[api] PUT project settings failed:', err.message);
     res.status(400).json({ error: 'invalid_settings', message: err.message });
   }
+});
+
+// POST /api/projects/:projectId/reference-upload — multipart, field name
+// "file". Real file upload for the "ИИ настройки" tab's image-reference
+// gallery (up to 10 per project — see projectSettings.js's
+// normalizeImageReferences). Mirrors /api/team/tasks/:taskId/chat-upload
+// above, but resolves the destination folder from the PROJECT's own label
+// (the board's "Проект" property option), not a task's, since a reference
+// isn't attached to any particular post. Uploads into a "референсы"
+// subfolder nested under the project's usual disk folder (see diskUpload.js's
+// subFolder param) so these don't mix in with post media. Does NOT itself
+// save the returned URL into image_references — same as pasting a link by
+// hand, the frontend appends it to the gallery and saves it via the normal
+// PUT .../settings call above.
+app.post('/api/projects/:projectId/reference-upload', staffAuth, (req, res) => {
+  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'file_too_large' : 'upload_error',
+        message: tooLarge ? 'Файл слишком большой (максимум 80 МБ).' : uploadErr.message,
+      });
+    }
+    const boardId = requireStaffBoardId(res);
+    if (!boardId) return;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    try {
+      const { board } = await loadBoard(boardId);
+      const projectProp = findPropertyDef(board, config.projectPropertyName);
+      const projectOption = projectProp && (projectProp.options || []).find((o) => o.id === req.params.projectId);
+      const folderName = (projectOption && projectOption.value) || 'Без клиента';
+      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `ref_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+      const shareUrl = await diskUpload.uploadAndShare({
+        folderName,
+        subFolder: 'референсы',
+        filename,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+      });
+      res.json({ shareUrl });
+    } catch (err) {
+      console.error('[api] reference image upload failed:', err.message);
+      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
+      res.status(status).json({ error: err.code || 'reference_upload_failed', message: err.message });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2005,6 +2224,7 @@ async function getAutomationProjectSettings(boardId, projectId) {
     planningPrompt: settings.planningPrompt,
     postPrompt: settings.postPrompt,
     imagePrompt: settings.imagePrompt,
+    imageReferences: settings.imageReferences,
   };
 }
 
@@ -2882,6 +3102,115 @@ app.post('/api/automation/tasks/:taskId/publish', requireAutomationAuth, async (
   }
 });
 
+// ---------------------------------------------------------------------------
+// Bot API (Telegram bot «Кот Василий») — requireBotAuth (X-Bot-Key), a
+// separate secret from AUTOMATION_API_KEY above. n8n's Telegram Trigger
+// workflow calls these to report chat-membership changes and incoming DMs,
+// and polls the outgoing queue to actually deliver staff replies (this app
+// holds no Telegram bot token — see botStore.js). Full wiring instructions
+// in docs/N8N_AUTOMATION.md.
+// ---------------------------------------------------------------------------
+
+// POST /api/bot/channels — report the bot's OWN membership change in a chat
+// (Telegram's my_chat_member update). Body:
+// { chatId, chatType: 'group'|'supergroup'|'channel'|'private', title,
+//   status: 'member'|'administrator'|'left'|'kicked'|..., actorUserId,
+//   actorName, actorUsername } — actor* is whoever performed the change
+// (my_chat_member.from), used only for the FIRST time a chat is seen (see
+// botStore.upsertChatEvent). Call this for every my_chat_member update,
+// added or removed — removal matters too, so a chat the bot got kicked
+// from stops showing as active in the "Бот" tab.
+app.post('/api/bot/channels', requireBotAuth, async (req, res) => {
+  const b = req.body || {};
+  if (!b.chatId) return res.status(400).json({ error: 'chat_id_required', message: 'chatId обязателен.' });
+  if (!b.status) return res.status(400).json({ error: 'status_required', message: 'status обязателен — my_chat_member.new_chat_member.status.' });
+  try {
+    const chat = await botStore.upsertChatEvent({
+      chatId: b.chatId,
+      chatType: b.chatType,
+      title: b.title,
+      status: b.status,
+      actorUserId: b.actorUserId,
+      actorName: b.actorName,
+      actorUsername: b.actorUsername,
+    });
+    res.json({ chat });
+  } catch (err) {
+    console.error('[api] bot channels failed:', err.message);
+    res.status(400).json({ error: 'bot_channel_event_failed', message: err.message });
+  }
+});
+
+// POST /api/bot/messages — report ONE incoming message from a user (private
+// chat — potential lead). Body: { chatId, chatType, chatTitle, telegramMessageId,
+// fromUserId, fromName, fromUsername, text }. Also registers the chat itself
+// if this is the first contact (private chats never fire my_chat_member on
+// first message — only on block/unblock — see botStore.ensureChatSeen).
+app.post('/api/bot/messages', requireBotAuth, async (req, res) => {
+  const b = req.body || {};
+  if (!b.chatId) return res.status(400).json({ error: 'chat_id_required', message: 'chatId обязателен.' });
+  try {
+    const message = await botStore.insertMessage({
+      chatId: b.chatId,
+      chatType: b.chatType,
+      chatTitle: b.chatTitle,
+      telegramMessageId: b.telegramMessageId,
+      fromUserId: b.fromUserId,
+      fromName: b.fromName,
+      fromUsername: b.fromUsername,
+      text: b.text,
+    });
+    res.status(201).json({ message });
+  } catch (err) {
+    console.error('[api] bot messages failed:', err.message);
+    res.status(400).json({ error: 'bot_message_failed', message: err.message });
+  }
+});
+
+// GET /api/bot/messages/outgoing — poll target: staff replies queued from
+// the "Переписка" tab (frontend/bot-leads.html) that haven't been sent yet.
+// Optional ?limit= (default 50, max 200). Meant to be polled on a short
+// interval (e.g. every 30-60s) by a small n8n workflow that actually calls
+// Telegram's sendMessage for each row, then acks it (see below) — leave a
+// row un-acked and it'll just be returned again next poll.
+app.get('/api/bot/messages/outgoing', requireBotAuth, async (req, res) => {
+  try {
+    const rows = await botStore.listOutgoing(parseInt(req.query.limit, 10) || 50);
+    res.json({
+      messages: rows.map((r) => ({ id: r.id, chatId: r.chat_id, text: r.text, createdAt: r.created_at })),
+    });
+  } catch (err) {
+    console.error('[api] bot outgoing failed:', err.message);
+    res.status(500).json({ error: 'bot_outgoing_unavailable', message: err.message });
+  }
+});
+
+// POST /api/bot/messages/:id/ack — report the outcome of ONE outgoing send.
+// Body: { status: 'sent'|'failed', telegramMessageId?, error? }. `id` is the
+// numeric id GET .../outgoing returned for that row, NOT a Telegram message
+// id. Call this exactly once per row you actually attempted — a row you
+// never ack stays 'pending' and keeps coming back on every poll.
+app.post('/api/bot/messages/:id/ack', requireBotAuth, async (req, res) => {
+  const status = String((req.body && req.body.status) || '').trim();
+  if (status !== 'sent' && status !== 'failed') {
+    return res.status(400).json({ error: 'status_invalid', message: 'status должен быть "sent" или "failed".' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'id_invalid', message: 'id должен быть числом.' });
+  try {
+    const message = await botStore.markOutgoingAck(id, {
+      status,
+      telegramMessageId: req.body && req.body.telegramMessageId,
+      error: req.body && req.body.error,
+    });
+    if (!message) return res.status(404).json({ error: 'message_not_found', message: `Исходящее сообщение ${id} не найдено (или уже не 'out').` });
+    res.json({ message });
+  } catch (err) {
+    console.error('[api] bot ack failed:', err.message);
+    res.status(500).json({ error: 'bot_ack_failed', message: err.message });
+  }
+});
+
 // Posts a message TO the client — unlike every other team-cabinet marker,
 // this one is deliberately included in taskMapper.js's clientComments
 // (kind: 'agency'), because the whole point is for the client to see it,
@@ -3094,6 +3423,18 @@ app.get('/ceo/api-docs', teamAuth.requireCeoAuth, sendSwaggerUiPage);
 // to leave world-readable just because the URL got friendlier.
 app.get('/swagger', teamAuth.requireCeoAuth, sendSwaggerUiPage);
 
+// GET /ceo/bot-chats + /ceo/bot-leads — the two new owner-only tabs of the
+// Telegram bot control center (frontend/bot-chats.html, bot-leads.html; see
+// the /api/ceo/telegram/* data routes above). Same requireCeoAuth as /ceo
+// itself — a regular staff session (even the shared /projects Basic Auth)
+// never gets past this, matching "закладки 2 и 3 доступны только CEO".
+app.get('/ceo/bot-chats', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-chats.html')));
+app.get('/ceo/bot-leads', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-leads.html')));
+
+// GET /ceo/api-keys — the 4th owner-only tab, "Управление" (see
+// frontend/api-keys.html + the /api/ceo/api-keys* routes above).
+app.get('/ceo/api-keys', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'api-keys.html')));
+
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns
 // 404 (JSON, not a redirect) when the token is unknown/revoked, so the
@@ -3209,6 +3550,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
     await teamAuth.restoreSessions();
     await analytics.pruneOldLogs();
     await projectSettings.importLegacyFileTokens();
+    await apiKeys.init(); // seeds api_keys from env vars on first boot — see apiKeys.js
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }
