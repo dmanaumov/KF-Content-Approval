@@ -306,6 +306,28 @@ function requireStaffBoardId(res) {
 // ---------------------------------------------------------------------------
 const AUTOMATION_ACTOR = 'автоматизация';
 
+// Last-N-chars-only helper for auth debug logging below — never log a full
+// secret, even to server logs (defense in depth in case logs leak
+// elsewhere). 4 chars is enough to eyeball "does the tail match what the
+// CEO panel shows", not enough to reconstruct the key.
+function tail(v, n = 4) {
+  const s = String(v || '');
+  return s.length <= n ? s : s.slice(-n);
+}
+
+// Temporary-but-harmless diagnostic for "почему 401 invalid_*_key" reports —
+// logs just enough to compare what arrived vs what the server expects
+// (lengths + last 4 chars of each, source IP) without ever printing a full
+// key to the logs. View via the Dokploy service's Logs tab (or `docker
+// service logs <container>` over SSH).
+function logAuthFailure(kind, req, provided, expected) {
+  const ip = req.headers['x-forwarded-for'] || (req.socket && req.socket.remoteAddress) || '?';
+  console.warn(
+    `[auth:${kind}] 401 ${req.method} ${req.originalUrl} from ${ip} — ` +
+      `provided len=${provided.length} tail=…${tail(provided)} vs expected len=${expected.length} tail=…${tail(expected)}`
+  );
+}
+
 function requireAutomationAuth(req, res, next) {
   // apiKeys.getValueSync falls back to config.automationApiKey itself (env
   // var) when Postgres has nothing under this name yet — see apiKeys.js's
@@ -327,6 +349,7 @@ function requireAutomationAuth(req, res, next) {
   // (that their guess was wrong).
   const ok = provided.length === expected.length && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
   if (!ok) {
+    logAuthFailure('automation', req, provided, expected);
     return res.status(401).json({ error: 'invalid_api_key' });
   }
   next();
@@ -355,6 +378,7 @@ function requireBotAuth(req, res, next) {
   const provided = String(req.headers['x-bot-key'] || '');
   const ok = provided.length === expected.length && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
   if (!ok) {
+    logAuthFailure('bot', req, provided, expected);
     return res.status(401).json({ error: 'invalid_bot_key' });
   }
   next();
