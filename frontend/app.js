@@ -966,6 +966,13 @@ stackEl.addEventListener('touchstart', (e) => {
   const card = t.target.closest('.card.swipeable');
   if (!card) return;
   if (t.target.closest('button, a, input, textarea, select')) return;
+  // Starting the drag on the photo carousel itself is left entirely to the
+  // browser's native horizontal scroll (see .carousel's touch-action in
+  // app.css) — otherwise flipping through photos gets hijacked into an
+  // approve/changes swipe, which is exactly the complaint this guards
+  // against. The approve/changes swipe still works from anywhere else on
+  // the card (caption, background, dots).
+  if (t.target.closest('.carousel')) return;
   if (!tryStartSwipe(card, t.clientX, t.clientY)) return;
   swipe.touchId = t.identifier;
 }, { passive: true });
@@ -1002,6 +1009,7 @@ stackEl.addEventListener('pointerdown', (e) => {
   const card = e.target.closest('.card.swipeable');
   if (!card) return;
   if (e.target.closest('button, a, input, textarea, select')) return;
+  if (e.target.closest('.carousel')) return; // see touchstart above
   if (!tryStartSwipe(card, e.clientX, e.clientY)) return;
   swipe.ptPointerId = e.pointerId;
 });
