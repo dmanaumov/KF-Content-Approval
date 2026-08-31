@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=11">
   <link rel="stylesheet" href="/stat.css?v=9">
-  <link rel="stylesheet" href="/bot.css?v=3">
+  <link rel="stylesheet" href="/bot.css?v=4">
 </head>
 <body>
 <div class="page">
@@ -55,11 +55,30 @@
       </form>
       <div id="addKeyError" class="error-box" hidden></div>
     </section>
+    <section class="stat-section">
+      <h2>Боты</h2>
+      <div class="cred-intro">
+        Показываются в настройках проекта при выборе, куда именно публикует бот — только имя и юзернейм в Telegram, без токенов (сам бот и его секреты живут в Telegram/n8n, не здесь).
+      </div>
+      <div id="botsTable"></div>
+      <form id="addBotForm" class="apikey-add-form">
+        <div>
+          <label class="field-label" for="newBotName">Имя (для своих, чтобы отличать)</label>
+          <input id="newBotName" class="field-input" type="text" placeholder="Кот Василий" autocomplete="off">
+        </div>
+        <div>
+          <label class="field-label" for="newBotUsername">Юзернейм в Telegram</label>
+          <input id="newBotUsername" class="field-input" type="text" placeholder="kot_vasily_bot" autocomplete="off">
+        </div>
+        <button type="submit" class="btn approve apikey-add-btn">Добавить бота</button>
+      </form>
+      <div id="addBotError" class="error-box" hidden></div>
+    </section>
   </main>
 </div>
 
 <div id="toast" class="toast"></div>
 
-<script src="/api-keys.js?v=1"></script>
+<script src="/api-keys.js?v=2"></script>
 </body>
 </html>

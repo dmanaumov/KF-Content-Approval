@@ -340,6 +340,18 @@
 .cred-net textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 #editError{margin-top:14px}
 
+/* Telegram "куда публикует бот" picker — layered on the tg cred-net block
+   above (see projects.js loadTgPickerData/applyTgTextareaToPicker). */
+.tg-picker{display:grid;gap:2px;margin-bottom:6px}
+.tg-picker-field .field-label{margin:0 0 4px;font-size:11px}
+.tg-bot-hint{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:-2px 0 8px}
+.tg-bot-hint code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--bg);border-radius:5px;padding:2px 6px;color:var(--ink)}
+.tg-bot-hint button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit}
+.tg-bot-hint button:hover{background:var(--bg)}
+.tg-chat-hint{font-size:11px;color:var(--muted);margin-top:4px}
+.tg-manual-toggle{display:block;border:none;background:none;color:var(--muted);font-size:11px;text-decoration:underline;cursor:pointer;padding:4px 0 2px;font-family:inherit}
+.tg-manual-toggle:hover{color:var(--ink)}
+
 /* Референсы картинок для ИИ-генерации (до 10 шт., "ИИ настройки" →
    editTabAi) — миниатюры с крестиком-удалить + строка добавления (ссылка
    ИЛИ загрузка файла — оба ведут в один и тот же массив imageReferences,

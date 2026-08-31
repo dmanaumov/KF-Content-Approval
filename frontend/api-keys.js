@@ -15,6 +15,12 @@ const addLabelInput = document.getElementById('newKeyLabel');
 const addErrorBox = document.getElementById('addKeyError');
 const toast = document.getElementById('toast');
 
+const botsTableEl = document.getElementById('botsTable');
+const addBotForm = document.getElementById('addBotForm');
+const addBotNameInput = document.getElementById('newBotName');
+const addBotUsernameInput = document.getElementById('newBotUsername');
+const addBotErrorBox = document.getElementById('addBotError');
+
 let keys = [];
 // Which key names currently show their raw value in the table (name -> true).
 // Reset to hidden on every reload, on purpose — a page refresh re-masks
@@ -179,4 +185,167 @@ addForm.addEventListener('submit', async (e) => {
   }
 });
 
+// --- Боты (feeds the "куда публикует бот" picker in project settings) ---
+
+let botsList = [];
+let editingBotId = null;
+
+function renderBots() {
+  if (!botsList.length) {
+    botsTableEl.innerHTML = '<div class="muted">Ботов пока нет.</div>';
+    return;
+  }
+  const rows = botsList
+    .map((b) => {
+      if (String(editingBotId) === String(b.id)) {
+        return `<tr data-id="${esc(b.id)}"><td colspan="3">
+          <div class="bot-edit-row">
+            <input class="field-input bot-edit-name" type="text" value="${esc(b.name)}" placeholder="Имя">
+            <input class="field-input bot-edit-username" type="text" value="${esc(b.username)}" placeholder="username_бота (без @)">
+            <button type="button" class="apikey-btn" data-action="save-edit" data-id="${esc(b.id)}">Сохранить</button>
+            <button type="button" class="apikey-btn" data-action="cancel-edit" data-id="${esc(b.id)}">Отмена</button>
+          </div>
+        </td></tr>`;
+      }
+      const usernameShown = b.username ? '@' + esc(b.username) : '<span class="muted">не указан</span>';
+      return `<tr${b.is_active ? '' : ' class="bot-row-inactive"'}>
+        <td>${esc(b.name)}</td>
+        <td>${usernameShown}${b.is_active ? '' : ' <span class="muted">(неактивен)</span>'}</td>
+        <td class="apikey-actions">
+          <button type="button" class="apikey-btn" data-action="copy" data-id="${esc(b.id)}">Скопировать @username</button>
+          <button type="button" class="apikey-btn" data-action="edit" data-id="${esc(b.id)}">Изменить</button>
+          <button type="button" class="apikey-btn" data-action="toggle-active" data-id="${esc(b.id)}">${b.is_active ? 'Деактивировать' : 'Активировать'}</button>
+          <button type="button" class="apikey-btn danger" data-action="delete" data-id="${esc(b.id)}">Удалить</button>
+        </td>
+      </tr>`;
+    })
+    .join('');
+  botsTableEl.innerHTML = `<table class="stat-table apikey-table"><thead><tr><th>Имя</th><th>Юзернейм</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  botsTableEl.querySelectorAll('.apikey-btn').forEach((btn) => {
+    btn.addEventListener('click', () => onBotAction(btn.getAttribute('data-action'), btn.getAttribute('data-id')));
+  });
+}
+
+function findBot(id) {
+  return botsList.find((b) => String(b.id) === String(id));
+}
+
+async function patchBot(id, body) {
+  const res = await fetch(`/api/ceo/bots/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || 'Не удалось сохранить');
+  return data.bot;
+}
+
+async function onBotAction(action, id) {
+  const bot = findBot(id);
+  if (action === 'copy') {
+    if (!bot || !bot.username) { showToast('У этого бота не указан юзернейм'); return; }
+    try {
+      await navigator.clipboard.writeText('@' + bot.username);
+      showToast('Юзернейм скопирован');
+    } catch (err) {
+      showToast('Не удалось скопировать: ' + err.message);
+    }
+    return;
+  }
+  if (action === 'edit') {
+    editingBotId = id;
+    renderBots();
+    return;
+  }
+  if (action === 'cancel-edit') {
+    editingBotId = null;
+    renderBots();
+    return;
+  }
+  if (action === 'save-edit') {
+    const row = botsTableEl.querySelector(`tr[data-id="${CSS.escape(String(id))}"]`);
+    if (!row) return;
+    const name = row.querySelector('.bot-edit-name').value.trim();
+    const username = row.querySelector('.bot-edit-username').value.trim();
+    if (!name) { showToast('Имя обязательно'); return; }
+    try {
+      await patchBot(id, { name, username });
+      editingBotId = null;
+      showToast('Сохранено');
+      await loadBots({ silent: true });
+    } catch (err) {
+      showToast('Ошибка: ' + err.message);
+    }
+    return;
+  }
+  if (action === 'toggle-active') {
+    if (!bot) return;
+    try {
+      await patchBot(id, { isActive: !bot.is_active });
+      showToast(bot.is_active ? 'Бот деактивирован' : 'Бот активирован');
+      await loadBots({ silent: true });
+    } catch (err) {
+      showToast('Ошибка: ' + err.message);
+    }
+    return;
+  }
+  if (action === 'delete') {
+    if (!bot) return;
+    const sure = confirm(`Удалить бота «${bot.name}»?\n\nЕсли он уже выбран в настройках каких-то проектов как «куда публикует», выбрать его там заново будет нельзя, пока не добавите снова — уже сохранённые данные проекта при этом не трогаются.`);
+    if (!sure) return;
+    try {
+      const res = await fetch(`/api/ceo/bots/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Не удалось удалить бота');
+      showToast('Бот удалён');
+      await loadBots({ silent: true });
+    } catch (err) {
+      showToast('Ошибка: ' + err.message);
+    }
+  }
+}
+
+async function loadBots({ silent = false } = {}) {
+  if (!silent) botsTableEl.innerHTML = '<div class="muted">Загружаем ботов…</div>';
+  try {
+    const res = await fetch('/api/ceo/bots');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Ошибка загрузки');
+    botsList = data.bots || [];
+    renderBots();
+  } catch (err) {
+    botsTableEl.innerHTML = `<div class="error-box">Не удалось загрузить ботов: ${esc(err.message)}</div>`;
+  }
+}
+
+addBotForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  addBotErrorBox.hidden = true;
+  const name = addBotNameInput.value.trim();
+  const username = addBotUsernameInput.value.trim();
+  if (!name) return;
+  const submitBtn = addBotForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  try {
+    const res = await fetch('/api/ceo/bots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, username }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Не удалось добавить бота');
+    addBotNameInput.value = '';
+    addBotUsernameInput.value = '';
+    showToast(`Бот «${name}» добавлен`);
+    await loadBots({ silent: true });
+  } catch (err) {
+    addBotErrorBox.textContent = err.message;
+    addBotErrorBox.hidden = false;
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
 load();
+loadBots();

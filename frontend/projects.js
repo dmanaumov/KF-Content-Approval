@@ -355,6 +355,183 @@ function credTextareas() {
   return NET_KEYS.map((k) => document.querySelector(`[data-net-field="${k}"]`));
 }
 
+// --- Telegram "куда публикует бот" picker — sits on top of the tg
+// credentials textarea (data-net-field="tg"): the textarea stays the real
+// field saveEdit() reads/writes (same JSON contract the automation already
+// expects, see backend/src/projectSettings.js), this just writes
+// {chatId, chatType, botUsername} into it from two dropdowns instead of
+// asking staff to type that JSON — and to find the chatId — by hand.
+// "Ввести вручную" stays as an escape hatch for anything the picker can't
+// represent (a chat the bot hasn't joined yet, hand-crafted JSON, etc).
+const tgPicker = document.getElementById('tgPicker');
+const tgBotField = document.getElementById('tgBotField');
+const tgBotSelect = document.getElementById('tgBotSelect');
+const tgBotHint = document.getElementById('tgBotHint');
+const tgChatSelect = document.getElementById('tgChatSelect');
+const tgChatHint = document.getElementById('tgChatHint');
+const tgManualToggle = document.getElementById('tgManualToggle');
+let tgBots = [];
+let tgChats = [];
+let tgManualMode = false;
+
+function tgTextarea() {
+  return document.querySelector('[data-net-field="tg"]');
+}
+
+function chatTypeLabel(type) {
+  if (type === 'channel') return 'канал';
+  if (type === 'supergroup' || type === 'group') return 'группа';
+  return type || 'чат';
+}
+
+async function loadTgPickerData() {
+  tgBotField.hidden = true;
+  tgBotHint.hidden = true;
+  tgBotSelect.innerHTML = '<option value="">Загружаем…</option>';
+  tgChatSelect.innerHTML = '<option value="">Загружаем…</option>';
+  tgChatHint.textContent = '';
+  try {
+    const [botsRes, chatsRes] = await Promise.all([
+      fetch('/api/projects/telegram-bots'),
+      fetch('/api/projects/telegram-chats'),
+    ]);
+    const botsData = await botsRes.json();
+    const chatsData = await chatsRes.json();
+    tgBots = botsRes.ok ? (botsData.bots || []) : [];
+    tgChats = chatsRes.ok ? (chatsData.chats || []) : [];
+  } catch (err) {
+    tgBots = [];
+    tgChats = [];
+  }
+  renderTgBotSelect();
+  renderTgChatSelect();
+}
+
+// Bot select only shows once there's actually something to choose between —
+// with the (today: usual) single active bot, its @username is just shown
+// as a hint instead of a one-option dropdown nobody needs to touch.
+function renderTgBotSelect() {
+  if (tgBots.length > 1) {
+    tgBotField.hidden = false;
+    tgBotSelect.innerHTML = tgBots.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
+  } else {
+    tgBotField.hidden = true;
+  }
+  updateTgBotHint();
+}
+
+function currentTgBot() {
+  if (tgBots.length > 1) return tgBots.find((b) => String(b.id) === tgBotSelect.value) || null;
+  return tgBots[0] || null;
+}
+
+function updateTgBotHint() {
+  const bot = currentTgBot();
+  if (!bot) {
+    if (!tgBots.length) {
+      tgBotHint.innerHTML = 'Ни одного бота не настроено — добавьте в <a href="/ceo/api-keys" target="_blank" rel="noopener">Управлении</a>.';
+      tgBotHint.hidden = false;
+    } else {
+      tgBotHint.hidden = true;
+    }
+    return;
+  }
+  if (!bot.username) {
+    tgBotHint.innerHTML = `Публикует бот «${esc(bot.name)}» — юзернейм не указан (добавьте в <a href="/ceo/api-keys" target="_blank" rel="noopener">Управлении</a>, чтобы было что скопировать и отдать клиенту).`;
+    tgBotHint.hidden = false;
+    return;
+  }
+  tgBotHint.innerHTML = `Публикует <code>@${esc(bot.username)}</code> — этого бота нужно добавить в канал клиента в Telegram. <button type="button" id="tgBotCopyBtn">Скопировать юзернейм</button>`;
+  tgBotHint.hidden = false;
+  const copyBtn = document.getElementById('tgBotCopyBtn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText('@' + bot.username);
+        toast('Юзернейм скопирован');
+      } catch (err) {
+        toast('Не удалось скопировать: ' + err.message);
+      }
+    });
+  }
+}
+
+function renderTgChatSelect(preselectChatId) {
+  if (!tgChats.length) {
+    tgChatSelect.innerHTML = '<option value="">— каналов пока нет —</option>';
+    tgChatHint.textContent = 'Бот пока никуда не добавлен. Добавьте его в канал/группу клиента в Telegram, затем откройте этот попап заново — список обновится.';
+    return;
+  }
+  const options = ['<option value="">— выберите —</option>'].concat(
+    tgChats.map((c) => `<option value="${esc(c.chatId)}">${esc(c.title || c.chatId)} (${esc(chatTypeLabel(c.chatType))})</option>`)
+  );
+  tgChatSelect.innerHTML = options.join('');
+  tgChatHint.textContent = 'Не видите нужный канал? Добавьте бота в него в Telegram и откройте это окно заново.';
+  if (preselectChatId && tgChats.some((c) => c.chatId === preselectChatId)) {
+    tgChatSelect.value = preselectChatId;
+  }
+}
+
+function syncTgTextareaFromPicker() {
+  const chatId = tgChatSelect.value;
+  if (!chatId) { tgTextarea().value = ''; return; }
+  const chat = tgChats.find((c) => c.chatId === chatId);
+  const bot = currentTgBot();
+  const payload = { chatId };
+  if (chat) payload.chatType = chat.chatType;
+  if (bot && bot.username) payload.botUsername = bot.username;
+  tgTextarea().value = JSON.stringify(payload, null, 2);
+}
+
+function setTgManualMode(on) {
+  tgManualMode = on;
+  tgPicker.hidden = on;
+  tgTextarea().hidden = !on;
+  tgManualToggle.textContent = on ? 'Вернуться к выбору из списка' : 'Ввести вручную (JSON)';
+}
+
+// Called once picker data (tgBots/tgChats) and the tg textarea's real,
+// saved value are both loaded — tries to preselect the picker to match
+// what's already there; falls back to manual mode for anything the picker
+// can't represent (old-format JSON with a botToken, an unrecognized/stale
+// chatId, hand-crafted extra keys) rather than silently showing an empty
+// picker over real saved data.
+function applyTgTextareaToPicker() {
+  const raw = tgTextarea().value.trim();
+  if (!raw) {
+    renderTgChatSelect();
+    setTgManualMode(false);
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    setTgManualMode(true);
+    return;
+  }
+  const chatId = parsed && parsed.chatId != null ? String(parsed.chatId) : '';
+  const knownKeys = ['chatId', 'chatType', 'botUsername'];
+  const hasExtraKeys = !parsed || typeof parsed !== 'object' || Object.keys(parsed).some((k) => !knownKeys.includes(k));
+  if (!chatId || hasExtraKeys || !tgChats.some((c) => c.chatId === chatId)) {
+    setTgManualMode(true);
+    return;
+  }
+  renderTgChatSelect(chatId);
+  if (parsed.botUsername && tgBots.length > 1) {
+    const match = tgBots.find((b) => b.username === parsed.botUsername);
+    if (match) { tgBotSelect.value = String(match.id); updateTgBotHint(); }
+  }
+  setTgManualMode(false);
+}
+
+tgBotSelect.addEventListener('change', () => { updateTgBotHint(); syncTgTextareaFromPicker(); });
+tgChatSelect.addEventListener('change', syncTgTextareaFromPicker);
+tgManualToggle.addEventListener('click', () => {
+  if (tgManualMode) applyTgTextareaToPicker(); // re-derive picker state from whatever was hand-typed
+  else setTgManualMode(true);
+});
+
 function renderRefGallery() {
   const gallery = document.getElementById('refGallery');
   const addRow = document.querySelector('.ref-add-row');
@@ -415,6 +592,7 @@ async function openEdit(projectId, label) {
   document.getElementById('editIsAiProject').checked = false;
   document.getElementById('editIsArchived').checked = false;
   credTextareas().forEach((ta) => { ta.value = ''; });
+  setTgManualMode(false);
   document.getElementById('editStartDate').value = '';
   document.getElementById('editProjectManager').value = '';
   document.getElementById('editPostsPerMonth').value = '';
@@ -431,7 +609,10 @@ async function openEdit(projectId, label) {
   document.getElementById('editModal').classList.add('show');
 
   try {
-    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/settings`);
+    const [res] = await Promise.all([
+      fetch(`/api/projects/${encodeURIComponent(projectId)}/settings`),
+      loadTgPickerData(),
+    ]);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
     document.getElementById('editLogoUrl').value = data.logoUrl || '';
@@ -454,6 +635,7 @@ async function openEdit(projectId, label) {
       const value = creds[net];
       ta.value = value && Object.keys(value).length ? JSON.stringify(value, null, 2) : '';
     });
+    applyTgTextareaToPicker();
   } catch (err) {
     toast('Не удалось загрузить настройки: ' + err.message);
   }

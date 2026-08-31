@@ -97,6 +97,13 @@
 .apikey-add-btn{white-space:nowrap;padding:11px 16px}
 #addKeyError{margin-top:12px}
 
+/* "Управление" — bot registry table (frontend/api-keys.html/js), directly
+   below the API-key table above — same row/button visual language. */
+.bot-row-inactive{opacity:.55}
+.bot-edit-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bot-edit-row .field-input{margin:0;flex:1 1 160px}
+#addBotError{margin-top:12px}
+
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#12181A;

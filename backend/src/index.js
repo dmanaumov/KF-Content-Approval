@@ -18,6 +18,7 @@ const mailer = require('./mailer');
 const analytics = require('./analytics');
 const botStore = require('./botStore');
 const apiKeys = require('./apiKeys');
+const bots = require('./bots');
 const { buildOpenApiSpec } = require('./openapiSpec');
 
 const app = express();
@@ -872,6 +873,51 @@ app.delete('/api/ceo/api-keys/:name', teamAuth.requireCeoAuth, async (req, res) 
   }
 });
 
+// ---------------------------------------------------------------------------
+// Bot registry (frontend/api-keys.html, same "Управление" tab, below the
+// API keys) — owner-only, same requireCeoAuth. Presentational only (name +
+// @username, see bots.js) — this is what feeds the "куда публикует бот"
+// picker in project settings below (GET /api/projects/telegram-bots).
+// ---------------------------------------------------------------------------
+
+app.get('/api/ceo/bots', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    res.json({ bots: await bots.listBots() });
+  } catch (err) {
+    console.error('[api] ceo bots list failed:', err.message);
+    res.status(500).json({ error: 'bots_unavailable', message: err.message });
+  }
+});
+
+app.post('/api/ceo/bots', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const bot = await bots.createBot({ name: req.body && req.body.name, username: req.body && req.body.username });
+    res.status(201).json({ bot });
+  } catch (err) {
+    res.status(400).json({ error: 'bot_create_failed', message: err.message });
+  }
+});
+
+app.patch('/api/ceo/bots/:id', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const bot = await bots.updateBot(req.params.id, { name: body.name, username: body.username, isActive: body.isActive });
+    res.json({ bot });
+  } catch (err) {
+    res.status(400).json({ error: 'bot_update_failed', message: err.message });
+  }
+});
+
+app.delete('/api/ceo/bots/:id', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    await bots.deleteBot(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] ceo bot delete failed:', err.message);
+    res.status(500).json({ error: 'bot_delete_failed', message: err.message });
+  }
+});
+
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
 // view: rows are team members (actor username + full name from actor_name),
 // columns are the days of the viewed Moscow month, cells = how many sessions
@@ -946,6 +992,42 @@ app.post('/api/projects/:projectId/regenerate-link', staffAuth, async (req, res)
   } catch (err) {
     console.error('[api] regenerate-link failed:', err.message);
     res.status(500).json({ error: 'regenerate_failed', message: err.message });
+  }
+});
+
+// GET /api/projects/telegram-bots — active bots (id, name, @username), for
+// the "какой бот публикует" picker in the settings popup. staffAuth (not
+// CEO-only, unlike /api/ceo/bots) — anyone who can edit project settings
+// needs this to pick a publish destination; deliberately no created_at/
+// updated_at here, just what the picker needs.
+app.get('/api/projects/telegram-bots', staffAuth, async (req, res) => {
+  try {
+    const rows = await bots.listBots({ activeOnly: true });
+    res.json({ bots: rows.map((b) => ({ id: b.id, name: b.name, username: b.username })) });
+  } catch (err) {
+    console.error('[api] project telegram-bots failed:', err.message);
+    res.status(500).json({ error: 'bots_unavailable', message: err.message });
+  }
+});
+
+// GET /api/projects/telegram-chats — every group/channel/supergroup the bot
+// currently belongs to, for the "куда публикует" picker. Trimmed version of
+// GET /api/ceo/telegram/chats: staffAuth (not CEO-only) so any project
+// editor can use it, so it deliberately omits added_by_* (who added the
+// bot to a given chat isn't project-editing staff's business) and drops
+// chats the bot has since left/been kicked from (status !== member and
+// friends) — nothing to publish to there.
+const BOT_CHAT_ACTIVE_STATUSES = new Set(['member', 'administrator', 'creator']);
+app.get('/api/projects/telegram-chats', staffAuth, async (req, res) => {
+  try {
+    const rows = await botStore.listChats();
+    const chats = rows
+      .filter((r) => BOT_CHAT_ACTIVE_STATUSES.has(r.status))
+      .map((r) => ({ chatId: r.chat_id, chatType: r.chat_type, title: r.title, status: r.status }));
+    res.json({ chats });
+  } catch (err) {
+    console.error('[api] project telegram-chats failed:', err.message);
+    res.status(500).json({ error: 'telegram_chats_unavailable', message: err.message });
   }
 });
 
@@ -3575,6 +3657,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
     await analytics.pruneOldLogs();
     await projectSettings.importLegacyFileTokens();
     await apiKeys.init(); // seeds api_keys from env vars on first boot — see apiKeys.js
+    await bots.ensureSeeded(); // gives the CEO one starter row instead of an empty table — see bots.js
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }

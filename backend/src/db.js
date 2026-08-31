@@ -307,6 +307,22 @@ async function initSchema() {
       updated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  // Presentational registry of our Telegram bots (name + @username, no
+  // secrets) — lets project settings offer "which bot publishes here" as a
+  // pick-from-list instead of staff hand-typing a chat ID into raw JSON.
+  // See bots.js. Deliberately not yet linked from bot_chats (no bot_id
+  // there) — only one bot exists today, so that link is speculative until
+  // a second one actually shows up.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bots (
+      id bigserial PRIMARY KEY,
+      name text NOT NULL,
+      username text NOT NULL DEFAULT '',
+      is_active boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
   await ensureN8nRole();
 }
 
