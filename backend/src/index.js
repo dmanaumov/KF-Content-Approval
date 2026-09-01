@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 const path = require('path');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
@@ -23,6 +24,27 @@ const bots = require('./bots');
 const { buildOpenApiSpec } = require('./openapiSpec');
 
 const app = express();
+
+// gzip/brotli-class compression for every text response (JSON API replies,
+// HTML pages, CSS/JS static files) — none of that was compressed before,
+// so a page load was shipping full-size, uncompressed bytes over the wire
+// even when the server itself was barely doing any work (this is exactly
+// what "CPU/network graphs sit idle but loading still feels slow" looks
+// like — the bottleneck was payload size × round-trip latency, not raw
+// throughput). Explicitly skipped for the media-streaming proxy routes:
+// they forward Range/Accept-Ranges/Content-Range for video playback (see
+// the pipeline() comments below), and gzip doesn't compose with byte-range
+// semantics — video/image bodies are also already incompressible, so
+// nothing is lost by leaving them alone.
+app.use(
+  compression({
+    filter: (req, res) => {
+      if (req.path.startsWith('/api/files/') || req.path === '/api/disk-embed') return false;
+      return compression.filter(req, res);
+    },
+  })
+);
+
 app.use(express.json());
 
 // Memory storage (not disk) — the file only ever needs to live long enough
@@ -42,19 +64,52 @@ async function loadBoard(boardId, { fresh = false } = {}) {
   if (!fresh && config.cacheTtlMs > 0 && cached && cached.expires > Date.now()) {
     return cached;
   }
-  const [board, cards] = await Promise.all([mm.getBoard(boardId, config.teamId), mm.listCards(boardId)]);
-  // Child blocks (captions/media/comments) are best-effort — this endpoint
-  // is unconfirmed on this server (see mattermostClient.js). If it fails,
-  // cards still show with title/status/dates, just without those extras,
-  // rather than taking down the whole cabinet.
-  let blocks = [];
-  try {
-    blocks = await mm.listBlocks(boardId);
-  } catch (err) {
-    console.warn(`[mattermost] listBlocks(${boardId}) unavailable, continuing without captions/media:`, err.message);
-  }
+  // All three fired in parallel, not board+cards followed by a separate
+  // awaited blocks call — on a cold cache (first visit, or any time the
+  // 10s TTL has lapsed) that used to cost a whole extra sequential
+  // round-trip to Mattermost for no reason, since nothing here actually
+  // depends on board/cards finishing first. Child blocks (captions/media/
+  // comments) stay best-effort — this endpoint is unconfirmed on this
+  // server (see mattermostClient.js) — if it fails, cards still show with
+  // title/status/dates, just without those extras, rather than taking down
+  // the whole cabinet.
+  //
+  // PERF LOGGING (2026-09-02, kept on permanently — cheap, one line, no
+  // sensitive data): a cold load of this function is the #1 suspect behind
+  // "Загружаем задачи..." hanging for tens of seconds, but until now there
+  // was no single log line saying which of the three Mattermost calls (or
+  // the poisoned-card fallback inside listCards) actually ate the time —
+  // only the low-level per-request debug dump (config.debug/DEBUG_MATTERMOST
+  // only, and very noisy). This gives a permanent, always-on one-liner with
+  // a per-phase breakdown, so the NEXT slow load is diagnosable straight
+  // from `docker logs`, no need to reproduce it live with debug logging on.
+  const loadStartedAt = Date.now();
+  const timed = (label, promise) => {
+    const startedAt = Date.now();
+    return promise.then(
+      (result) => {
+        console.log(`[perf] loadBoard(${boardId}): ${label} took ${Date.now() - startedAt}ms`);
+        return result;
+      },
+      (err) => {
+        console.log(`[perf] loadBoard(${boardId}): ${label} FAILED after ${Date.now() - startedAt}ms (${err.message})`);
+        throw err;
+      }
+    );
+  };
+  const [board, cards, blocks] = await Promise.all([
+    timed('getBoard', mm.getBoard(boardId, config.teamId)),
+    timed('listCards', mm.listCards(boardId)),
+    timed('listBlocks', mm.listBlocks(boardId)).catch((err) => {
+      console.warn(`[mattermost] listBlocks(${boardId}) unavailable, continuing without captions/media:`, err.message);
+      return [];
+    }),
+  ]);
   const entry = { board, cards, blocks, expires: Date.now() + config.cacheTtlMs };
   cache.set(boardId, entry);
+  console.log(
+    `[perf] loadBoard(${boardId}): TOTAL ${Date.now() - loadStartedAt}ms (cards=${cards.length}, blocks=${blocks.length})`
+  );
   return entry;
 }
 
@@ -142,9 +197,24 @@ function projectLabelFor(board, projectId) {
 // (this board is shared across every client — see docs/MATTERMOST_INTEGRATION.md)
 // since it's the only thing separating one client's cards from another's.
 app.get('/api/boards/:boardId/tasks', async (req, res) => {
+  // PERF LOGGING (2026-09-02) — see the matching comment on loadBoard()
+  // above: one always-on line with a phase breakdown for the exact request
+  // the client cabinet's "Загружаем задачи..." spinner is waiting on, so a
+  // slow load is diagnosable from the logs on the next occurrence instead
+  // of having to reproduce it live.
+  const routeStartedAt = Date.now();
   try {
-    const { board, cards, blocks } = await loadBoard(req.params.boardId);
-    const feedbackAuthorUserId = await getFeedbackAuthorId();
+    // getFeedbackAuthorId() doesn't depend on loadBoard()'s result — fired
+    // together instead of after it. Cheap after the first call ever (it's
+    // cached in-memory in mattermostClient.js), but on a cold container
+    // this used to be a whole extra sequential Mattermost round-trip tacked
+    // onto every load.
+    const boardLoadStartedAt = Date.now();
+    const [{ board, cards, blocks }, feedbackAuthorUserId] = await Promise.all([
+      loadBoard(req.params.boardId),
+      getFeedbackAuthorId(),
+    ]);
+    const boardLoadMs = Date.now() - boardLoadStartedAt;
     const { tasks, meta } = buildTasks(board, cards, blocks, { projectFilter: req.query.project, feedbackAuthorUserId });
     if (meta.projectPropertyFound && !meta.projectFilterMatched) {
       return res.status(400).json({
@@ -154,8 +224,14 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
           'refusing to show tasks to avoid leaking other clients\' cards. Pass the project option id or exact label.',
       });
     }
+    const diskKindsStartedAt = Date.now();
     await resolveDiskMediaKinds(tasks);
+    const diskKindsMs = Date.now() - diskKindsStartedAt;
     await mediaOrder.applyStoredOrder(req.params.boardId, tasks);
+    console.log(
+      `[perf] GET /api/boards/${req.params.boardId}/tasks: TOTAL ${Date.now() - routeStartedAt}ms ` +
+        `(loadBoard+feedbackAuthor=${boardLoadMs}ms, resolveDiskMediaKinds=${diskKindsMs}ms, tasks=${tasks.length})`
+    );
     // Access analytics: the client (or a team member/staffer opening the
     // cabinet via an admin link) loaded their tasks — record who/when/device/
     // which project (see analytics.js; deduped to once per ~session).
@@ -478,6 +554,9 @@ function postsForMonth(tasks) {
 app.get('/api/projects', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  // PERF LOGGING (2026-09-02) — same reasoning as the client tasks route
+  // above: one always-on total-duration line for this staff list load.
+  const routeStartedAt = Date.now();
   try {
     const { board } = await loadBoard(boardId);
     const projectProp = findPropertyDef(board, config.projectPropertyName);
@@ -508,6 +587,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
     );
     const who = analytics.identify(req);
     analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
+    console.log(`[perf] GET /api/projects: TOTAL ${Date.now() - routeStartedAt}ms (projects=${options.length})`);
     res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
   } catch (err) {
     console.error('[api] GET projects failed:', err.message);
@@ -3478,7 +3558,29 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
 // how to harden this if needed.)
 // ---------------------------------------------------------------------------
 const frontendDir = path.join(__dirname, '..', '..', 'frontend');
-app.use(express.static(frontendDir));
+app.use(
+  express.static(frontendDir, {
+    setHeaders: (res, filePath) => {
+      if (/\.(css|js)$/i.test(filePath)) {
+        // Every reference to these already carries a hand-bumped ?v=N
+        // cache-buster (see release notes on every delivered CSS/JS batch)
+        // — a real change always ships under a NEW url, so it's safe to
+        // tell the browser to keep this exact url forever instead of
+        // re-validating with the server on every single page load.
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (/\.(png|jpe?g|gif|svg|webp|ico)$/i.test(filePath)) {
+        // Not cache-busted (favicon, kf-logo, ai-avatar, ...) — a day-long
+        // cache still cuts most repeat-visit requests without risking a
+        // stale image sticking around for long if one is ever swapped.
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+      }
+      // HTML files (index.html, team.html, ...) intentionally get no
+      // explicit Cache-Control here — they're requested by bare path with
+      // no version query string, so the browser must re-check with the
+      // server on every navigation or a deployed change would never show up.
+    },
+  })
+);
 app.get('/p/:boardId', (req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
 
 // GET /l/:token — the short, rotatable link actually handed out to clients

@@ -26,7 +26,24 @@
 // If both are set, session login wins. See README/.env.example.
 
 const fetch = require('node-fetch');
+const http = require('http');
+const https = require('https');
 const config = require('./config');
+
+// A fresh TCP+TLS handshake for every single request to Mattermost adds
+// real, avoidable latency — and this file alone can fire off several
+// sequential calls just loading one cabinet (listCards pages through the
+// 616+-card board page by page, then listBlocks, then per-request auth
+// checks...). Reusing one keep-alive connection per host cuts every request
+// after the first down to roughly the cost of sending the bytes, instead of
+// paying handshake cost again and again. node-fetch does NOT do this by
+// default — without an explicit agent it opens (and tears down) a brand new
+// connection per call.
+const keepAliveHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 30 });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 30 });
+function agentFor(url) {
+  return url.startsWith('https:') ? keepAliveHttpsAgent : keepAliveHttpAgent;
+}
 
 function usingSessionLogin() {
   return !!(config.mattermostLoginId && config.mattermostPassword);
@@ -52,7 +69,7 @@ function boardsUrl(path) {
 function fetchWithTimeout(url, opts = {}, ms = config.requestTimeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
-  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return fetch(url, { agent: agentFor(url), ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // --- Session login --------------------------------------------------------
@@ -252,45 +269,56 @@ async function getBoard(boardId, teamId) {
 // (a newly-created card wasn't showing up at all). Stops at the first
 // short/empty page; capped at 50 pages (10k cards) as a runaway-loop
 // backstop, not an expected real limit.
-async function listCards(boardId) {
-  const perPage = 200;
-  const maxPages = 50;
-  let all = [];
-  for (let page = 0; page < maxPages; page++) {
-    let batch;
-    let reachedEnd;
-    try {
-      const res = await mmFetch(
-        boardsUrl(`/boards/${boardId}/cards?page=${page}&per_page=${perPage}`),
-        {},
-        `listCards(${boardId},page=${page})`
-      );
-      const data = await asJsonOrThrow(res, `listCards(${boardId},page=${page})`);
-      batch = Array.isArray(data) ? data : (data && data.cards) || [];
-      reachedEnd = batch.length < perPage; // short/empty page = last page reached
-    } catch (err) {
-      // BUGFIX 2026-08-29 (reported live, confirmed REPRODUCIBLE — not a
-      // transient blip: mmFetch already retries a bare 5xx a couple of
-      // times, and the user separately confirmed Mattermost's own UI works
-      // fine, only this exact REST page keeps failing). Most likely one
-      // poisoned card on this page — malformed data that crashes
-      // Mattermost's own server-side serialization for that one record —
-      // was otherwise able to take the ENTIRE /projects list down forever,
-      // with nothing fixable on our side except finding and skipping the
-      // offending card. Fallback: re-fetch this page's range ONE CARD AT A
-      // TIME (per_page=1 keeps page=offset math integer-safe, unlike trying
-      // to binary-halve per_page=200 which drifts off exact page boundaries
-      // once the count stops dividing evenly) — skip whichever individual
-      // offset(s) still fail, logging loudly so the bad card is findable/
-      // fixable directly in Mattermost, and keep every other card on the
-      // board loading normally.
-      console.error(
-        `[mattermost] listCards(${boardId},page=${page}) failed even after retry (${err.message}) — ` +
-          `falling back to fetching this page one card at a time to isolate the bad record`
-      );
-      batch = [];
-      reachedEnd = false;
-      for (let offset = page * perPage; offset < (page + 1) * perPage; offset++) {
+// Fetches ONE page of cards, with the same poisoned-card fallback as before.
+// Split out of listCards() so the pages themselves can be fetched in
+// parallel batches (see listCards() below) instead of one-after-another.
+async function fetchCardsPage(boardId, page, perPage) {
+  try {
+    const res = await mmFetch(
+      boardsUrl(`/boards/${boardId}/cards?page=${page}&per_page=${perPage}`),
+      {},
+      `listCards(${boardId},page=${page})`
+    );
+    const data = await asJsonOrThrow(res, `listCards(${boardId},page=${page})`);
+    const batch = Array.isArray(data) ? data : (data && data.cards) || [];
+    return { batch, reachedEnd: batch.length < perPage }; // short/empty page = last page reached
+  } catch (err) {
+    // BUGFIX 2026-08-29 (reported live, confirmed REPRODUCIBLE — not a
+    // transient blip: mmFetch already retries a bare 5xx a couple of times,
+    // and the user separately confirmed Mattermost's own UI works fine,
+    // only this exact REST page keeps failing). Most likely one poisoned
+    // card on this page — malformed data that crashes Mattermost's own
+    // server-side serialization for that one record — was otherwise able
+    // to take the ENTIRE /projects list down forever, with nothing fixable
+    // on our side except finding and skipping the offending card. Fallback:
+    // re-fetch this page's range ONE CARD AT A TIME (per_page=1 keeps
+    // page=offset math integer-safe, unlike trying to binary-halve
+    // per_page=200 which drifts off exact page boundaries once the count
+    // stops dividing evenly) — skip whichever individual offset(s) still
+    // fail, logging loudly so the bad card is findable/fixable directly in
+    // Mattermost, and keep every other card on the board loading normally.
+    console.error(
+      `[mattermost] listCards(${boardId},page=${page}) failed even after retry (${err.message}) — ` +
+        `falling back to fetching this page one card at a time to isolate the bad record`
+    );
+    // BUGFIX 2026-09-01 (reported live: a page hitting this fallback used
+    // to fetch its 200 cards fully sequentially — one at a time, each its
+    // own round-trip — which alone was enough to stretch a single page
+    // load out past 30 seconds ("Загружаем данные..." hanging), even
+    // though nothing on our own server was actually busy meanwhile. Now
+    // fetched with bounded concurrency instead, same as the disk-media-kind
+    // probes elsewhere in this app — a few seconds instead of tens.
+    const offsets = [];
+    for (let offset = page * perPage; offset < (page + 1) * perPage; offset++) offsets.push(offset);
+    const CONCURRENCY = 10;
+    const found = []; // { offset, card }
+    let reachedEnd = false;
+    let endOffset = Infinity; // lowest offset any worker found empty (real end of board)
+    let i = 0;
+    const runNext = async () => {
+      while (i < offsets.length) {
+        if (reachedEnd) return; // another worker already found the real end of the board
+        const offset = offsets[i++];
         try {
           const res1 = await mmFetch(
             boardsUrl(`/boards/${boardId}/cards?page=${offset}&per_page=1`),
@@ -301,19 +329,56 @@ async function listCards(boardId) {
           const one = Array.isArray(data1) ? data1 : (data1 && data1.cards) || [];
           if (!one.length) {
             reachedEnd = true; // ran past the real end of the board
-            break;
+            if (offset < endOffset) endOffset = offset;
+          } else {
+            found.push({ offset, card: one[0] });
           }
-          batch.push(...one);
         } catch (err1) {
           console.error(`[mattermost] listCards(${boardId}): SKIPPING card at offset ${offset} — Mattermost itself keeps failing on it: ${err1.message}`);
           // Deliberately swallowed — this one card is missing from the
           // result, everything else on the board still loads.
         }
       }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, offsets.length) }, runNext));
+    // Workers finish out of offset order — restore it, and drop anything at
+    // or past whichever offset a worker found empty (defensive: a higher
+    // offset that happened to briefly "succeed" before the real end was
+    // discovered by another worker would just be noise past the board).
+    found.sort((a, b) => a.offset - b.offset);
+    const batch = found.filter((x) => x.offset < endOffset).map((x) => x.card);
+    return { batch, reachedEnd };
+  }
+}
+
+async function listCards(boardId) {
+  const perPage = 200;
+  const maxPages = 50;
+  // PAGES ARE FETCHED IN PARALLEL BATCHES, not one after another: this
+  // board is big enough (616+ cards / per_page=200 → 4-5 pages) that
+  // awaiting each page before starting the next used to add up to real,
+  // user-visible wait ("Загружаем данные..." hanging 30+ seconds) even
+  // though nothing on our own server was actually busy — it was pure
+  // sequential round-trip latency to Mattermost. A batch of BATCH_SIZE
+  // pages is fired off together; once a batch contains a short/empty page
+  // (the real end of the board), any later pages in that SAME batch are
+  // safe to discard even if they came back non-empty (over-fetching past
+  // the end is harmless, Mattermost just returns whatever's there).
+  const BATCH_SIZE = 5;
+  let all = [];
+  let reachedEnd = false;
+  for (let batchStart = 0; batchStart < maxPages && !reachedEnd; batchStart += BATCH_SIZE) {
+    const pages = [];
+    for (let p = batchStart; p < Math.min(batchStart + BATCH_SIZE, maxPages); p++) pages.push(p);
+    const results = await Promise.all(pages.map((p) => fetchCardsPage(boardId, p, perPage)));
+    for (const r of results) {
+      all = all.concat(r.batch);
+      if (r.reachedEnd) {
+        reachedEnd = true;
+        break; // ignore any later pages already fetched in this same batch
+      }
     }
-    all = all.concat(batch);
-    if (reachedEnd) break;
-    if (page === maxPages - 1 && config.debug) {
+    if (!reachedEnd && batchStart + BATCH_SIZE >= maxPages && config.debug) {
       console.warn(`[mattermost] listCards(${boardId}): hit the ${maxPages}-page safety cap, some cards may be missing`);
     }
   }
