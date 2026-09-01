@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 const multer = require('multer');
+const { pipeline } = require('stream');
 const config = require('./config');
 const mm = require('./mattermostClient');
 const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
@@ -3354,7 +3355,21 @@ app.get('/api/files/:boardId/:fileId', async (req, res) => {
       if (v) res.setHeader(h, v);
     }
     if (!res.hasHeader('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
-    mmRes.body.pipe(res);
+    // plain .pipe() does NOT forward a source-stream error to the
+    // destination — if Mattermost's connection drops mid-body (this host
+    // runs tight on memory, see project notes: OOM kills have already hit
+    // this same server), the response used to just hang forever with
+    // headers already sent, which is exactly "video spins and never loads"
+    // from the client's side (the small metadata/poster request succeeds,
+    // the big range request for actual playback silently stalls instead of
+    // failing). pipeline() destroys the response on any error instead, so
+    // the browser gets a clean, immediate failure it can retry from rather
+    // than an infinite spinner.
+    pipeline(mmRes.body, res, (err) => {
+      if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        console.error('[api] file proxy stream failed:', err.message);
+      }
+    });
   } catch (err) {
     console.error('[api] file proxy failed:', err.message);
     res.status(502).json({ error: 'file_unavailable', message: err.message });
@@ -3391,7 +3406,14 @@ app.get('/api/disk-embed', async (req, res) => {
     if (upstream.status === 200 || upstream.status === 206) {
       res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
     }
-    upstream.body.pipe(res);
+    // See the matching comment on /api/files above — plain .pipe() leaves
+    // the response hanging forever if disk.kontentferma's connection drops
+    // mid-body instead of failing cleanly. pipeline() fixes that here too.
+    pipeline(upstream.body, res, (err) => {
+      if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        console.error('[api] disk-embed stream failed:', err.message);
+      }
+    });
   } catch (err) {
     console.error('[api] disk-embed proxy failed:', err.message);
     res.status(502).json({ error: 'disk_unavailable', message: err.message });
