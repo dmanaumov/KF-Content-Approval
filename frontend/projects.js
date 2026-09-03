@@ -4,7 +4,9 @@
 // when a link may have leaked, and a "Редактировать" popup for the client's
 // logo URL, per-network publishing credentials, and the planning/profile
 // fields (report start date, project manager, posts per month, MSK publish
-// time, strategy/planning/post/image prompts) — also in projectSettings.js,
+// time, "оплачено до" — the contract/payment end date that hard-stops
+// autoposting once passed, see isPaidThroughExpired in backend/src/index.js —
+// strategy/planning/post/image prompts) — also in projectSettings.js,
 // Postgres-backed, meant to be read directly by the future publishing
 // automation. No build step, same approach as app.js.
 //
@@ -532,6 +534,183 @@ tgManualToggle.addEventListener('click', () => {
   else setTgManualMode(true);
 });
 
+// --- Instagram "accessToken/igUserId + Проверить" picker — same idea as the
+// Telegram picker above, sitting on top of the ig credentials textarea
+// (data-net-field="ig"), but structurally simpler: Instagram's Graph API has
+// no "list every account this token could publish to" endpoint the way
+// Telegram's Bot API does (a token is normally hand-obtained via Meta
+// OAuth), so there's nothing to populate a dropdown FROM — instead this is
+// two plain fields plus a live "Проверить" button that calls Instagram's own
+// API server-side (POST /api/projects/:id/validate-instagram, backend/src/
+// index.js) to confirm the pair actually works, BEFORE staff ever clicks
+// "Сохранить". Added 2026-09-03 at Дмитрий's request ("сразу надо дать
+// возможность ВАЛИДИРОВАТЬ! Что все работает!").
+//
+// Preserves any OTHER keys already in the textarea (expiresAt/
+// lastRefreshedAt — written server-side by the automation's token-refresh
+// endpoint, see projectSettings.upsertNetworkCredentials) rather than
+// clobbering them — syncIgTextareaFromPicker merges into whatever JSON was
+// already there, same shallow-merge spirit the backend itself uses.
+const igPicker = document.getElementById('igPicker');
+const igValidateBtn = document.getElementById('igValidateBtn');
+const igValidateHint = document.getElementById('igValidateHint');
+const igMetaHint = document.getElementById('igMetaHint');
+const igManualToggle = document.getElementById('igManualToggle');
+const IG_KNOWN_KEYS = ['accessToken', 'igUserId', 'expiresAt', 'lastRefreshedAt'];
+let igManualMode = false;
+
+function igTextarea() {
+  return document.querySelector('[data-net-field="ig"]');
+}
+
+function updateIgMetaHint(parsed) {
+  if (!parsed || (!parsed.expiresAt && !parsed.lastRefreshedAt)) {
+    igMetaHint.hidden = true;
+    igMetaHint.className = 'ig-meta-hint';
+    return;
+  }
+  const parts = [];
+  if (parsed.expiresAt) {
+    const ms = Date.parse(parsed.expiresAt);
+    const expired = !Number.isNaN(ms) && ms < Date.now();
+    parts.push(`${expired ? '⛔ истёк' : 'действует до'} ${esc(parsed.expiresAt)}`);
+    igMetaHint.className = expired ? 'ig-meta-hint bad' : 'ig-meta-hint';
+  } else {
+    igMetaHint.className = 'ig-meta-hint';
+  }
+  if (parsed.lastRefreshedAt) parts.push(`обновлён ${esc(parsed.lastRefreshedAt)}`);
+  igMetaHint.textContent = parts.join(' · ');
+  igMetaHint.hidden = false;
+}
+
+function syncIgTextareaFromPicker() {
+  const accessToken = document.getElementById('editIgAccessToken').value.trim();
+  const igUserId = document.getElementById('editIgUserId').value.trim();
+  let existing = {};
+  try {
+    const parsed = JSON.parse(igTextarea().value.trim() || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+  } catch (err) {
+    existing = {};
+  }
+  const payload = { ...existing };
+  if (accessToken) payload.accessToken = accessToken; else delete payload.accessToken;
+  if (igUserId) payload.igUserId = igUserId; else delete payload.igUserId;
+  igTextarea().value = Object.keys(payload).length ? JSON.stringify(payload, null, 2) : '';
+}
+
+function setIgManualMode(on) {
+  igManualMode = on;
+  igPicker.hidden = on;
+  igTextarea().hidden = !on;
+  igManualToggle.textContent = on ? 'Вернуться к выбору' : 'Ввести вручную (JSON)';
+}
+
+// Called once the ig textarea's real, saved value is loaded — tries to
+// preselect the picker's two fields from it; falls back to manual mode for
+// anything the picker can't represent (unparsable JSON, or keys outside the
+// known accessToken/igUserId/expiresAt/lastRefreshedAt set) rather than
+// silently hiding real saved data.
+function applyIgTextareaToPicker() {
+  const raw = igTextarea().value.trim();
+  igValidateHint.textContent = '';
+  igValidateHint.className = 'ig-validate-hint';
+  if (!raw) {
+    document.getElementById('editIgAccessToken').value = '';
+    document.getElementById('editIgUserId').value = '';
+    updateIgMetaHint(null);
+    setIgManualMode(false);
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    setIgManualMode(true);
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).some((k) => !IG_KNOWN_KEYS.includes(k))) {
+    setIgManualMode(true);
+    return;
+  }
+  document.getElementById('editIgAccessToken').value = parsed.accessToken || '';
+  document.getElementById('editIgUserId').value = parsed.igUserId || '';
+  updateIgMetaHint(parsed);
+  setIgManualMode(false);
+}
+
+document.getElementById('editIgAccessToken').addEventListener('input', syncIgTextareaFromPicker);
+document.getElementById('editIgUserId').addEventListener('input', syncIgTextareaFromPicker);
+igManualToggle.addEventListener('click', () => {
+  if (igManualMode) applyIgTextareaToPicker(); // re-derive picker state from whatever was hand-typed
+  else setIgManualMode(true);
+});
+igValidateBtn.addEventListener('click', async () => {
+  const accessToken = document.getElementById('editIgAccessToken').value.trim();
+  const igUserId = document.getElementById('editIgUserId').value.trim();
+  igValidateHint.className = 'ig-validate-hint';
+  if (!accessToken || !igUserId) {
+    igValidateHint.textContent = 'Укажите Access Token и IG User ID.';
+    igValidateHint.classList.add('bad');
+    return;
+  }
+  igValidateHint.textContent = 'Проверяем…';
+  igValidateBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/validate-instagram`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accessToken, igUserId }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      igValidateHint.textContent = `✅ Токен рабочий — @${data.username || '?'}${data.accountType ? ' (' + data.accountType + ')' : ''}`;
+      igValidateHint.classList.add('good');
+    } else {
+      igValidateHint.textContent = `❌ ${data.message || 'не удалось проверить'}`;
+      igValidateHint.classList.add('bad');
+    }
+  } catch (err) {
+    igValidateHint.textContent = `❌ Не удалось проверить: ${err.message}`;
+    igValidateHint.classList.add('bad');
+  } finally {
+    igValidateBtn.disabled = false;
+  }
+});
+
+// --- "Оплачено до" — staff-set contract/payment end date (project_settings.
+// paid_through_date). After this date POST /api/automation/tasks/{taskId}/
+// publish starts refusing to publish for this project's cards (see
+// backend/src/index.js's isPaidThroughExpired/publishAutomationTask) — this
+// hint is the "предупреждение в интерфейсе" half of that, so staff sees it
+// coming before an automation run actually gets rejected. Added 2026-09-03.
+const PAID_THROUGH_WARN_DAYS = 7;
+function updatePaidThroughHint() {
+  const hint = document.getElementById('paidThroughHint');
+  const value = document.getElementById('editPaidThroughDate').value;
+  if (!value) {
+    hint.hidden = true;
+    return;
+  }
+  const dueMs = Date.parse(`${value}T23:59:59+03:00`);
+  const daysLeft = Number.isNaN(dueMs) ? null : Math.ceil((dueMs - Date.now()) / (24 * 60 * 60 * 1000));
+  hint.hidden = false;
+  if (daysLeft === null) {
+    hint.className = 'paid-through-hint';
+    hint.textContent = 'Некорректная дата.';
+  } else if (daysLeft < 0) {
+    hint.className = 'paid-through-hint bad';
+    hint.textContent = 'Просрочено — автопостинг остановлен.';
+  } else if (daysLeft <= PAID_THROUGH_WARN_DAYS) {
+    hint.className = 'paid-through-hint warn';
+    hint.textContent = daysLeft === 0 ? 'Истекает сегодня.' : `Истекает через ${daysLeft} ${plural(daysLeft, 'день', 'дня', 'дней')}.`;
+  } else {
+    hint.className = 'paid-through-hint good';
+    hint.textContent = 'Оплачено, автопостинг активен.';
+  }
+}
+document.getElementById('editPaidThroughDate').addEventListener('input', updatePaidThroughHint);
+
 function renderRefGallery() {
   const gallery = document.getElementById('refGallery');
   const addRow = document.querySelector('.ref-add-row');
@@ -593,10 +772,18 @@ async function openEdit(projectId, label) {
   document.getElementById('editIsArchived').checked = false;
   credTextareas().forEach((ta) => { ta.value = ''; });
   setTgManualMode(false);
+  document.getElementById('editIgAccessToken').value = '';
+  document.getElementById('editIgUserId').value = '';
+  updateIgMetaHint(null);
+  igValidateHint.textContent = '';
+  igValidateHint.className = 'ig-validate-hint';
+  setIgManualMode(false);
   document.getElementById('editStartDate').value = '';
   document.getElementById('editProjectManager').value = '';
   document.getElementById('editPostsPerMonth').value = '';
   document.getElementById('editPublishTimeMsk').value = '';
+  document.getElementById('editPaidThroughDate').value = '';
+  document.getElementById('paidThroughHint').hidden = true;
   document.getElementById('editStrategyPrompt').value = '';
   document.getElementById('editPlanningPrompt').value = '';
   document.getElementById('editPostPrompt').value = '';
@@ -623,6 +810,8 @@ async function openEdit(projectId, label) {
     document.getElementById('editProjectManager').value = data.projectManager || '';
     document.getElementById('editPostsPerMonth').value = data.postsPerMonth || '';
     document.getElementById('editPublishTimeMsk').value = data.publishTimeMsk || '';
+    document.getElementById('editPaidThroughDate').value = data.paidThroughDate || '';
+    updatePaidThroughHint();
     document.getElementById('editStrategyPrompt').value = data.strategyPrompt || '';
     document.getElementById('editPlanningPrompt').value = data.planningPrompt || '';
     document.getElementById('editPostPrompt').value = data.postPrompt || '';
@@ -636,6 +825,7 @@ async function openEdit(projectId, label) {
       ta.value = value && Object.keys(value).length ? JSON.stringify(value, null, 2) : '';
     });
     applyTgTextareaToPicker();
+    applyIgTextareaToPicker();
   } catch (err) {
     toast('Не удалось загрузить настройки: ' + err.message);
   }
@@ -692,6 +882,7 @@ async function saveEdit() {
         projectManager: document.getElementById('editProjectManager').value.trim(),
         postsPerMonth: document.getElementById('editPostsPerMonth').value.trim(),
         publishTimeMsk: document.getElementById('editPublishTimeMsk').value,
+        paidThroughDate: document.getElementById('editPaidThroughDate').value,
         strategyPrompt: document.getElementById('editStrategyPrompt').value,
         planningPrompt: document.getElementById('editPlanningPrompt').value,
         postPrompt: document.getElementById('editPostPrompt').value,

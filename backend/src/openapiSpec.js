@@ -208,6 +208,15 @@ function buildOpenApiSpec() {
                             postsPerMonth: { type: 'string', nullable: true },
                             projectManager: { type: 'string', nullable: true },
                             startDate: { type: 'string', nullable: true },
+                            paidThroughDate: {
+                              type: 'string',
+                              nullable: true,
+                              example: '2026-12-31',
+                              description:
+                                'YYYY-MM-DD, "оплачено до". Пустая строка — не задано. После этой даты (по МСК) ' +
+                                'POST /api/automation/tasks/{taskId}/publish начинает отвечать 403 ' +
+                                'project_payment_expired для карточек этого проекта — см. описание там.',
+                            },
                           },
                         },
                       },
@@ -266,15 +275,116 @@ function buildOpenApiSpec() {
             401: { $ref: '#/components/responses/Unauthorized' },
           },
         },
+        post: {
+          summary: 'Записать (создать/обновить) креды ОДНОЙ сети для ОДНОГО проекта — upsert',
+          description:
+            'Добавлено 2026-09-03 для авторефреша токенов (IG Business-токены живут ~60 дней) и подключения новых ' +
+            'аккаунтов без ручных правок в БД/попапе "Редактировать". ЧАСТИЧНОЕ СЛИЯНИЕ (shallow merge) с уже ' +
+            'сохранёнными данными этой сети — можно прислать только {accessToken, expiresAt} при рефреше, не ' +
+            'пересылая igUserId заново, он сохранится. Поля — что угодно (формат сети на усмотрение разработчика, ' +
+            'как и везде в social_credentials), НЕ ограничено accessToken/igUserId — тот же эндпоинт годится и для ' +
+            'TG/VK/OK/MAX. `lastRefreshedAt` проставляется сервером автоматически на каждый вызов (нельзя ' +
+            'переопределить из тела запроса). `expiresAt`, если передан — должен парситься как дата/время (ISO 8601 ' +
+            'рекомендуется); без него креды не попадут в выдачу GET /api/automation/credentials ниже. Никогда не ' +
+            'логируется даже при включённом DEBUG_MATTERMOST — как и GET-версия этого эндпоинта.',
+          security: [{ automationApiKey: [] }],
+          parameters: [
+            { name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['network'],
+                  properties: {
+                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] },
+                    expiresAt: { type: 'string', nullable: true, description: 'опционально, но нужен для GET /api/automation/credentials', example: '2026-11-01T00:00:00Z' },
+                  },
+                  additionalProperties: true,
+                  example: { network: 'ig', accessToken: '...', igUserId: '...', expiresAt: '2026-11-01T00:00:00Z' },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'OK — обновлённый объект кредов этой сети (после слияния)',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      projectId: { type: 'string' },
+                      network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] },
+                      credentials: { type: 'object', additionalProperties: true, example: { accessToken: '...', igUserId: '...', expiresAt: '2026-11-01T00:00:00Z', lastRefreshedAt: '2026-09-03T12:00:00.000Z' } },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'projectId/network не указан или не найден, тело запроса пустое (кроме network), либо expiresAt не парсится как дата', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
+      '/api/automation/credentials': {
+        get: {
+          summary: 'Список кредов, у которых скоро истекает (или уже истёк) срок — по всем проектам сразу',
+          description:
+            'Добавлено 2026-09-03 для авторефреша при 10+ аккаунтах — не нужно опрашивать GET ' +
+            '/api/automation/projects/{id}/credentials по кругу для каждого проекта. Результат ВКЛЮЧАЕТ уже ' +
+            'истёкшие креды (expiresAt в прошлом), не только те, что истекут в ближайшие expiringWithinDays дней — ' +
+            'им внимание нужно как минимум не меньше. НЕ содержит сам секрет (accessToken и т.п.) — намеренно, тот ' +
+            'же принцип, что и у одно-проектного GET выше (см. его описание): один скомпрометированный ответ не ' +
+            'должен раскрывать токены сразу всех клиентов. Получив отсюда список нужных projectId, дальше вызывайте ' +
+            'GET /api/automation/projects/{projectId}/credentials?network=... по одному, непосредственно перед ' +
+            'самим рефрешем.',
+          security: [{ automationApiKey: [] }],
+          parameters: [
+            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] }, description: 'если не задан — по всем сетям сразу' },
+            { name: 'expiringWithinDays', in: 'query', required: true, schema: { type: 'integer', minimum: 1, maximum: 365 }, description: 'окно в днях от текущего момента' },
+          ],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      credentials: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            projectId: { type: 'string' },
+                            projectLabel: { type: 'string', nullable: true },
+                            network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max'] },
+                            expiresAt: { type: 'string' },
+                            lastRefreshedAt: { type: 'string', nullable: true },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'expiringWithinDays не указан/вне диапазона 1-365, либо network не из списка ig/tg/vk/ok/max', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
       },
       '/api/automation/projects/{projectId}/settings': {
         get: {
           summary: 'Настройки и промты ОДНОГО проекта (не креды)',
           description:
-            'isAiProject, projectManager, startDate, postsPerMonth, publishTimeMsk и четыре промта генерации ' +
-            '(strategyPrompt/planningPrompt/postPrompt/imagePrompt) — то, что заполнено в попапе "Редактировать" ' +
-            'на /projects. НЕ включает socialCredentials (отдельный эндпоинт /credentials выше) и logoUrl/токен ' +
-            'ссылки (staff-only). Незаполненные текстовые поля приходят пустой строкой, это не ошибка.',
+            'isAiProject, projectManager, startDate, postsPerMonth, publishTimeMsk, paidThroughDate и четыре промта ' +
+            'генерации (strategyPrompt/planningPrompt/postPrompt/imagePrompt) — то, что заполнено в попапе ' +
+            '"Редактировать" на /projects. НЕ включает socialCredentials (отдельный эндпоинт /credentials выше) и ' +
+            'logoUrl/токен ссылки (staff-only). Незаполненные текстовые поля приходят пустой строкой, это не ошибка.',
           security: [{ automationApiKey: [] }],
           parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' }],
           responses: {
@@ -291,6 +401,12 @@ function buildOpenApiSpec() {
                       startDate: { type: 'string', nullable: true },
                       postsPerMonth: { type: 'string', nullable: true },
                       publishTimeMsk: { type: 'string', nullable: true, example: '10:00' },
+                      paidThroughDate: {
+                        type: 'string',
+                        nullable: true,
+                        example: '2026-12-31',
+                        description: 'YYYY-MM-DD, "оплачено до". Пустая строка — не задано. См. описание у POST .../publish.',
+                      },
                       strategyPrompt: { type: 'string' },
                       planningPrompt: { type: 'string' },
                       postPrompt: { type: 'string' },
@@ -543,12 +659,20 @@ function buildOpenApiSpec() {
       '/api/automation/tasks/{taskId}/publish': {
         post: {
           summary: 'Отметить карточку опубликованной + записать ссылку на пост',
+          description:
+            'Отказывает с 403 project_payment_expired, если у проекта этой карточки задан paidThroughDate ' +
+            '(project_settings, см. GET .../projects/{projectId}/settings) и он уже прошёл по МСК — жёсткая ' +
+            'остановка автопостинга после окончания оплаченного периода, добавлено 2026-09-03.',
           security: [{ automationApiKey: [] }],
           parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' } } } } } },
           responses: {
             200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { task: { $ref: '#/components/schemas/Task' } } } } } },
             401: { $ref: '#/components/responses/Unauthorized' },
+            403: {
+              description: 'project_payment_expired — у проекта этой карточки истёк оплаченный период (paidThroughDate в прошлом)',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+            },
           },
         },
       },

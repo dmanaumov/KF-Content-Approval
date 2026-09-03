@@ -129,7 +129,7 @@ async function getSettings(boardId, projectId) {
   const { rows } = await pool.query(
     `SELECT logo_url, social_credentials, is_ai_project, is_archived, start_date, posts_per_month,
             publish_time_msk, project_manager, strategy_prompt, planning_prompt,
-            post_prompt, image_prompt, image_references
+            post_prompt, image_prompt, image_references, paid_through_date
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -148,6 +148,10 @@ async function getSettings(boardId, projectId) {
     postPrompt: row.post_prompt || '',
     imagePrompt: row.image_prompt || '',
     imageReferences: Array.isArray(row.image_references) ? row.image_references : [],
+    // "Оплачено до" (YYYY-MM-DD) — см. db.js. Пустая строка = не задано, не
+    // блокирует автопостинг. Читается staff-попапом для показа/редактирования
+    // и index.js's publishAutomationTask для жёсткого гейта после даты.
+    paidThroughDate: row.paid_through_date || '',
   };
 }
 
@@ -177,11 +181,18 @@ function textOrEmpty(value) {
   return value == null ? '' : String(value);
 }
 
+// YYYY-MM-DD, same shape the <input type="date"> in the edit popup already
+// sends for startDate — reused here (see paidThroughDate below) rather than
+// accepting arbitrary date text, since this field directly gates whether
+// publishAutomationTask() lets autoposting through (index.js) and a value
+// Date.parse() can't reliably compare would silently defeat that gate.
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 async function updateSettings(boardId, projectId, {
   logoUrl, socialCredentials, isAiProject, isArchived,
   startDate, postsPerMonth, publishTimeMsk, projectManager,
   strategyPrompt, planningPrompt, postPrompt, imagePrompt,
-  imageReferences,
+  imageReferences, paidThroughDate,
 }) {
   if (typeof logoUrl !== 'string') {
     throw new Error('logoUrl must be a string (may be empty).');
@@ -193,6 +204,9 @@ async function updateSettings(boardId, projectId, {
     if (!KNOWN_NETWORKS.includes(key)) {
       throw new Error(`Unknown network key "${key}" — expected one of: ${KNOWN_NETWORKS.join(', ')}.`);
     }
+  }
+  if (paidThroughDate !== undefined && paidThroughDate !== null && paidThroughDate !== '' && !DATE_ONLY_RE.test(String(paidThroughDate))) {
+    throw new Error('paidThroughDate must be YYYY-MM-DD (or empty to clear it).');
   }
   const references = normalizeImageReferences(imageReferences);
   await ensureRow(boardId, projectId);
@@ -212,6 +226,7 @@ async function updateSettings(boardId, projectId, {
          image_prompt = $13,
          is_archived = $14,
          image_references = $15::jsonb,
+         paid_through_date = $16,
          updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
     [
@@ -222,8 +237,94 @@ async function updateSettings(boardId, projectId, {
       textOrEmpty(postPrompt), textOrEmpty(imagePrompt),
       !!isArchived,
       JSON.stringify(references),
+      textOrEmpty(paidThroughDate),
     ]
   );
+}
+
+// Merge-upsert ONE network's credentials for a project, without touching any
+// other field on the row (other networks, isAiProject, prompts, ...) and
+// without a read-modify-write race — a single atomic UPDATE via Postgres
+// jsonb functions. Added 2026-09-03 for the automation credentials-WRITE
+// API (see index.js) — updateSettings() above stays the whole-row replace
+// the staff "Редактировать" popup uses; this is the narrower write an
+// automated token-refresh flow actually needs: "update just this one
+// network, leave literally everything else exactly as it was".
+//
+// `fields` is SHALLOW-MERGED into whatever's already stored for that
+// network — a refresh call can resend just {accessToken, expiresAt} without
+// also having to know/resend igUserId, and any older field this call
+// doesn't mention survives untouched. `network` must already be validated
+// by the caller (index.js) — this function trusts it. `lastRefreshedAt` is
+// ALWAYS stamped here server-side (now(), ISO) regardless of what's in
+// `fields` — it's meant to be this app's own record of when the credential
+// was last written, not something a caller can backdate.
+async function upsertNetworkCredentials(boardId, projectId, network, fields) {
+  await ensureRow(boardId, projectId);
+  const pool = db.requirePool();
+  const merged = { ...fields, lastRefreshedAt: new Date().toISOString() };
+  const { rows } = await pool.query(
+    `UPDATE project_settings
+     SET social_credentials = jsonb_set(
+           COALESCE(social_credentials, '{}'::jsonb),
+           ARRAY[$3::text],
+           COALESCE(social_credentials -> $3, '{}'::jsonb) || $4::jsonb,
+           true
+         ),
+         updated_at = now()
+     WHERE board_id = $1 AND project_id = $2
+     RETURNING social_credentials -> $3 AS updated`,
+    [boardId, projectId, network, JSON.stringify(merged)]
+  );
+  return (rows[0] && rows[0].updated) || merged;
+}
+
+// Cross-project "which credentials are expiring soon" lookup — added
+// alongside upsertNetworkCredentials above for the same IG-token-refresh
+// flow (Business tokens expire every ~60 days; with 10+ accounts, looping
+// GET .../credentials once per project just to find out who needs a
+// refresh doesn't scale). Reads straight out of the same social_credentials
+// jsonb column every project already has — no schema change — and filters
+// in JS after a single query rather than a per-network jsonb SQL predicate,
+// since the actual row count (a few dozen projects at most) makes that
+// simplicity free. NOTE: this still reads the full credentials object
+// (including the real secret) out of Postgres into this process, same as
+// getSettings() always has — it's index.js's HTTP response that then
+// deliberately narrows what actually leaves the server (see the route for
+// why); this function itself is just a normal internal read.
+//
+// `network` null = every known network. `expiringWithinDays`: rows where
+// expiresAt <= now() + N days — this ALSO catches anything already expired
+// (a past expiresAt is <= any future cutoff too), which is intentional: an
+// already-expired credential needs attention at least as urgently as one
+// about to expire, so it stays in the same list rather than needing a
+// separate call.
+async function listExpiringCredentials(boardId, network, expiringWithinDays) {
+  const pool = db.requirePool();
+  const networks = network ? [network] : KNOWN_NETWORKS;
+  const { rows } = await pool.query(
+    `SELECT project_id, social_credentials FROM project_settings
+     WHERE board_id = $1 AND social_credentials IS NOT NULL AND social_credentials != '{}'::jsonb`,
+    [boardId]
+  );
+  const cutoffMs = Date.now() + expiringWithinDays * 24 * 60 * 60 * 1000;
+  const out = [];
+  for (const row of rows) {
+    const creds = row.social_credentials || {};
+    for (const net of networks) {
+      const c = creds[net];
+      if (!c || !c.expiresAt) continue; // no expiry set for this network = nothing to flag
+      const expiresAtMs = Date.parse(c.expiresAt);
+      if (Number.isNaN(expiresAtMs) || expiresAtMs > cutoffMs) continue;
+      out.push({
+        projectId: row.project_id,
+        network: net,
+        expiresAt: c.expiresAt,
+        lastRefreshedAt: c.lastRefreshedAt || null,
+      });
+    }
+  }
+  return out;
 }
 
 // One-time (but idempotent — safe to run on every boot) import of the OLD
@@ -272,6 +373,8 @@ module.exports = {
   resolveToken,
   getSettings,
   updateSettings,
+  upsertNetworkCredentials,
+  listExpiringCredentials,
   importLegacyFileTokens,
   KNOWN_NETWORKS,
 };

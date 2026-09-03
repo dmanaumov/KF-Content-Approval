@@ -146,6 +146,14 @@ module.exports = {
   // Nextcloud at once in the first place).
   diskWebdavTimeoutMs: parseInt(process.env.DISK_WEBDAV_TIMEOUT_MS || '30000', 10),
 
+  // API version pinned in the "Проверить" (validate) call the /projects edit
+  // popup makes against Instagram's own Graph API (POST /api/projects/
+  // :projectId/validate-instagram in index.js) — confirms a just-typed
+  // accessToken/igUserId pair is actually live before staff saves it.
+  // Overridable so a Graph API deprecation doesn't require a code change,
+  // just an env var bump.
+  instagramGraphApiVersion: process.env.INSTAGRAM_GRAPH_API_VERSION || 'v21.0',
+
   // Prints raw Mattermost block/property JSON to the server log — turn this
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',

@@ -95,6 +95,18 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS image_references jsonb NOT NULL DEFAULT '[]'::jsonb;
   `);
+  // "Оплачено до" — дата, до которой у клиента оплачена работа (staff-set,
+  // тот же попап "Редактировать проект", рядом со startDate/postsPerMonth —
+  // см. paidThroughDate в projectSettings.js/frontend/projects.js). Пустая
+  // строка = не задано и НИКОГДА не считается просроченным — гейт в
+  // publishAutomationTask (index.js) срабатывает только когда дата явно
+  // задана и уже в прошлом (по МСК). Формат YYYY-MM-DD, как start_date.
+  // Добавлено 2026-09-03 по просьбе Дмитрия: после этой даты автопостинг
+  // должен жёстко останавливаться, а не просто предупреждать в интерфейсе.
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS paid_through_date text NOT NULL DEFAULT '';
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);

@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=11">
-  <link rel="stylesheet" href="/projects.css?v=10">
+  <link rel="stylesheet" href="/projects.css?v=11">
 </head>
 <body>
 <div class="page">
@@ -112,6 +112,11 @@
             <label class="field-label" for="editPublishTimeMsk">Время публикации (МСК)</label>
             <input id="editPublishTimeMsk" class="field-input" type="time" placeholder="10:00">
           </div>
+          <div>
+            <label class="field-label" for="editPaidThroughDate">Оплачено до</label>
+            <input id="editPaidThroughDate" class="field-input" type="date">
+            <div id="paidThroughHint" class="paid-through-hint" hidden></div>
+          </div>
         </div>
       </div>
 
@@ -121,7 +126,23 @@
       <div class="cred-networks">
         <div class="cred-net" data-net="ig">
           <label><i class="net-dot" style="background:#C13584"></i>Instagram (IG)</label>
-          <textarea data-net-field="ig" rows="3" placeholder="{}"></textarea>
+          <div id="igPicker" class="ig-picker">
+            <div class="ig-picker-field">
+              <label class="field-label" for="editIgAccessToken">Access Token</label>
+              <input id="editIgAccessToken" class="field-input" type="text" placeholder="Долгоживущий токен из Meta OAuth">
+            </div>
+            <div class="ig-picker-field">
+              <label class="field-label" for="editIgUserId">IG User ID</label>
+              <input id="editIgUserId" class="field-input" type="text" placeholder="ID бизнес/creator-аккаунта">
+            </div>
+            <div class="ig-picker-row">
+              <button type="button" id="igValidateBtn">Проверить</button>
+              <div id="igValidateHint" class="ig-validate-hint"></div>
+            </div>
+            <div id="igMetaHint" class="ig-meta-hint" hidden></div>
+          </div>
+          <button type="button" id="igManualToggle" class="tg-manual-toggle">Ввести вручную (JSON)</button>
+          <textarea data-net-field="ig" rows="3" placeholder="{}" hidden></textarea>
         </div>
         <div class="cred-net" data-net="tg">
           <label><i class="net-dot" style="background:#229ED9"></i>Telegram (TG)</label>
@@ -193,7 +214,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=8"></script>
+<script src="/projects.js?v=9"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

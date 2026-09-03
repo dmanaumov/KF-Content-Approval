@@ -1155,6 +1155,41 @@ app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   }
 });
 
+// POST /api/projects/:projectId/validate-instagram — staff clicks
+// "Проверить" next to the IG accessToken/igUserId fields in the
+// "Редактировать" popup (frontend/projects.js) to confirm a just-typed pair
+// is actually live BEFORE saving it — added 2026-09-03 at Дмитрий's request
+// ("сразу надо дать возможность ВАЛИДИРОВАТЬ! Что все работает!"), same
+// spirit as the Telegram picker resolving a real bot/channel list instead of
+// staff hand-typing a chatId and hoping. Deliberately server-side (never a
+// client-side fetch straight to Instagram): keeps the access token out of
+// the browser's own network tab beyond what's already visible in the popup,
+// and sidesteps Graph API CORS entirely. Takes accessToken/igUserId straight
+// from the request body — NOT from social_credentials already saved for this
+// project — so staff can test a token before ever clicking "Сохранить".
+// Calls the single-account lookup (fields=username,account_type), never a
+// "list every account this token can see" endpoint: getting back exactly
+// *this* igUserId's public identity is what actually proves the pair
+// authorizes as this client's account, not just some valid token.
+app.post('/api/projects/:projectId/validate-instagram', staffAuth, async (req, res) => {
+  const accessToken = String((req.body && req.body.accessToken) || '').trim();
+  const igUserId = String((req.body && req.body.igUserId) || '').trim();
+  if (!accessToken || !igUserId) {
+    return res.status(400).json({ ok: false, error: 'missing_fields', message: 'Укажите accessToken и igUserId.' });
+  }
+  try {
+    const result = await validateInstagramCredentials(accessToken, igUserId);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    // A failed validation is a normal, expected outcome here (bad/expired
+    // token, wrong igUserId, Instagram unreachable) — not a malformed
+    // request on OUR side, so this stays 200 with ok:false rather than 4xx/
+    // 5xx, letting the frontend show a plain red hint without treating it as
+    // a network failure that needs a retry/toast.
+    res.json({ ok: false, error: err.code || 'validation_failed', message: err.message });
+  }
+});
+
 // POST /api/projects/:projectId/reference-upload — multipart, field name
 // "file". Real file upload for the "ИИ настройки" tab's image-reference
 // gallery (up to 10 per project — see projectSettings.js's
@@ -2174,6 +2209,52 @@ async function updateTaskKeywords(boardId, taskId, text) {
 const SOCIAL_LABELS = { ig: 'Instagram', tg: 'Telegram', vk: 'ВКонтакте', ok: 'Одноклассники', max: 'MAX' };
 const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max)\b[\s:\-–—]*/i;
 
+// Live check against Instagram's own Graph API — see POST /api/projects/
+// :projectId/validate-instagram above for the why. GET https://graph.
+// facebook.com/{version}/{igUserId}?fields=username,account_type&
+// access_token=... — this is the Business/Creator Graph API endpoint (the
+// same one whose long-lived tokens the automation's ~60-day refresh flow
+// already assumes, see projectSettings.upsertNetworkCredentials), NOT the
+// separate "Instagram API with Instagram Login" (graph.instagram.com)
+// flow — if a project ever needs that flow instead, this is the one place
+// to branch. 10s timeout: this is a single lightweight field lookup a staff
+// member is actively waiting on in a popup, no reason to allow it to hang
+// as long as a bulk Mattermost call might.
+const INSTAGRAM_VALIDATE_TIMEOUT_MS = 10000;
+async function validateInstagramCredentials(accessToken, igUserId) {
+  const id = encodeURIComponent(igUserId);
+  const url = `https://graph.facebook.com/${config.instagramGraphApiVersion}/${id}?fields=username,account_type&access_token=${encodeURIComponent(accessToken)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INSTAGRAM_VALIDATE_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (fetchErr) {
+    const err = new Error(
+      fetchErr.name === 'AbortError'
+        ? `Instagram Graph API не ответил за ${INSTAGRAM_VALIDATE_TIMEOUT_MS / 1000} сек.`
+        : `Не удалось обратиться к Instagram Graph API: ${fetchErr.message}`
+    );
+    err.code = 'instagram_unreachable';
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (parseErr) {
+    // fall through — treated as an error below since data stays null
+  }
+  if (!response.ok || !data || data.error) {
+    const message = (data && data.error && data.error.message) || `Instagram Graph API вернул ${response.status}.`;
+    const err = new Error(message);
+    err.code = 'instagram_token_invalid';
+    throw err;
+  }
+  return { username: data.username || null, accountType: data.account_type || null, igUserId: data.id || igUserId };
+}
+
 async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {
   const key = String(networkKey || '').trim().toLowerCase();
   if (key && !SOCIAL_LABELS[key]) {
@@ -2283,6 +2364,11 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
 // the edit popup (project_settings.is_ai_project), so an automation flow can
 // filter to just the projects it should be generating content for instead of
 // hardcoding project ids/names on its own side.
+// paidThroughDate (added 2026-09-03) — "оплачено до" (YYYY-MM-DD, empty =
+// not set). An automation can use this to skip an expired project on its own
+// side, but the actual hard stop is enforced server-side regardless: see the
+// project_payment_expired check in publishAutomationTask below, which
+// refuses the publish call itself once this date has passed.
 async function getAutomationProjects(boardId) {
   const { board } = await loadBoard(boardId);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
@@ -2300,6 +2386,7 @@ async function getAutomationProjects(boardId) {
         postsPerMonth: settings.postsPerMonth,
         projectManager: settings.projectManager,
         startDate: settings.startDate,
+        paidThroughDate: settings.paidThroughDate,
       };
     })
   );
@@ -2340,8 +2427,11 @@ async function getAutomationProjects(boardId) {
 // NEVER logged: the /api/automation debug-response logger below explicitly
 // skips this route (see isCredentialsRoute there) so turning DEBUG_MATTERMOST
 // on for unrelated diagnosis never writes real secrets to stdout/logs.
-async function getAutomationProjectCredentials(boardId, projectId, network) {
-  const { board } = await loadBoard(boardId);
+// Shared projectId resolution for every /api/automation/projects/:projectId/*
+// endpoint (settings, credentials GET, credentials POST, ...) — was
+// duplicated near-verbatim in each one; factored out here so the
+// validation/error codes/messages can't quietly drift apart between them.
+function resolveAutomationProjectId(board, projectId) {
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   if (!projectProp) {
     throw badRequest('project_property_not_found', `Свойство "${config.projectPropertyName}" не найдено на борде.`);
@@ -2355,6 +2445,12 @@ async function getAutomationProjectCredentials(boardId, projectId, network) {
     const available = (projectProp.options || []).map((o) => `${o.value} (${o.id})`).join(', ') || '(нет опций)';
     throw badRequest('project_not_found', `projectId "${id}" не найден в свойстве "Проект". Доступные: ${available}.`);
   }
+  return id;
+}
+
+async function getAutomationProjectCredentials(boardId, projectId, network) {
+  const { board } = await loadBoard(boardId);
+  const id = resolveAutomationProjectId(board, projectId);
   const net = String(network || '').trim().toLowerCase();
   if (net && !SOCIAL_LABELS[net]) {
     throw badRequest('invalid_network', `Неизвестная соцсеть "${network}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
@@ -2374,9 +2470,90 @@ async function getAutomationProjectCredentials(boardId, projectId, network) {
   return net in all ? all[net] : null;
 }
 
+// POST /api/automation/projects/:projectId/credentials — upsert (create or
+// update) ONE network's credentials for a project. Added 2026-09-03 at
+// Дмитрий's request, closing the loop the GET-only version above left open:
+// wiring up a new account or refreshing a token (IG Business tokens expire
+// every ~60 days) used to mean editing social_credentials by hand in
+// Postgres/the admin popup — this is the write half, meant for an automated
+// refresh flow at 10+ accounts and growing.
+//
+// `fields` can be anything — stays freeform per network, same as the rest
+// of social_credentials already is (docs/N8N_AUTOMATION.md: "формат — на
+// усмотрение разработчика автоматизации"), NOT hardcoded to IG's
+// accessToken/igUserId shape, so this one endpoint already works for
+// wiring up a TG/VK/OK/MAX credential too, not just IG.
+//
+// SHALLOW MERGE into whatever's already stored for that network (see
+// projectSettings.upsertNetworkCredentials) — a refresh call can resend
+// just {accessToken, expiresAt} without also having to know/resend
+// igUserId. `expiresAt`, if given, must parse as a date/time (ISO 8601
+// recommended) — it doesn't have to be sent at all (a network without a
+// natural expiry can simply omit it), but without it this credential won't
+// show up in the expiring-soon listing below.
+async function upsertAutomationProjectCredentials(boardId, projectId, network, fields) {
+  const { board } = await loadBoard(boardId);
+  const id = resolveAutomationProjectId(board, projectId);
+  const net = String(network || '').trim().toLowerCase();
+  if (!net) {
+    throw badRequest('network_required', `network обязателен в теле запроса. Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
+  }
+  if (!SOCIAL_LABELS[net]) {
+    throw badRequest('invalid_network', `Неизвестная соцсеть "${network}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
+  }
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields) || Object.keys(fields).length === 0) {
+    throw badRequest(
+      'fields_required',
+      'Тело запроса должно содержать хотя бы одно поле credentials помимо network (например accessToken).'
+    );
+  }
+  if ('expiresAt' in fields && fields.expiresAt != null && fields.expiresAt !== '' && Number.isNaN(Date.parse(fields.expiresAt))) {
+    throw badRequest(
+      'invalid_expires_at',
+      `expiresAt "${fields.expiresAt}" не распознаётся как дата/время — используйте ISO 8601, например "2026-11-01T00:00:00Z".`
+    );
+  }
+  return projectSettings.upsertNetworkCredentials(boardId, id, net, fields);
+}
+
+// GET /api/automation/credentials?network=<ig|tg|vk|ok|max>&expiringWithinDays=<N>
+// — "who needs a token refresh soon", across every project on the board in
+// ONE call, so a refresh automation doesn't have to loop
+// GET .../projects/{id}/credentials once per project (10+ projects and
+// growing — same 2026-09-03 request as the write endpoint above).
+//
+// Deliberately DOES NOT include the actual secret (accessToken etc.) — only
+// { projectId, projectLabel, network, expiresAt, lastRefreshedAt }. This is
+// intentional, mirroring the security reasoning already spelled out on
+// getAutomationProjectCredentials above: that endpoint only ever hands out
+// ONE project's secret per call, by design, so a single compromised
+// response can't leak every client's token at once. A bulk "who's
+// expiring" endpoint that ALSO bundled every one of those live tokens into
+// one response would undo exactly that protection. Intended flow: call
+// THIS to find out which projectIds need attention, then call the existing
+// per-project GET (?network=...) for just that one project right before
+// actually refreshing it. If the automation side genuinely needs the
+// secret bundled into this listing, that's a real, discussable trade-off —
+// raise it with Дмитрий rather than just adding it.
+async function listExpiringAutomationCredentials(boardId, network, expiringWithinDaysRaw) {
+  const net = network ? String(network).trim().toLowerCase() : '';
+  if (net && !SOCIAL_LABELS[net]) {
+    throw badRequest('invalid_network', `Неизвестная соцсеть "${network}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
+  }
+  const days = Number(expiringWithinDaysRaw);
+  if (!Number.isFinite(days) || days <= 0 || days > 365) {
+    throw badRequest('invalid_expiring_within_days', 'expiringWithinDays обязателен и должен быть числом от 1 до 365.');
+  }
+  const { board } = await loadBoard(boardId);
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
+  const labelById = new Map((projectProp && projectProp.options ? projectProp.options : []).map((o) => [o.id, o.value]));
+  const rows = await projectSettings.listExpiringCredentials(boardId, net || null, days);
+  return rows.map((r) => ({ ...r, projectLabel: labelById.get(r.projectId) || null }));
+}
+
 // GET /api/automation/projects/:projectId/settings — the planning/profile
 // side of a project's settings: isAiProject, projectManager, startDate,
-// postsPerMonth, publishTimeMsk, and the four AI generation prompts
+// postsPerMonth, publishTimeMsk, paidThroughDate, and the four AI generation prompts
 // (strategyPrompt/planningPrompt/postPrompt/imagePrompt — set by staff in
 // the "ИИ настройки" tab of the /projects edit popup). Deliberately does
 // NOT include socialCredentials (its own dedicated, one-project-at-a-time
@@ -2387,19 +2564,7 @@ async function getAutomationProjectCredentials(boardId, projectId, network) {
 // outside the staff-only GET /api/projects/:projectId/settings.
 async function getAutomationProjectSettings(boardId, projectId) {
   const { board } = await loadBoard(boardId);
-  const projectProp = findPropertyDef(board, config.projectPropertyName);
-  if (!projectProp) {
-    throw badRequest('project_property_not_found', `Свойство "${config.projectPropertyName}" не найдено на борде.`);
-  }
-  const id = String(projectId || '').trim();
-  if (!id) {
-    throw badRequest('project_id_required', 'projectId обязателен — id опции свойства "Проект" (см. GET /api/automation/projects).');
-  }
-  const projectOption = (projectProp.options || []).find((o) => o.id === id);
-  if (!projectOption) {
-    const available = (projectProp.options || []).map((o) => `${o.value} (${o.id})`).join(', ') || '(нет опций)';
-    throw badRequest('project_not_found', `projectId "${id}" не найден в свойстве "Проект". Доступные: ${available}.`);
-  }
+  const id = resolveAutomationProjectId(board, projectId);
   const settings = await projectSettings.getSettings(boardId, id);
   return {
     isAiProject: settings.isAiProject,
@@ -2407,6 +2572,7 @@ async function getAutomationProjectSettings(boardId, projectId) {
     startDate: settings.startDate,
     postsPerMonth: settings.postsPerMonth,
     publishTimeMsk: settings.publishTimeMsk,
+    paidThroughDate: settings.paidThroughDate,
     strategyPrompt: settings.strategyPrompt,
     planningPrompt: settings.planningPrompt,
     postPrompt: settings.postPrompt,
@@ -2523,6 +2689,22 @@ async function getAutomationTaskById(boardId, taskId) {
   };
 }
 
+// True once `paidThroughDate` (YYYY-MM-DD, project_settings.paid_through_date)
+// has fully passed in Moscow time — i.e. after 23:59:59 MSK on that date, not
+// the instant UTC midnight ticks over, so a project paid through "today"
+// stays postable for the whole of today in the timezone the team and
+// publishTimeMsk both already operate in. Empty/unset/unparsable = never
+// gates anything (fails open — a data glitch or a project that's simply
+// never had this field filled in should never accidentally lock out
+// publishing).
+function isPaidThroughExpired(paidThroughDate) {
+  const trimmed = String(paidThroughDate || '').trim();
+  if (!trimmed) return false;
+  const cutoffMs = Date.parse(`${trimmed}T23:59:59+03:00`);
+  if (Number.isNaN(cutoffMs)) return false;
+  return Date.now() > cutoffMs;
+}
+
 // POST /api/automation/tasks/:taskId/publish — flips a card to
 // "ОПУБЛИКОВАНО" and records the live post URL, in ONE safe PATCH (merges
 // into the card's FULL existing properties — see the big warning on
@@ -2544,6 +2726,31 @@ async function publishAutomationTask(boardId, taskId, url) {
   }
   const card = cards.find((c) => c.id === taskId);
   if (!card) throw badRequest('task_not_found', `Карточка ${taskId} не найдена.`);
+
+  // Hard stop on autoposting once the project's paid-through date has passed
+  // (project_settings.paid_through_date, staff-set in the "Редактировать"
+  // popup on /projects) — added 2026-09-03 at Дмитрий's request: "после
+  // даты окончания контракта у нас прекращается работа автопостинга".
+  // Deliberately enforced HERE (the actual write that marks a post
+  // published) rather than by hiding the task from GET
+  // /api/automation/tasks — an automation that already queued this publish
+  // call gets a clear, loud rejection instead of the task just silently
+  // vanishing from future listings.
+  const projectProp = findPropertyDef(board, config.projectPropertyName);
+  const projectId = projectProp ? (card.properties || {})[projectProp.id] || null : null;
+  if (projectId) {
+    const projectSettingsRow = await projectSettings.getSettings(boardId, projectId);
+    if (isPaidThroughExpired(projectSettingsRow.paidThroughDate)) {
+      const err = new Error(
+        `Публикация остановлена: у проекта истёк оплаченный период (оплачено до ${projectSettingsRow.paidThroughDate}). ` +
+          `Продлите дату в настройках проекта (попап «Редактировать» на /projects), чтобы возобновить автопостинг.`
+      );
+      err.code = 'project_payment_expired';
+      err.httpStatus = 403;
+      throw err;
+    }
+  }
+
   const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: publishedOptionId };
   if (urlProp) mergedProperties[urlProp.id] = trimmedUrl;
   await mm.patchCardProperty(boardId, taskId, mergedProperties);
@@ -2742,14 +2949,18 @@ async function createAutomationTask(boardId, opts) {
 // logged as a placeholder, not their content). Meant to be temporary —
 // turn DEBUG_MATTERMOST back off once done diagnosing.
 //
-// isCredentialsRoute: the ONE route on this surface that returns real
-// third-party secrets (see getAutomationProjectCredentials above) — its
-// response body is deliberately NEVER logged here, request or response,
-// regardless of config.debug, so flipping DEBUG_MATTERMOST on for an
-// unrelated media/task issue can't accidentally write live IG/TG/VK/OK/MAX
-// credentials to stdout/container logs.
+// isCredentialsRoute: routes on this surface that carry real third-party
+// secrets, either in the request body or the response — GET/POST
+// .../projects/:id/credentials (see getAutomationProjectCredentials /
+// upsertAutomationProjectCredentials above) plus the bulk GET /credentials
+// listing (deliberately secret-free in its OWN response, but excluded here
+// too for uniformity/future-proofing rather than relying on that staying
+// true). Never logged here, request or response, regardless of
+// config.debug, so flipping DEBUG_MATTERMOST on for an unrelated media/task
+// issue can't accidentally write live IG/TG/VK/OK/MAX credentials to
+// stdout/container logs.
 app.use('/api/automation', (req, res, next) => {
-  const isCredentialsRoute = /\/projects\/[^/]+\/credentials$/.test(req.path);
+  const isCredentialsRoute = /\/projects\/[^/]+\/credentials$/.test(req.path) || req.path === '/credentials';
   if (!config.debug || isCredentialsRoute) return next();
   const startedAt = Date.now();
   const isMultipart = String(req.headers['content-type'] || '').startsWith('multipart/form-data');
@@ -2817,6 +3028,50 @@ app.get('/api/automation/projects/:projectId/credentials', requireAutomationAuth
     // ever touched again.
     console.error('[api] automation project credentials failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'automation_credentials_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/projects/:projectId/credentials — upsert ONE
+// network's credentials. Body: { network: "ig"|"tg"|"vk"|"ok"|"max", ...любые
+// поля }. See upsertAutomationProjectCredentials above for the merge
+// semantics (shallow merge into whatever's already stored, not a full
+// replace) and why `expiresAt` matters (feeds GET /api/automation/credentials
+// below). Response mirrors the GET single-network shape: the resulting
+// per-network object directly, not wrapped again.
+app.post('/api/automation/projects/:projectId/credentials', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { network, ...fields } = req.body || {};
+    const credentials = await upsertAutomationProjectCredentials(boardId, req.params.projectId, network, fields);
+    res.json({ projectId: req.params.projectId, network: String(network || '').trim().toLowerCase(), credentials });
+  } catch (err) {
+    // Same care as the GET handler above: err here only ever carries
+    // badRequest()'s own validation messages, never the submitted secret —
+    // keep it that way if this catch block is ever touched again.
+    console.error('[api] automation project credentials upsert failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'automation_credentials_upsert_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/credentials?network=<ig|tg|vk|ok|max>&expiringWithinDays=<N>
+// — bulk "who needs a refresh soon" listing across every project. See
+// listExpiringAutomationCredentials above for why this response deliberately
+// leaves the actual secret out (only projectId/projectLabel/network/
+// expiresAt/lastRefreshedAt) — pair with the per-project GET above once you
+// know which projectId actually needs refreshing. `network` optional (omit
+// for every network); `expiringWithinDays` REQUIRED, 1-365, and the result
+// also includes anything already past its expiresAt, not just what's about
+// to expire.
+app.get('/api/automation/credentials', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const credentials = await listExpiringAutomationCredentials(boardId, req.query.network, req.query.expiringWithinDays);
+    res.json({ credentials });
+  } catch (err) {
+    console.error('[api] automation credentials listing failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'automation_credentials_listing_failed', message: err.message });
   }
 });
 

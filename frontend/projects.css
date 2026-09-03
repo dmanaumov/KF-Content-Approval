@@ -333,6 +333,15 @@
 .edit-panel.ai .field-label:first-of-type{margin-top:0}
 .ai-prompts-title{font-size:12px;font-weight:800;color:#5B3FA0;margin-bottom:2px}
 @media(max-width:430px){.proj-field-row{grid-template-columns:1fr}}
+/* "Оплачено до" status line under the date field — жёсткая блокировка
+   автопостинга after this date happens server-side regardless (see
+   isPaidThroughExpired in backend/src/index.js); this is the "предупреждение
+   в интерфейсе" half, so staff sees it coming. Same green/amber/red palette
+   as .proj-kpi-dot's tiers. */
+.paid-through-hint{font-size:11px;font-weight:700;margin-top:5px}
+.paid-through-hint.good{color:#216A39}
+.paid-through-hint.warn{color:#8A6D00}
+.paid-through-hint.bad{color:var(--urgent)}
 .cred-networks{display:grid;gap:10px}
 .cred-net label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:var(--ink);margin-bottom:5px}
 .net-dot{width:9px;height:9px;border-radius:3px;display:inline-block}
@@ -351,6 +360,24 @@
 .tg-chat-hint{font-size:11px;color:var(--muted);margin-top:4px}
 .tg-manual-toggle{display:block;border:none;background:none;color:var(--muted);font-size:11px;text-decoration:underline;cursor:pointer;padding:4px 0 2px;font-family:inherit}
 .tg-manual-toggle:hover{color:var(--ink)}
+
+/* Instagram "accessToken/igUserId + Проверить" picker — layered on the ig
+   cred-net block above, same spot the Telegram picker occupies for tg (see
+   projects.js's applyIgTextareaToPicker/syncIgTextareaFromPicker). No
+   dropdown here (unlike Telegram) — Instagram has no "list every account
+   this token can see" API, so this is just two fields + a live validate
+   call. */
+.ig-picker{display:grid;gap:2px;margin-bottom:6px}
+.ig-picker-field .field-label{margin:0 0 4px;font-size:11px}
+.ig-picker-row{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+#igValidateBtn{flex:0 0 auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:7px 14px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit}
+#igValidateBtn:hover{background:var(--bg)}
+#igValidateBtn:disabled{opacity:.55;pointer-events:none}
+.ig-validate-hint{font-size:11.5px;color:var(--muted)}
+.ig-validate-hint.good{color:#216A39;font-weight:700}
+.ig-validate-hint.bad{color:var(--urgent);font-weight:700}
+.ig-meta-hint{font-size:11px;color:var(--muted);margin-top:4px}
+.ig-meta-hint.bad{color:var(--urgent)}
 
 /* Референсы картинок для ИИ-генерации (до 10 шт., "ИИ настройки" →
    editTabAi) — миниатюры с крестиком-удалить + строка добавления (ссылка
