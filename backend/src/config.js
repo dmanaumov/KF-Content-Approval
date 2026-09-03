@@ -154,6 +154,19 @@ module.exports = {
   // just an env var bump.
   instagramGraphApiVersion: process.env.INSTAGRAM_GRAPH_API_VERSION || 'v21.0',
 
+  // Meta app credentials (Meta for Developers → your app → Настройки →
+  // Основные) — NOT a client's token, this is the agency's OWN app, one pair
+  // shared across every project. Needed only for the "Освежить" (refresh)
+  // button next to a project's IG token expiry (POST /api/projects/
+  // :projectId/refresh-instagram-token in index.js), which calls Facebook's
+  // fb_exchange_token grant to trade a still-valid Business-login token for a
+  // fresh 60-day one. These are env-var fallbacks only — in practice staff
+  // set them live via the "Управление" tab (apiKeys.js's META_APP_ID/
+  // META_APP_SECRET, same live registry as AUTOMATION_API_KEY) so no
+  // redeploy is needed to add or rotate them.
+  metaAppId: process.env.META_APP_ID || '',
+  metaAppSecret: process.env.META_APP_SECRET || '',
+
   // Prints raw Mattermost block/property JSON to the server log — turn this
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',

@@ -123,6 +123,29 @@
   letter-spacing:normal;
 }
 .archived-badge[data-tip]:hover::after{opacity:1}
+/* Red "!" badge — paid-through date is under 5 days out (or already expired),
+   see paidThroughStatus() in projects.js. Same dark-pill tooltip pattern as
+   .archived-badge just above (they sit in the same .proj-name-row). */
+.paid-warn-badge{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:var(--urgent);color:#fff;font-size:11px;font-weight:900;line-height:1;cursor:default}
+.paid-warn-badge[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+}
+.paid-warn-badge[data-tip]:hover::after{opacity:1}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
 .proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
 /* overflow was hidden here, but the KPI dot (and its tooltip) needs to
@@ -225,6 +248,33 @@
 .proj-link{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted);background:#FAFBFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .proj-link-row{flex-direction:column;align-items:stretch;gap:6px}
 
+/* Mini social-network chips on the project card — one small dot per network
+   that has credentials saved (o.configuredNetworks, see projectSettings.js's
+   getTokenAndLogo), so staff can see at a glance where a project can
+   actually publish. Colors match the edit popup's .net-dot legend. */
+.proj-net-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.proj-net-chip{position:relative;width:10px;height:10px;border-radius:3px;display:inline-block;cursor:default;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
+.proj-net-chip[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:50%;
+  transform:translateX(-50%);
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+}
+.proj-net-chip[data-tip]:hover::after{opacity:1}
+
 /* Vertical column of action icons (copy / edit / regenerate), one above the
    other in the accent color. Hover shows a hint built from data-tip — the
    action's name + what it actually does. */
@@ -313,6 +363,11 @@
 .field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
 .field-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 12px;font-size:13px;outline:none;font:inherit;color:var(--ink);background:var(--card)}
 .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+/* Оплата истекает меньше чем через 5 дней — сама дата в попапе подсвечена
+   красным (see updatePaidThroughHint() in projects.js), не только текст
+   подсказки под полем. */
+.field-input-danger{border-color:var(--urgent);color:var(--urgent);background:#FFF4F4}
+.field-input-danger:focus{border-color:var(--urgent);box-shadow:0 0 0 3px rgba(230,69,69,.12)}
 .logo-preview{display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 10px;background:#FAFBFB;border:1px solid var(--line);border-radius:12px}
 .logo-preview img{width:40px;height:40px;object-fit:contain;border-radius:9px;background:#fff;border:1px solid var(--line)}
 .logo-preview span{font-size:11px;color:var(--muted)}
@@ -369,15 +424,37 @@
    call. */
 .ig-picker{display:grid;gap:2px;margin-bottom:6px}
 .ig-picker-field .field-label{margin:0 0 4px;font-size:11px}
-.ig-picker-row{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
-#igValidateBtn{flex:0 0 auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:7px 14px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit}
-#igValidateBtn:hover{background:var(--bg)}
-#igValidateBtn:disabled{opacity:.55;pointer-events:none}
-.ig-validate-hint{font-size:11.5px;color:var(--muted)}
+/* Header row for the IG block — label on the left, small "Проверить"
+   icon-button on the right (moved out of the picker fields entirely so it
+   stays reachable in BOTH modes — guided fields and "Ввести вручную (JSON)"
+   — see igValidateBtn's click handler in projects.js, which reads
+   credentials from whichever mode is currently active). Added 2026-09-03
+   at Дмитрий's request ("маленькую кнопку с пиктограммой... справа от
+   области ввода настроек"). */
+.cred-net-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
+.cred-net-head label{margin-bottom:0}
+.ig-validate-icon-btn{flex:0 0 auto;width:22px;height:22px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.ig-validate-icon-btn:hover{background:var(--bg);border-color:var(--accent);color:var(--accent)}
+.ig-validate-icon-btn:disabled{opacity:.55;pointer-events:none}
+/* Result line — auto-cleared ~30s after each check (see projects.js) so a
+   stale ✅/❌ doesn't linger once staff has moved on. */
+.ig-validate-hint{font-size:11.5px;color:var(--muted);margin-bottom:4px}
+.ig-validate-hint:empty{display:none}
 .ig-validate-hint.good{color:#216A39;font-weight:700}
 .ig-validate-hint.bad{color:var(--urgent);font-weight:700}
-.ig-meta-hint{font-size:11px;color:var(--muted);margin-top:4px}
+.ig-meta-hint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:4px}
 .ig-meta-hint.bad{color:var(--urgent)}
+/* "Освежить" — exchanges the currently-saved IG token for a fresh one via
+   Facebook's fb_exchange_token grant (POST /api/projects/:id/
+   refresh-instagram-token, needs META_APP_ID/META_APP_SECRET set in
+   «Управление»). Deliberately tiny, next to the expiry text it refreshes. */
+#igRefreshBtn.ig-refresh-btn{flex:0 0 auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:2px 8px;font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit}
+#igRefreshBtn.ig-refresh-btn:hover{background:var(--bg)}
+#igRefreshBtn.ig-refresh-btn:disabled{opacity:.55;pointer-events:none}
+.ig-refresh-hint{font-size:11.5px;color:var(--muted);margin-top:4px}
+.ig-refresh-hint:empty{display:none}
+.ig-refresh-hint.good{color:#216A39;font-weight:700}
+.ig-refresh-hint.bad{color:var(--urgent);font-weight:700}
 
 /* Референсы картинок для ИИ-генерации (до 10 шт., "ИИ настройки" →
    editTabAi) — миниатюры с крестиком-удалить + строка добавления (ссылка

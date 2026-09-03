@@ -12,6 +12,7 @@ const keysTableEl = document.getElementById('keysTable');
 const addForm = document.getElementById('addKeyForm');
 const addNameInput = document.getElementById('newKeyName');
 const addLabelInput = document.getElementById('newKeyLabel');
+const addValueInput = document.getElementById('newKeyValue');
 const addErrorBox = document.getElementById('addKeyError');
 const toast = document.getElementById('toast');
 
@@ -26,6 +27,9 @@ let keys = [];
 // Reset to hidden on every reload, on purpose — a page refresh re-masks
 // everything rather than remembering what was open.
 const revealed = new Set();
+// Which key's row is currently showing the "Задать своё значение" inline
+// edit input (name, or null) — see onAction('edit-value'/...) below.
+let editingKeyName = null;
 
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -55,6 +59,15 @@ function render() {
   }
   const rows = keys
     .map((k) => {
+      if (editingKeyName === k.name) {
+        return `<tr data-name="${esc(k.name)}"><td colspan="4">
+          <div class="bot-edit-row">
+            <input class="field-input apikey-edit-value" type="text" value="${esc(k.value)}" placeholder="Новое значение">
+            <button type="button" class="apikey-btn" data-action="save-value" data-name="${esc(k.name)}">Сохранить</button>
+            <button type="button" class="apikey-btn" data-action="cancel-edit-value" data-name="${esc(k.name)}">Отмена</button>
+          </div>
+        </td></tr>`;
+      }
       const isRevealed = revealed.has(k.name);
       const shown = isRevealed ? esc(k.value) : esc(maskedValue(k.value));
       return `<tr>
@@ -64,6 +77,7 @@ function render() {
         <td class="apikey-actions">
           <button type="button" class="apikey-btn" data-action="toggle" data-name="${esc(k.name)}">${isRevealed ? 'Скрыть' : 'Показать'}</button>
           <button type="button" class="apikey-btn" data-action="copy" data-name="${esc(k.name)}">Скопировать</button>
+          <button type="button" class="apikey-btn" data-action="edit-value" data-name="${esc(k.name)}">Задать своё значение</button>
           <button type="button" class="apikey-btn" data-action="rotate" data-name="${esc(k.name)}">Выпустить новый</button>
           <button type="button" class="apikey-btn danger" data-action="delete" data-name="${esc(k.name)}">Удалить</button>
         </td>
@@ -95,6 +109,38 @@ async function onAction(action, name) {
       showToast('Значение скопировано');
     } catch (err) {
       showToast('Не удалось скопировать: ' + err.message);
+    }
+    return;
+  }
+  if (action === 'edit-value') {
+    editingKeyName = name;
+    render();
+    return;
+  }
+  if (action === 'cancel-edit-value') {
+    editingKeyName = null;
+    render();
+    return;
+  }
+  if (action === 'save-value') {
+    const row = keysTableEl.querySelector(`tr[data-name="${CSS.escape(name)}"]`);
+    if (!row) return;
+    const value = row.querySelector('.apikey-edit-value').value.trim();
+    if (!value) { showToast('Значение не может быть пустым'); return; }
+    try {
+      const res = await fetch(`/api/ceo/api-keys/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Не удалось сохранить значение');
+      editingKeyName = null;
+      revealed.add(name);
+      showToast(`Значение «${name}» обновлено`);
+      await load({ silent: true });
+    } catch (err) {
+      showToast('Ошибка: ' + err.message);
     }
     return;
   }
@@ -161,21 +207,34 @@ addForm.addEventListener('submit', async (e) => {
   addErrorBox.hidden = true;
   const name = addNameInput.value.trim().toUpperCase();
   const label = addLabelInput.value.trim();
+  const value = addValueInput.value.trim();
   if (!name) return;
   const submitBtn = addForm.querySelector('button[type="submit"]');
   submitBtn.disabled = true;
   try {
-    const res = await fetch('/api/ceo/api-keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, label }),
-    });
+    // Value filled in → "Задать своё значение" (PUT, stored exactly as
+    // typed — for externally-issued data like Meta App ID/Secret, where a
+    // random generated value would be wrong). Value empty → the original
+    // "Добавить и выпустить" flow (POST, random value, rejects a name that
+    // already exists).
+    const res = value
+      ? await fetch(`/api/ceo/api-keys/${encodeURIComponent(name)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, value }),
+        })
+      : await fetch('/api/ceo/api-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, label }),
+        });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || 'Не удалось добавить ключ');
     addNameInput.value = '';
     addLabelInput.value = '';
+    addValueInput.value = '';
     revealed.add(name);
-    showToast(`Ключ «${name}» создан`);
+    showToast(`Ключ «${name}» сохранён`);
     await load({ silent: true });
   } catch (err) {
     addErrorBox.textContent = err.message;

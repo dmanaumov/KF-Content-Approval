@@ -51,9 +51,16 @@
           <label class="field-label" for="newKeyLabel">Описание (необязательно)</label>
           <input id="newKeyLabel" class="field-input" type="text" placeholder="Для чего этот ключ" autocomplete="off">
         </div>
-        <button type="submit" class="btn approve apikey-add-btn">Добавить и выпустить</button>
+        <div>
+          <label class="field-label" for="newKeyValue">Значение (необязательно)</label>
+          <input id="newKeyValue" class="field-input" type="text" placeholder="Оставьте пустым, чтобы сгенерировать случайное" autocomplete="off">
+        </div>
+        <button type="submit" class="btn approve apikey-add-btn">Добавить</button>
       </form>
       <div id="addKeyError" class="error-box" hidden></div>
+      <div class="cred-intro" style="margin-top:8px">
+        Пустое «Значение» — ключ выпускается со случайным набором символов, как раньше (для собственных секретов вроде токена интеграции). Заполненное «Значение» — сохраняется ровно как введено, без изменений: используйте для данных, которые вам ВЫДАЛИ извне (например ID/Secret Meta-приложения для обновления IG-токенов — см. подсказку у поля «Освежить» в настройках проекта).
+      </div>
     </section>
     <section class="stat-section">
       <h2>Боты</h2>
@@ -79,6 +86,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/api-keys.js?v=2"></script>
+<script src="/api-keys.js?v=3"></script>
 </body>
 </html>

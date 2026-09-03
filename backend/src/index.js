@@ -570,7 +570,8 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // created lazily on first read, so every project already has a
         // working link (and, once set, a logo) the first time this list
         // loads.
-        const { token, logoUrl, aiStatus, postsPerMonth, isArchived } = await projectSettings.getTokenAndLogo(boardId, o.id);
+        const { token, logoUrl, aiStatus, postsPerMonth, isArchived, paidThroughDate, configuredNetworks } =
+          await projectSettings.getTokenAndLogo(boardId, o.id);
         // buildTasks() is pure computation over the board/cards/blocks
         // already fetched above — re-filtering per project here costs no
         // extra Mattermost calls, just re-running an in-memory filter once
@@ -582,7 +583,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
         const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
         const posts = postsForMonth(allTasks);
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts };
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks };
       })
     );
     const who = analytics.identify(req);
@@ -941,6 +942,32 @@ app.post('/api/ceo/api-keys/:name/rotate', teamAuth.requireCeoAuth, async (req, 
   }
 });
 
+// PUT /api/ceo/api-keys/:name — body: { value, label? }. "Задать своё
+// значение" — sets an EXPLICIT, staff-typed value (creating the key if the
+// name is new, overwriting it if it already exists), unlike POST/rotate
+// above which only ever generate a random one. Added 2026-09-03 for
+// META_APP_ID/META_APP_SECRET (see apiKeys.js's BUILTIN_SEEDS comment) — a
+// Meta-issued app id/secret has to be the real value from Meta for
+// Developers, generating a random one would just be wrong. Works for any
+// key name, not just those two — a generically useful escape hatch for the
+// next externally-issued credential too.
+app.put('/api/ceo/api-keys/:name', teamAuth.requireCeoAuth, async (req, res) => {
+  const value = (req.body && req.body.value) || '';
+  let label = req.body && req.body.label;
+  try {
+    if (label === undefined) {
+      // Editing just the value (e.g. re-typing a rotated META_APP_SECRET) —
+      // keep whatever label the key already had instead of blanking it out.
+      const existing = (await apiKeys.listKeys()).find((k) => k.name === req.params.name);
+      label = existing ? existing.label : '';
+    }
+    const key = await apiKeys.upsertKey(req.params.name, { label, value });
+    res.json({ key });
+  } catch (err) {
+    res.status(400).json({ error: 'api_key_set_failed', message: err.message });
+  }
+});
+
 // DELETE /api/ceo/api-keys/:name — removes the key entirely. Whichever
 // requireAutomationAuth/requireBotAuth middleware relied on it falls back to
 // its env var (config.js), if any, on the very next request — see apiKeys.js.
@@ -1187,6 +1214,43 @@ app.post('/api/projects/:projectId/validate-instagram', staffAuth, async (req, r
     // 5xx, letting the frontend show a plain red hint without treating it as
     // a network failure that needs a retry/toast.
     res.json({ ok: false, error: err.code || 'validation_failed', message: err.message });
+  }
+});
+
+// POST /api/projects/:projectId/refresh-instagram-token — "Освежить" button
+// next to the expiry line under the IG accessToken/igUserId fields (see
+// igMetaHint in frontend/projects.js). Added 2026-09-03 at Дмитрий's
+// request. Deliberately operates on the ALREADY-SAVED credential (reads it
+// fresh from Postgres, not from whatever's currently typed in the popup's
+// form — that's what "Проверить" is for) and, on success, immediately
+// persists the new token via the SAME shallow-merge upsert the automation's
+// own refresh endpoint uses (projectSettings.upsertNetworkCredentials) —
+// same reasoning as "Регенерировать ссылку" elsewhere on this page: the
+// action takes effect right away, not gated behind a separate "Сохранить"
+// click. Returns the updated ig credentials object so the popup can update
+// its fields/hint in place without a full reload.
+app.post('/api/projects/:projectId/refresh-instagram-token', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const settings = await projectSettings.getSettings(boardId, req.params.projectId);
+    const current = (settings.socialCredentials && settings.socialCredentials.ig) || null;
+    const currentAccessToken = current && String(current.accessToken || '').trim();
+    if (!currentAccessToken) {
+      return res.status(400).json({
+        error: 'no_access_token',
+        message: 'У проекта ещё нет сохранённого Access Token для Instagram — сначала введите и сохраните его.',
+      });
+    }
+    const refreshed = await refreshInstagramAccessToken(currentAccessToken);
+    const credentials = await projectSettings.upsertNetworkCredentials(boardId, req.params.projectId, 'ig', {
+      accessToken: refreshed.accessToken,
+      expiresAt: refreshed.expiresAt,
+    });
+    res.json({ credentials });
+  } catch (err) {
+    console.error('[api] refresh-instagram-token failed:', err.message);
+    res.status(err.code === 'meta_app_not_configured' ? 503 : 502).json({ error: err.code || 'refresh_failed', message: err.message });
   }
 });
 
@@ -2253,6 +2317,61 @@ async function validateInstagramCredentials(accessToken, igUserId) {
     throw err;
   }
   return { username: data.username || null, accountType: data.account_type || null, igUserId: data.id || igUserId };
+}
+
+// Powers the "Освежить" button next to a project's IG token expiry in the
+// "Редактировать" popup (see POST /api/projects/:projectId/refresh-
+// instagram-token below) — added 2026-09-03 at Дмитрий's request. Trades a
+// still-valid Facebook Business-login token for a fresh long-lived (~60 day)
+// one via the standard fb_exchange_token grant. Needs the AGENCY'S OWN Meta
+// app id/secret (one pair for every project, NOT a per-client value) — see
+// config.metaAppId/metaAppSecret and apiKeys.js's META_APP_ID/META_APP_SECRET.
+async function refreshInstagramAccessToken(currentAccessToken) {
+  const appId = apiKeys.getValueSync('META_APP_ID') || config.metaAppId;
+  const appSecret = apiKeys.getValueSync('META_APP_SECRET') || config.metaAppSecret;
+  if (!appId || !appSecret) {
+    const err = new Error(
+      'META_APP_ID/META_APP_SECRET не заданы — добавьте их в разделе «Управление» (там же, где AUTOMATION_API_KEY), ' +
+        'прежде чем обновлять IG-токены. Взять их можно в Meta for Developers → ваше приложение → Настройки → Основные.'
+    );
+    err.code = 'meta_app_not_configured';
+    throw err;
+  }
+  const url =
+    `https://graph.facebook.com/${config.instagramGraphApiVersion}/oauth/access_token` +
+    `?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}` +
+    `&fb_exchange_token=${encodeURIComponent(currentAccessToken)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INSTAGRAM_VALIDATE_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (fetchErr) {
+    const err = new Error(
+      fetchErr.name === 'AbortError'
+        ? `Instagram Graph API не ответил за ${INSTAGRAM_VALIDATE_TIMEOUT_MS / 1000} сек.`
+        : `Не удалось обратиться к Instagram Graph API: ${fetchErr.message}`
+    );
+    err.code = 'instagram_unreachable';
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (parseErr) {
+    // fall through — treated as an error below since data stays null
+  }
+  if (!response.ok || !data || data.error || !data.access_token) {
+    const message = (data && data.error && data.error.message) || `Instagram Graph API вернул ${response.status}.`;
+    const err = new Error(message);
+    err.code = 'instagram_refresh_failed';
+    throw err;
+  }
+  const expiresInSec = Number(data.expires_in);
+  const expiresAt = Number.isFinite(expiresInSec) && expiresInSec > 0 ? new Date(Date.now() + expiresInSec * 1000).toISOString() : null;
+  return { accessToken: data.access_token, expiresAt };
 }
 
 async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {

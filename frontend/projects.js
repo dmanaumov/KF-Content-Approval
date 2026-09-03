@@ -169,18 +169,48 @@ function render(filterText) {
             : `Не укладываемся в KPI — ${kpi.planned}/${kpi.target} постов за месяц${kpi.late ? `, просрочено: ${kpi.late}` : ''}`
           : '';
         const kpiDot = kpi && !o.isArchived ? `<span class="proj-kpi-dot ${kpi.tier}" data-tip="${esc(kpiTip)}"></span>` : '';
+        // Красный "!" — оплата заканчивается меньше чем через 5 дней (или уже
+        // просрочена). Архивные проекты глушим, как и остальные значки —
+        // проект на паузе не публикует, следить за оплатой там незачем.
+        const paidStatus = !o.isArchived ? paidThroughStatus(o.paidThroughDate) : { tier: 'none', daysLeft: null };
+        const paidTip =
+          paidStatus.tier === 'bad'
+            ? paidStatus.daysLeft < 0
+              ? 'Оплата просрочена — автопостинг остановлен'
+              : paidStatus.daysLeft === 0
+              ? 'Оплата истекает сегодня'
+              : `Оплата истекает через ${paidStatus.daysLeft} ${plural(paidStatus.daysLeft, 'день', 'дня', 'дней')}`
+            : '';
+        const paidWarnBadge = paidStatus.tier === 'bad' ? `<span class="paid-warn-badge" data-tip="${esc(paidTip)}">!</span>` : '';
+        // Мини-значки соцсетей, для которых в проекте сохранены креды (по
+        // факту куда можем постить) — цвета и подписи как в самом попапе
+        // редактирования (см. .cred-networks в projects.html).
+        const netMeta = {
+          ig: { color: '#C13584', label: 'Instagram' },
+          tg: { color: '#229ED9', label: 'Telegram' },
+          vk: { color: '#0077FF', label: 'ВКонтакте' },
+          ok: { color: '#EE8208', label: 'Одноклассники' },
+          max: { color: '#7C3AED', label: 'MAX' },
+        };
+        const netChips = (o.configuredNetworks || [])
+          .filter((net) => netMeta[net])
+          .map((net) => `<span class="proj-net-chip" style="background:${netMeta[net].color}" data-tip="${esc(netMeta[net].label)}"></span>`)
+          .join('');
+        const netRow = netChips ? `<div class="proj-net-row">${netChips}</div>` : '';
         return `<div class="proj-card${aiClass}${archivedClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>
             <div class="proj-info">
               <div class="proj-name-row">
                 <div class="proj-name">${esc(o.label)}</div>
+                ${paidWarnBadge}
                 ${archivedBadge}
               </div>
               <div class="proj-row proj-link-row">
                 <span class="proj-row-label">Клиенту:</span>
                 <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
               </div>
+              ${netRow}
             </div>
             <div class="proj-actions-col">
               ${avatar}
@@ -555,6 +585,9 @@ const igPicker = document.getElementById('igPicker');
 const igValidateBtn = document.getElementById('igValidateBtn');
 const igValidateHint = document.getElementById('igValidateHint');
 const igMetaHint = document.getElementById('igMetaHint');
+const igMetaHintText = document.getElementById('igMetaHintText');
+const igRefreshBtn = document.getElementById('igRefreshBtn');
+const igRefreshHint = document.getElementById('igRefreshHint');
 const igManualToggle = document.getElementById('igManualToggle');
 const IG_KNOWN_KEYS = ['accessToken', 'igUserId', 'expiresAt', 'lastRefreshedAt'];
 let igManualMode = false;
@@ -563,23 +596,34 @@ function igTextarea() {
   return document.querySelector('[data-net-field="ig"]');
 }
 
+// Shows the expiry/last-refreshed line PLUS the "Освежить" button next to it
+// (see igRefreshBtn below) — visible whenever there's a saved accessToken to
+// refresh, not only once it already has an expiresAt: a token that's never
+// been through an exchange yet has no known expiry, but "Освежить" is
+// exactly how it gets one for the first time (same fb_exchange_token call
+// either way, see refreshInstagramAccessToken in backend/src/index.js).
 function updateIgMetaHint(parsed) {
-  if (!parsed || (!parsed.expiresAt && !parsed.lastRefreshedAt)) {
+  const hasToken = !!(parsed && parsed.accessToken);
+  if (!hasToken) {
     igMetaHint.hidden = true;
     igMetaHint.className = 'ig-meta-hint';
+    igRefreshHint.textContent = '';
+    igRefreshHint.className = 'ig-refresh-hint';
     return;
   }
   const parts = [];
+  let danger = false;
   if (parsed.expiresAt) {
     const ms = Date.parse(parsed.expiresAt);
     const expired = !Number.isNaN(ms) && ms < Date.now();
     parts.push(`${expired ? '⛔ истёк' : 'действует до'} ${esc(parsed.expiresAt)}`);
-    igMetaHint.className = expired ? 'ig-meta-hint bad' : 'ig-meta-hint';
+    danger = expired;
   } else {
-    igMetaHint.className = 'ig-meta-hint';
+    parts.push('дата истечения неизвестна');
   }
   if (parsed.lastRefreshedAt) parts.push(`обновлён ${esc(parsed.lastRefreshedAt)}`);
-  igMetaHint.textContent = parts.join(' · ');
+  igMetaHint.className = danger ? 'ig-meta-hint bad' : 'ig-meta-hint';
+  igMetaHintText.textContent = parts.join(' · ');
   igMetaHint.hidden = false;
 }
 
@@ -613,6 +657,7 @@ function setIgManualMode(on) {
 // silently hiding real saved data.
 function applyIgTextareaToPicker() {
   const raw = igTextarea().value.trim();
+  clearTimeout(igValidateHintTimer);
   igValidateHint.textContent = '';
   igValidateHint.className = 'ig-validate-hint';
   if (!raw) {
@@ -645,16 +690,59 @@ igManualToggle.addEventListener('click', () => {
   if (igManualMode) applyIgTextareaToPicker(); // re-derive picker state from whatever was hand-typed
   else setIgManualMode(true);
 });
+// Reads {accessToken, igUserId} from whichever editor is currently active —
+// the guided two fields, or (when igManualMode is on) the raw JSON textarea
+// — so "Проверить" works no matter which mode staff is looking at (see the
+// button's new placement in the always-visible header row, projects.html).
+function currentIgCredentials() {
+  if (!igManualMode) {
+    return {
+      accessToken: document.getElementById('editIgAccessToken').value.trim(),
+      igUserId: document.getElementById('editIgUserId').value.trim(),
+    };
+  }
+  try {
+    const parsed = JSON.parse(igTextarea().value.trim() || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        accessToken: String(parsed.accessToken || '').trim(),
+        igUserId: String(parsed.igUserId || '').trim(),
+      };
+    }
+  } catch (err) {
+    // fall through — treated the same as "both empty" below, gives a clear
+    // "заполните оба поля" message rather than a raw JSON.parse error.
+  }
+  return { accessToken: '', igUserId: '' };
+}
+
+// Auto-clears the ✅/❌ result ~30s after it's shown (Дмитрий's request,
+// 2026-09-03) — a stale check result shouldn't linger once staff has moved
+// on to something else in the popup. Timer is reset on every click so
+// rapid re-checks don't clear each other's result early.
+let igValidateHintTimer = null;
+function setIgValidateHint(text, cls) {
+  clearTimeout(igValidateHintTimer);
+  igValidateHint.textContent = text;
+  igValidateHint.className = cls ? `ig-validate-hint ${cls}` : 'ig-validate-hint';
+  if (text) {
+    igValidateHintTimer = setTimeout(() => {
+      igValidateHint.textContent = '';
+      igValidateHint.className = 'ig-validate-hint';
+    }, 30000);
+  }
+}
+
 igValidateBtn.addEventListener('click', async () => {
-  const accessToken = document.getElementById('editIgAccessToken').value.trim();
-  const igUserId = document.getElementById('editIgUserId').value.trim();
-  igValidateHint.className = 'ig-validate-hint';
+  const { accessToken, igUserId } = currentIgCredentials();
   if (!accessToken || !igUserId) {
-    igValidateHint.textContent = 'Укажите Access Token и IG User ID.';
-    igValidateHint.classList.add('bad');
+    setIgValidateHint(
+      igManualMode ? 'В JSON нужны оба поля: accessToken и igUserId.' : 'Укажите Access Token и IG User ID.',
+      'bad'
+    );
     return;
   }
-  igValidateHint.textContent = 'Проверяем…';
+  setIgValidateHint('Проверяем…');
   igValidateBtn.disabled = true;
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/validate-instagram`, {
@@ -664,17 +752,46 @@ igValidateBtn.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (data.ok) {
-      igValidateHint.textContent = `✅ Токен рабочий — @${data.username || '?'}${data.accountType ? ' (' + data.accountType + ')' : ''}`;
-      igValidateHint.classList.add('good');
+      setIgValidateHint(`✅ Токен рабочий — @${data.username || '?'}${data.accountType ? ' (' + data.accountType + ')' : ''}`, 'good');
     } else {
-      igValidateHint.textContent = `❌ ${data.message || 'не удалось проверить'}`;
-      igValidateHint.classList.add('bad');
+      setIgValidateHint(`❌ ${data.message || 'не удалось проверить'}`, 'bad');
     }
   } catch (err) {
-    igValidateHint.textContent = `❌ Не удалось проверить: ${err.message}`;
-    igValidateHint.classList.add('bad');
+    setIgValidateHint(`❌ Не удалось проверить: ${err.message}`, 'bad');
   } finally {
     igValidateBtn.disabled = false;
+  }
+});
+
+// "Освежить" — trades the ALREADY-SAVED IG access token for a fresh one via
+// the backend's fb_exchange_token call (POST /api/projects/:id/refresh-
+// instagram-token), added 2026-09-03 at Дмитрий's request. Operates on
+// what's saved in Postgres, not on unsaved edits in the two fields above —
+// same reasoning the backend route documents. The backend persists the new
+// token immediately (no separate "Сохранить" needed), so this just updates
+// the popup's own fields/hint from the response to match.
+igRefreshBtn.addEventListener('click', async () => {
+  igRefreshHint.className = 'ig-refresh-hint';
+  igRefreshHint.textContent = 'Обновляем токен…';
+  igRefreshBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/refresh-instagram-token`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Не удалось обновить токен');
+    const creds = data.credentials || {};
+    document.getElementById('editIgAccessToken').value = creds.accessToken || '';
+    if (creds.igUserId) document.getElementById('editIgUserId').value = creds.igUserId;
+    igTextarea().value = Object.keys(creds).length ? JSON.stringify(creds, null, 2) : '';
+    setIgManualMode(false);
+    updateIgMetaHint(creds);
+    igRefreshHint.className = 'ig-refresh-hint good';
+    igRefreshHint.textContent = '✅ Токен обновлён и сохранён.';
+    toast('IG-токен обновлён');
+  } catch (err) {
+    igRefreshHint.className = 'ig-refresh-hint bad';
+    igRefreshHint.textContent = `❌ ${err.message}`;
+  } finally {
+    igRefreshBtn.disabled = false;
   }
 });
 
@@ -684,26 +801,55 @@ igValidateBtn.addEventListener('click', async () => {
 // backend/src/index.js's isPaidThroughExpired/publishAutomationTask) — this
 // hint is the "предупреждение в интерфейсе" half of that, so staff sees it
 // coming before an automation run actually gets rejected. Added 2026-09-03.
-const PAID_THROUGH_WARN_DAYS = 7;
+//
+// paidThroughStatus() is shared between this popup hint and the project-list
+// red-badge (see render()) so the two thresholds can never drift apart.
+// Tiers: 'bad' = less than PAID_THROUGH_DANGER_DAYS left (this INCLUDES
+// already-expired — user asked for "меньше 5 дней" as one merged red state,
+// not a separate super-red state for expired), 'warn' = a softer heads-up
+// band between DANGER and HEADSUP days (my own addition, not explicitly
+// requested, consistent with the pre-existing amber-tier pattern elsewhere),
+// 'good' = plenty of runway, 'none' = no date set, 'invalid' = unparsable.
+const PAID_THROUGH_DANGER_DAYS = 5;
+const PAID_THROUGH_HEADSUP_DAYS = 14;
+function paidThroughStatus(dateStr) {
+  if (!dateStr) return { tier: 'none', daysLeft: null };
+  const dueMs = Date.parse(`${dateStr}T23:59:59+03:00`);
+  if (Number.isNaN(dueMs)) return { tier: 'invalid', daysLeft: null };
+  const daysLeft = Math.ceil((dueMs - Date.now()) / (24 * 60 * 60 * 1000));
+  let tier;
+  if (daysLeft < PAID_THROUGH_DANGER_DAYS) tier = 'bad';
+  else if (daysLeft <= PAID_THROUGH_HEADSUP_DAYS) tier = 'warn';
+  else tier = 'good';
+  return { tier, daysLeft };
+}
+
 function updatePaidThroughHint() {
   const hint = document.getElementById('paidThroughHint');
-  const value = document.getElementById('editPaidThroughDate').value;
+  const input = document.getElementById('editPaidThroughDate');
+  const value = input.value;
   if (!value) {
     hint.hidden = true;
+    input.classList.remove('field-input-danger');
     return;
   }
-  const dueMs = Date.parse(`${value}T23:59:59+03:00`);
-  const daysLeft = Number.isNaN(dueMs) ? null : Math.ceil((dueMs - Date.now()) / (24 * 60 * 60 * 1000));
+  const status = paidThroughStatus(value);
   hint.hidden = false;
-  if (daysLeft === null) {
+  input.classList.toggle('field-input-danger', status.tier === 'bad');
+  if (status.tier === 'invalid') {
     hint.className = 'paid-through-hint';
     hint.textContent = 'Некорректная дата.';
-  } else if (daysLeft < 0) {
+  } else if (status.tier === 'bad') {
     hint.className = 'paid-through-hint bad';
-    hint.textContent = 'Просрочено — автопостинг остановлен.';
-  } else if (daysLeft <= PAID_THROUGH_WARN_DAYS) {
+    hint.textContent =
+      status.daysLeft < 0
+        ? 'Просрочено — автопостинг остановлен.'
+        : status.daysLeft === 0
+        ? 'Истекает сегодня.'
+        : `Истекает через ${status.daysLeft} ${plural(status.daysLeft, 'день', 'дня', 'дней')}.`;
+  } else if (status.tier === 'warn') {
     hint.className = 'paid-through-hint warn';
-    hint.textContent = daysLeft === 0 ? 'Истекает сегодня.' : `Истекает через ${daysLeft} ${plural(daysLeft, 'день', 'дня', 'дней')}.`;
+    hint.textContent = `Истекает через ${status.daysLeft} ${plural(status.daysLeft, 'день', 'дня', 'дней')}.`;
   } else {
     hint.className = 'paid-through-hint good';
     hint.textContent = 'Оплачено, автопостинг активен.';
@@ -775,6 +921,7 @@ async function openEdit(projectId, label) {
   document.getElementById('editIgAccessToken').value = '';
   document.getElementById('editIgUserId').value = '';
   updateIgMetaHint(null);
+  clearTimeout(igValidateHintTimer);
   igValidateHint.textContent = '';
   igValidateHint.className = 'ig-validate-hint';
   setIgManualMode(false);

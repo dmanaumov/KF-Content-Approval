@@ -60,21 +60,45 @@ async function getToken(boardId, projectId) {
 // via getToken, once via getSettings) for every row. Also returns aiStatus —
 // whether the project is "AI" (see aiStatusOf() below), which the staff list
 // renders as a highlight + avatar (same treatment "кот Василий" already has).
+//
+// postsPerMonth (added 2026-09-03, fixing a real latent bug): index.js's
+// GET /api/projects has destructured `postsPerMonth` from this function's
+// result since the KPI-dot feature was built, but this SELECT never
+// actually fetched posts_per_month — so scheduleStatus/the KPI traffic-light
+// dot was silently always null for every project. Now actually selected.
+//
+// configuredNetworks (added 2026-09-03) — which of ig/tg/vk/ok/max have
+// non-empty social_credentials for this project, so the project list can
+// show "куда реально можем постить" as small network chips. Deliberately
+// only the KEY names, never the credential values themselves — same
+// never-bulk-expose-secrets posture as the automation API.
+//
+// paidThroughDate (added 2026-09-03) — "оплачено до", so the list can flag
+// a project whose paid period is about to run out (see isPaidThroughExpired
+// in index.js for the actual publish-blocking gate; this is just the
+// read used to warn staff in the list before that gate ever fires).
 async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
     `SELECT link_token, logo_url, is_ai_project, is_archived, strategy_prompt, planning_prompt,
-            post_prompt, image_prompt
+            post_prompt, image_prompt, posts_per_month, paid_through_date, social_credentials
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
   const row = rows[0] || {};
+  const credentials = row.social_credentials || {};
   return {
     token: row.link_token || '',
     logoUrl: row.logo_url || '',
     aiStatus: aiStatusOf(row),
     isArchived: !!row.is_archived,
+    postsPerMonth: row.posts_per_month || '',
+    paidThroughDate: row.paid_through_date || '',
+    configuredNetworks: KNOWN_NETWORKS.filter((net) => {
+      const c = credentials[net];
+      return c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length > 0;
+    }),
   };
 }
 

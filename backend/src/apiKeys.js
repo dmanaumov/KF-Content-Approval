@@ -35,6 +35,16 @@ const BUILTIN_SEEDS = [
   { name: 'AUTOMATION_API_KEY', label: 'SMM-автоматизация (публикация постов)', value: () => config.automationApiKey },
   { name: 'BOT_API_KEY', label: 'Telegram-бот «Кот Василий»', value: () => config.botApiKey },
   { name: 'GOOGLE_DOCS_API_KEY', label: 'Google Docs интеграция', value: () => config.googleDocsApiKey },
+  // NOT a machine secret we generate ourselves — an id/secret Meta issues
+  // for the agency's OWN app (Meta for Developers → app → Настройки →
+  // Основные), one pair for every project. Used only by the "Освежить" IG
+  // token button (see refreshInstagramAccessToken in index.js). Unlike the
+  // three above, staff normally TYPE these in via the "Управление" tab's
+  // "Задать своё значение" action (PUT /api/ceo/api-keys/:name) rather than
+  // "Добавить и выпустить" (which would generate a random value — useless
+  // here, this has to be the real value Meta gave them).
+  { name: 'META_APP_ID', label: 'Meta-приложение — обновление IG-токенов', value: () => config.metaAppId },
+  { name: 'META_APP_SECRET', label: 'Meta-приложение — обновление IG-токенов', value: () => config.metaAppSecret },
 ];
 
 async function ensureSeeded() {
