@@ -423,15 +423,6 @@ function calMarkerHtml(task) {
   return `<span class="cal-mark dot ${cls}" aria-hidden="true"></span>`;
 }
 
-// Short single-line-ish excerpt of "Ключевые слова/мысли" for the tiny
-// calendar day cells — collapses internal newlines/whitespace (the field is
-// usually multi-paragraph, "Ключевые слова: ...\n\nИдея поста: ...") down to
-// one run of text, then hard-truncates with an ellipsis.
-function shortExcerpt(text, max) {
-  const clean = text.replace(/\s+/g, ' ').trim();
-  return clean.length <= max ? clean : `${clean.slice(0, max).trimEnd()}…`;
-}
-
 function scrollToTask(id) {
   const el = document.getElementById(`task-${id}`);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -542,8 +533,12 @@ function renderCalendar() {
     const dayTasks = byDate.get(dateStr) || [];
     const posts = dayTasks
       .map((t) => {
+        // Полный текст, не обрывок — по просьбе пользователя ("основная
+        // мысль должна показываться целиком"). Ячейка дня тянется по
+        // высоте вместе с остальными в её строке грида (см. .cal-post-
+        // keywords в app.css — больше никакого line-clamp/усечения).
         const kw = (t.keywords || '').trim();
-        const kwHtml = kw ? `<span class="cal-post-keywords">${esc(shortExcerpt(kw, 42))}</span>` : '';
+        const kwHtml = kw ? `<span class="cal-post-keywords">${esc(kw)}</span>` : '';
         return `<button type="button" class="cal-post" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${esc(t.title)}</span>${kwHtml}</span></button>`;
       })
       .join('');
