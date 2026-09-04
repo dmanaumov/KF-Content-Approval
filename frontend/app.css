@@ -375,9 +375,20 @@ button{cursor:pointer}
    карточек (не приглушённый серый), а СЕРАЯ заливка на самой карточке
    даёт понять, что это "план", а не готовый пост; курсор подсказывает, что
    провалиться в неё нельзя (см. клик-обработчик calendarGrid в app.js —
-   вместо перехода просто показывает toast). Наведение — title-подсказка
-   с проектом/датой/статусом/темой/keywords целиком, см. renderCalendar().*/
+   вместо перехода показывает попап с деталями, см. .cal-post-popup ниже).
+   Наведение (десктоп) — та же информация title-подсказкой, см. renderCalendar().*/
 .cal-post-not-started{cursor:default;background:#EEF0EF;border-radius:6px;padding:2px 3px}
+
+/* Попап с полной информацией по "не начато"-карточке (клик, не hover —
+   удобно и на телефоне). fixed-позиционирование считается в JS
+   (showCalPostPopup), тут только внешний вид; цвета — общие токены темы,
+   поэтому тёмная тема подхватывается автоматически без отдельного блока. */
+.cal-post-popup{position:fixed;z-index:60;max-width:280px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(23,32,31,.18);padding:10px 12px;font-size:12.5px;line-height:1.45;color:var(--ink)}
+.cal-post-popup[hidden]{display:none}
+.cal-popup-row{margin:0 0 4px}
+.cal-popup-row:last-child{margin-bottom:0}
+.cal-popup-label{font-weight:700;color:var(--muted)}
+.cal-popup-kw{white-space:pre-wrap}
 
 @media(min-width:700px){.page{padding-top:28px}.card{border-radius:28px}.media{margin-left:16px;margin-right:16px}}
 @media(max-width:430px){

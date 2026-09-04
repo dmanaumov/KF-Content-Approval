@@ -582,8 +582,65 @@ function showCalendarView(on) {
   document.getElementById('listHead').hidden = on;
   document.getElementById('listView').hidden = on;
   document.getElementById('calendarView').hidden = !on;
+  hideCalPostPopup();
   if (on) renderCalendar();
 }
+
+// Попап с полной информацией по "не начато"-карточке в календаре клиента —
+// такие карточки не ведут в список (см. clientFacingTasks), а короткий
+// hover-title неудобен на телефоне, поэтому по клику показываем компактную
+// карточку рядом с постом: проект, дата, статус, тема, ключевые слова
+// целиком (не обрезанные 500 символами, в отличие от текста в самой ячейке).
+function hideCalPostPopup() {
+  const pop = document.getElementById('calPostPopup');
+  if (pop) pop.hidden = true;
+}
+
+function showCalPostPopup(anchorEl, task) {
+  const pop = document.getElementById('calPostPopup');
+  const kw = (task.keywords || '').trim();
+  const rows = [
+    task.projectLabel ? `<div class="cal-popup-row"><span class="cal-popup-label">Проект:</span> ${esc(task.projectLabel)}</div>` : '',
+    `<div class="cal-popup-row"><span class="cal-popup-label">Дата:</span> ${esc(formatDatePill(task.publishDate))}</div>`,
+    `<div class="cal-popup-row"><span class="cal-popup-label">Статус:</span> Не начато</div>`,
+    `<div class="cal-popup-row"><span class="cal-popup-label">Тема:</span> ${esc(task.title)}</div>`,
+    kw ? `<div class="cal-popup-row cal-popup-kw"><span class="cal-popup-label">Ключевые слова:</span><br>${esc(kw)}</div>` : '',
+  ].filter(Boolean).join('');
+  pop.innerHTML = rows;
+  pop.hidden = false;
+
+  // Позиционирование — fixed относительно вьюпорта (карточка внутри
+  // скроллящейся сетки), клампится в границы экрана; меряем реальные
+  // размеры попапа ПОСЛЕ того как контент уже вставлен и он видим.
+  const margin = 8;
+  const r = anchorEl.getBoundingClientRect();
+  const pw = pop.offsetWidth;
+  const ph = pop.offsetHeight;
+  let left = r.left;
+  let top = r.bottom + margin;
+  if (left + pw > window.innerWidth - margin) left = window.innerWidth - pw - margin;
+  if (left < margin) left = margin;
+  if (top + ph > window.innerHeight - margin) top = r.top - ph - margin;
+  if (top < margin) top = margin;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
+// Клик в любом другом месте страницы — закрыть попап. Клик по ДРУГОЙ
+// "не начато"-карточке не должен здесь закрывать попап — её откроет
+// обработчик calendarGrid (см. ниже), а этот document-слушатель просто
+// не должен успеть его тут же спрятать.
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('calPostPopup');
+  if (!pop || pop.hidden) return;
+  if (pop.contains(e.target)) return;
+  if (e.target.closest('.cal-post-not-started')) return;
+  hideCalPostPopup();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hideCalPostPopup();
+});
+window.addEventListener('resize', hideCalPostPopup);
 
 // Убирает/добавляет флаг календаря в URL, сохраняя остальные query-параметры
 // как есть (?project=, ?color= и т.п. — актуально для /p/{boardId}-ссылок).
@@ -1244,11 +1301,13 @@ document.getElementById('calBack').addEventListener('click', closeCalendar);
 document.getElementById('calPrev').addEventListener('click', () => {
   calMonth--;
   if (calMonth < 0) { calMonth = 11; calYear--; }
+  hideCalPostPopup();
   renderCalendar();
 });
 document.getElementById('calNext').addEventListener('click', () => {
   calMonth++;
   if (calMonth > 11) { calMonth = 0; calYear++; }
+  hideCalPostPopup();
   renderCalendar();
 });
 document.getElementById('calendarGrid').addEventListener('click', (e) => {
@@ -1257,11 +1316,13 @@ document.getElementById('calendarGrid').addEventListener('click', (e) => {
   const id = btn.dataset.taskId;
   const task = state.tasks.find((t) => t.id === id);
   // "Не начато" карточки не существуют в списке (см. clientFacingTasks) —
-  // переход туда невозможен, просто поясняем тапом вместо тишины.
+  // перехода туда нет, вместо этого по клику показываем попап с полной
+  // информацией по посту (см. showCalPostPopup выше).
   if (task && task.status === 'not_started') {
-    toast('Работа над постом ещё не начата');
+    showCalPostPopup(btn, task);
     return;
   }
+  hideCalPostPopup();
   closeCalendar();
   if (task) {
     activeWeek = task.weekStart;
