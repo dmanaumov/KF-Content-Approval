@@ -614,7 +614,7 @@ async function quickCreatePost(dateStr) {
   try {
     const data = await teamApi('/tasks', {
       method: 'POST',
-      body: { title: 'Новый пост', projectId, publishDate: dateStr, status: DEFAULT_CREATE_STATUS_LABEL },
+      body: { title: 'Новый пост', projectId, publishDate: dateStr, status: resolveStatusLabel(QUICK_CREATE_STATUS_LABEL) },
     });
     applyUpdatedTask(data.task);
     renderProjectFilterOptions();
@@ -742,6 +742,28 @@ function closeTaskModal() {
 // борде; если нет (переименовали/убрали) — просто первая опция в списке,
 // форма всё равно рабочая, просто без "умного" дефолта.
 const DEFAULT_CREATE_STATUS_LABEL = 'ЗАПЛАНИРОВАНО';
+
+// Быстрое создание кликом по "+" в ячейке календаря (см. quickCreatePost) —
+// карточка создаётся МГНОВЕННО, без формы, поэтому статус должен быть
+// заведомо существующим на КАЖДОМ борде, а не специфичным для конкретного
+// проекта названием вроде "ЗАПЛАНИРОВАНО" (которое на части бордов зовётся
+// иначе, например "Сдали/Запланировано" — именно так и падал POST /tasks
+// с ошибкой "Статус не найден"). "Не начато" — тот же статус, что бэкенд
+// использует для показа карточек в клиентском календаре без старта работы
+// (см. config.notStartedLabel), обязан существовать на борде для этой
+// фичи — и по смыслу отлично подходит для только что созданной пустой
+// карточки. resolveStatusLabel ниже всё равно подстрахован fallback'ом.
+const QUICK_CREATE_STATUS_LABEL = 'Не начато';
+
+// Сопоставляет желаемое название статуса с реальной опцией на борде
+// (регистр/пробелы не важны — см. norm) и подстраховывается на случай,
+// если такой опции вообще нет (переименовали/убрали на конкретном борде):
+// тогда просто берём первую доступную опцию, лишь бы запрос не упал.
+function resolveStatusLabel(preferredLabel) {
+  const match = statusOptions.find((o) => norm(o.label) === norm(preferredLabel));
+  if (match) return match.label;
+  return statusOptions.length ? statusOptions[0].label : preferredLabel;
+}
 
 function populateNetworkSelect() {
   cfNetwork.innerHTML = '<option value="">Не выбрана</option>' +
