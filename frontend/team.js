@@ -557,23 +557,42 @@ teamCalNext.addEventListener('click', () => {
   renderTeamCalendarGrid();
 });
 
+// Если среди видимых этому участнику задач (currentTasks — тот же источник,
+// что и у renderProjectFilterOptions) ровно ОДИН проект — однозначно ясно,
+// куда класть быстро созданную карточку, спрашивать не нужно. Если проектов
+// 0 или 2+ — не угадываем, см. quickCreatePost ниже.
+function soleProjectId() {
+  const seen = new Set();
+  for (const t of currentTasks) { if (t.projectId) seen.add(t.projectId); }
+  return seen.size === 1 ? [...seen][0] : null;
+}
+
 // Быстрое создание поста с пустой ячейки: первый клик по пустому месту дня
 // показывает акцентную кнопку "+" (в этой самой ячейке), второй клик — уже
 // по самой кнопке — создаёт карточку "Новый пост" на эту дату и сразу
 // открывает её модалку для редактирования (без перехода куда-либо ещё).
-// Требует выбранного проекта в фильтре сверху — иначе неясно, к какому
-// проекту привязывать карточку (список команды часто ведёт несколько
-// проектов сразу), см. teamProjectFilter.
+// Проект берётся из фильтра сверху, если он выбран; иначе — если у этого
+// участника видна работа только по ОДНОМУ проекту, берём его автоматически
+// (частый случай — фильтр в принципе скрыт, когда проектов меньше двух, см.
+// renderProjectFilterOptions). Если проект неоднозначен (несколько проектов
+// и фильтр не выбран, либо вообще нет ни одной задачи, откуда угадать) —
+// РАНЬШЕ здесь просто отказывали созданием toast'ом, из-за чего клик по "+"
+// выглядел как "ничего не произошло" всякий раз, когда участник видит
+// задачи только одного проекта БЕЗ фильтра (тот скрыт при <2 проектах) —
+// теперь вместо отказа открываем полную форму "Запланировать публикацию"
+// (см. openCreateModal), предзаполненную датой и заголовком — так клик по
+// "+" гарантированно к чему-то приводит.
 async function quickCreatePost(dateStr) {
   teamCalendarGrid.querySelectorAll('.cal-day-add-btn').forEach((b) => b.remove());
-  if (!projectFilterId) {
-    toast('Сначала выберите проект в фильтре сверху');
+  const projectId = projectFilterId || soleProjectId();
+  if (!projectId) {
+    openCreateModal({ date: dateStr, title: 'Новый пост' });
     return;
   }
   try {
     const data = await teamApi('/tasks', {
       method: 'POST',
-      body: { title: 'Новый пост', projectId: projectFilterId, publishDate: dateStr, status: DEFAULT_CREATE_STATUS_LABEL },
+      body: { title: 'Новый пост', projectId, publishDate: dateStr, status: DEFAULT_CREATE_STATUS_LABEL },
     });
     applyUpdatedTask(data.task);
     renderProjectFilterOptions();
@@ -741,11 +760,16 @@ function todayIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-function openCreateModal() {
+// prefill — опционально {date, title}: используется при переходе сюда из
+// quickCreatePost (клик "+" в пустой ячейке календаря, когда проект
+// неоднозначен) — дата и заголовок уже известны, остаётся только выбрать
+// проект и подтвердить, а не заполнять форму с нуля.
+function openCreateModal(prefill = {}) {
   createForm.reset();
   createError.hidden = true;
   cfDate.min = todayIsoDate();
-  cfDate.value = '';
+  cfDate.value = prefill.date || '';
+  if (prefill.title) cfTitle.value = prefill.title;
   populateNetworkSelect();
   populateStatusSelect();
   populateProjectSelect(); // async — fine, form is usable the moment it resolves
@@ -1763,7 +1787,10 @@ teamList.addEventListener('click', (e) => {
 document.querySelector('#taskModal .tm-backdrop').addEventListener('click', closeTaskModal);
 document.getElementById('tmClose').addEventListener('click', closeTaskModal);
 
-fabCreate.addEventListener('click', openCreateModal);
+// () => openCreateModal(), не openCreateModal напрямую — иначе addEventListener
+// передал бы сюда сам объект клика как prefill (openCreateModal теперь его
+// принимает, см. выше).
+fabCreate.addEventListener('click', () => openCreateModal());
 document.querySelector('#createModal .tm-backdrop').addEventListener('click', closeCreateModal);
 document.getElementById('createClose').addEventListener('click', closeCreateModal);
 createForm.addEventListener('submit', submitCreateForm);

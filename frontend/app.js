@@ -583,7 +583,31 @@ function showCalendarView(on) {
   document.getElementById('listView').hidden = on;
   document.getElementById('calendarView').hidden = !on;
   hideCalPostPopup();
+  updateCalendarToggleIcon(on);
   if (on) renderCalendar();
+}
+
+// Иконка в шапке отражает вид, в который попадёшь по клику (не текущий) —
+// в ленте показываем 🗓️ "открыть календарь", в календаре — 📰 "вернуться
+// в ленту". Сам обработчик клика (см. calendarToggleClick ниже) сам решает,
+// какой из двух вызвать, ориентируясь на текущее состояние.
+function updateCalendarToggleIcon(calendarOpen) {
+  const btn = document.getElementById('calendarToggle');
+  const icon = btn.querySelector('span');
+  if (calendarOpen) {
+    icon.textContent = '📰';
+    btn.title = 'Лента публикаций';
+    btn.setAttribute('aria-label', 'Лента публикаций');
+  } else {
+    icon.textContent = '🗓️';
+    btn.title = 'Календарь публикаций';
+    btn.setAttribute('aria-label', 'Календарь публикаций');
+  }
+}
+
+function calendarToggleClick() {
+  const calendarOpen = !document.getElementById('calendarView').hidden;
+  if (calendarOpen) closeCalendar(); else openCalendar();
 }
 
 // Попап с полной информацией по "не начато"-карточке в календаре клиента —
@@ -1296,7 +1320,7 @@ document.getElementById('attention').addEventListener('click', (e) => {
   focusTask(btn.dataset.scroll);
 });
 
-document.getElementById('calendarToggle').addEventListener('click', openCalendar);
+document.getElementById('calendarToggle').addEventListener('click', calendarToggleClick);
 document.getElementById('calBack').addEventListener('click', closeCalendar);
 document.getElementById('calPrev').addEventListener('click', () => {
   calMonth--;
