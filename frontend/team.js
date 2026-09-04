@@ -510,10 +510,27 @@ function renderTeamCalendarGrid() {
   teamCalendarGrid.innerHTML = cells.join('');
 }
 
+// Иконка в шапке отражает вид, в который попадёшь по клику (не текущий) —
+// на доске задач показываем 🗓️ "открыть календарь", в календаре — 📋
+// "вернуться на доску задач".
+function updateTeamCalendarToggleIcon(calendarOpen) {
+  const icon = teamCalendarToggle.querySelector('span');
+  if (calendarOpen) {
+    icon.textContent = '📋';
+    teamCalendarToggle.title = 'Доска задач';
+    teamCalendarToggle.setAttribute('aria-label', 'Доска задач');
+  } else {
+    icon.textContent = '🗓️';
+    teamCalendarToggle.title = 'Календарь публикаций';
+    teamCalendarToggle.setAttribute('aria-label', 'Календарь публикаций');
+  }
+}
+
 function openTeamCalendarView() {
   teamListView.hidden = true;
   fabCreate.hidden = true;
   teamCalendarView.hidden = false;
+  updateTeamCalendarToggleIcon(true);
   renderTeamCalendarGrid();
 }
 
@@ -521,6 +538,11 @@ function closeTeamCalendarView() {
   teamListView.hidden = false;
   fabCreate.hidden = false;
   teamCalendarView.hidden = true;
+  updateTeamCalendarToggleIcon(false);
+}
+
+function teamCalendarToggleClick() {
+  if (teamCalendarView.hidden) openTeamCalendarView(); else closeTeamCalendarView();
 }
 
 async function moveTaskToDate(taskId, dateStr) {
@@ -544,7 +566,7 @@ async function moveTaskToDate(taskId, dateStr) {
   }
 }
 
-teamCalendarToggle.addEventListener('click', openTeamCalendarView);
+teamCalendarToggle.addEventListener('click', teamCalendarToggleClick);
 teamCalBack.addEventListener('click', closeTeamCalendarView);
 teamCalPrev.addEventListener('click', () => {
   tcalMonth--;
