@@ -58,6 +58,13 @@ let boardId = null; // only needed to build /api/files/:boardId/:fileId src urls
 let currentUser = null;
 let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
 const FILTERS_KEY = 'kf.team.filters.v1';
+// Фильтр по проекту — влияет и на список, и на календарь-обзор (в отличие
+// от статус-чипсов, которые применяются только к списку). Храним ID опции
+// проекта (не label — id стабилен, если проект переименуют), персистится
+// в localStorage тем же паттерном, что и FILTERS_KEY.
+let projectFilterId = '';
+const PROJECT_FILTER_KEY = 'kf.team.projectFilter.v1';
+try { projectFilterId = localStorage.getItem(PROJECT_FILTER_KEY) || ''; } catch (e) {}
 
 // --- Модалка карточки: состояние открытой карточки ---
 let modalTaskId = null;
@@ -177,6 +184,8 @@ const teamCalPrev = document.getElementById('teamCalPrev');
 const teamCalNext = document.getElementById('teamCalNext');
 const teamCalTitle = document.getElementById('teamCalTitle');
 const teamCalendarGrid = document.getElementById('teamCalendarGrid');
+const teamProjectFilterRow = document.getElementById('teamProjectFilterRow');
+const teamProjectFilter = document.getElementById('teamProjectFilter');
 
 function showLogin() {
   loginApp.hidden = false;
@@ -333,12 +342,45 @@ function renderChips() {
     .join('');
 }
 
+// Фильтр по проекту (см. projectFilterId выше) — опции строятся из того,
+// что реально есть в currentTasks (те же проекты, что видит этот участник
+// команды), а не из полного справочника GET /api/team/projects — не нужен
+// лишний запрос, и не будет пустых опций "проект без единой моей задачи".
+function renderProjectFilterOptions() {
+  const seen = new Map(); // id -> label
+  currentTasks.forEach((t) => {
+    if (t.projectId && !seen.has(t.projectId)) seen.set(t.projectId, t.projectLabel || t.projectId);
+  });
+  if (seen.size < 2) {
+    teamProjectFilterRow.hidden = true;
+    // Один проект (или ни одного) — фильтровать нечего, сбрасываем, чтобы
+    // не залипнуть на пустом списке, если раньше был выбран проект, а
+    // теперь у пользователя остались задачи только по одному другому.
+    if (seen.size < 2 && projectFilterId && ![...seen.keys()].includes(projectFilterId)) {
+      projectFilterId = '';
+      try { localStorage.setItem(PROJECT_FILTER_KEY, ''); } catch (e) {}
+    }
+    return;
+  }
+  teamProjectFilterRow.hidden = false;
+  const options = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
+  if (projectFilterId && !seen.has(projectFilterId)) projectFilterId = ''; // выбранного проекта больше нет среди задач
+  teamProjectFilter.innerHTML =
+    '<option value="">Все проекты</option>' +
+    options.map(([id, label]) => `<option value="${esc(id)}"${id === projectFilterId ? ' selected' : ''}>${esc(label)}</option>`).join('');
+}
+
+function projectFiltered(tasks) {
+  return projectFilterId ? tasks.filter((t) => t.projectId === projectFilterId) : tasks;
+}
+
 function renderTasks() {
+  const byProject = projectFiltered(currentTasks);
   const visible = activeStatuses
-    ? currentTasks.filter((t) => activeStatuses.has(norm(t.statusLabel)))
-    : currentTasks;
+    ? byProject.filter((t) => activeStatuses.has(norm(t.statusLabel)))
+    : byProject;
   if (!visible.length) {
-    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами.' : 'На вас пока нет ни одной задачи.';
+    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами/проектом.' : 'На вас пока нет ни одной задачи.';
     teamEmpty.hidden = false;
     teamList.innerHTML = '';
     return;
@@ -365,7 +407,9 @@ async function loadTasks() {
     if (data.boardId) boardId = data.boardId;
     currentTasks = (data.tasks || []).slice().sort(byDeadline);
     renderChips();
+    renderProjectFilterOptions();
     renderTasks();
+    if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
     if (modalTaskId) renderModal(); // держим открытую карточку в актуальном состоянии после фонового обновления списка
   } catch (err) {
     teamLoading.hidden = true;
@@ -417,7 +461,7 @@ function renderTeamCalendarGrid() {
   teamCalTitle.textContent = `${MONTHS_RU_FULL[tcalMonth]} ${tcalYear}`;
 
   const byDate = new Map();
-  for (const t of currentTasks) {
+  for (const t of projectFiltered(currentTasks)) {
     if (!t.publishDate) continue;
     if (!byDate.has(t.publishDate)) byDate.set(t.publishDate, []);
     byDate.get(t.publishDate).push(t);
@@ -447,7 +491,17 @@ function renderTeamCalendarGrid() {
           ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
           : '';
         const title = stripAiTag(bare);
-        return `<button type="button" class="cal-post" draggable="true" data-task-id="${esc(t.id)}">${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
+        // Всплывающая подсказка (нативный title, без доп. вёрстки) — карточка
+        // в ячейке слишком мелкая, чтобы уместить всё сразу, а на клик уже
+        // занят открытием модалки — поэтому вся сводка на наведение.
+        const tipLines = [
+          t.projectLabel || '',
+          t.publishDate ? t.publishDate.split('-').reverse().join('.') : '',
+          t.statusLabel || '',
+          title,
+          (t.keywords || '').trim(),
+        ].filter(Boolean);
+        return `<button type="button" class="cal-post" draggable="true" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
       })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
@@ -503,14 +557,68 @@ teamCalNext.addEventListener('click', () => {
   renderTeamCalendarGrid();
 });
 
+// Быстрое создание поста с пустой ячейки: первый клик по пустому месту дня
+// показывает акцентную кнопку "+" (в этой самой ячейке), второй клик — уже
+// по самой кнопке — создаёт карточку "Новый пост" на эту дату и сразу
+// открывает её модалку для редактирования (без перехода куда-либо ещё).
+// Требует выбранного проекта в фильтре сверху — иначе неясно, к какому
+// проекту привязывать карточку (список команды часто ведёт несколько
+// проектов сразу), см. teamProjectFilter.
+async function quickCreatePost(dateStr) {
+  teamCalendarGrid.querySelectorAll('.cal-day-add-btn').forEach((b) => b.remove());
+  if (!projectFilterId) {
+    toast('Сначала выберите проект в фильтре сверху');
+    return;
+  }
+  try {
+    const data = await teamApi('/tasks', {
+      method: 'POST',
+      body: { title: 'Новый пост', projectId: projectFilterId, publishDate: dateStr, status: DEFAULT_CREATE_STATUS_LABEL },
+    });
+    applyUpdatedTask(data.task);
+    renderProjectFilterOptions();
+    if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
+    openTaskModal(data.task.id);
+  } catch (err) {
+    toast('Не удалось создать пост: ' + err.message);
+  }
+}
+
 // Клик по карточке в календаре — открыть её же модалку (как в списке), но
 // не сразу после drag-жеста (см. calDragActive: браузер шлёт click следом
-// за drop на том же элементе).
+// за drop на том же элементе). Клик по ПУСТОМУ месту ячейки дня — см.
+// quickCreatePost выше.
 teamCalendarGrid.addEventListener('click', (e) => {
   if (calDragActive) return;
-  const btn = e.target.closest('.cal-post');
-  if (!btn) return;
-  openTaskModal(btn.dataset.taskId);
+  const addBtn = e.target.closest('.cal-day-add-btn');
+  if (addBtn) {
+    quickCreatePost(addBtn.closest('.cal-day').dataset.date);
+    return;
+  }
+  const post = e.target.closest('.cal-post');
+  if (post) {
+    openTaskModal(post.dataset.taskId);
+    return;
+  }
+  const day = e.target.closest('.cal-day');
+  if (!day) return;
+  const already = day.querySelector('.cal-day-add-btn');
+  teamCalendarGrid.querySelectorAll('.cal-day-add-btn').forEach((b) => b.remove());
+  if (already) return; // повторный клик по той же ячейке — просто убрать "+"
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'cal-day-add-btn';
+  btn.setAttribute('aria-label', 'Добавить пост на этот день');
+  btn.textContent = '+';
+  day.appendChild(btn);
+});
+
+// Клик мимо календаря вообще — убрать зависшую кнопку "+", если её не
+// использовали.
+document.addEventListener('click', (e) => {
+  if (teamCalendarGrid && !teamCalendarGrid.contains(e.target)) {
+    teamCalendarGrid.querySelectorAll('.cal-day-add-btn').forEach((b) => b.remove());
+  }
 });
 
 // --- Drag-and-drop переноса даты: HTML5 native DnD, делегировано на грид
@@ -1624,6 +1732,13 @@ teamFilters.addEventListener('click', (e) => {
   btn.classList.toggle('active');
   saveFilters();
   renderTasks();
+});
+
+teamProjectFilter.addEventListener('change', () => {
+  projectFilterId = teamProjectFilter.value;
+  try { localStorage.setItem(PROJECT_FILTER_KEY, projectFilterId); } catch (e) {}
+  renderTasks();
+  if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
 });
 
 teamList.addEventListener('click', (e) => {

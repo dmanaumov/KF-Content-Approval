@@ -12,6 +12,10 @@
 /* Фильтр-чипы по статусам: все включены по умолчанию; статусы, где нужны
    действия ответственного (В ПРОЦЕССЕ, КОРРЕКТИРОВКА) — тёплым цветом,
    остальные (НА СОГЛАСОВАНИИ, СДАЛИ, ЗАПЛАНИРОВАНО) — серым. */
+/* Фильтр по проекту — над списком/календарём, видим и там, и там (см.
+   #teamProjectFilterRow в team.html, вне #teamListView/#teamCalendarView). */
+.team-project-filter{padding:4px 12px 10px}
+.team-project-filter select{max-width:280px}
 .team-filters{display:flex;flex-wrap:wrap;gap:8px;padding:4px 12px 12px}
 .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:800;color:var(--muted);cursor:pointer;letter-spacing:.01em}
 .chip.need.active{background:#FFF1EF;border-color:#F0C4BF;color:#B4483F}

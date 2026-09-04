@@ -554,7 +554,17 @@ function renderCalendar() {
         const kwHtml = kw ? `<span class="cal-post-keywords">${esc(kw)}</span>` : '';
         const notStarted = t.status === 'not_started';
         const cls = `cal-post${notStarted ? ' cal-post-not-started' : ''}`;
-        return `<button type="button" class="${cls}" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${esc(t.title)}</span>${kwHtml}</span></button>`;
+        // Подсказка при наведении — только для "не начато": в ячейке сам
+        // текст уже виден (title+первые 500 символов keywords), а вот у
+        // этих карточек нет перехода по клику (см. clientFacingTasks/клик-
+        // обработчик calendarGrid — просто toast), поэтому вся сводка на
+        // hover: проект, дата, статус, тема, ключевые слова целиком.
+        const notStartedTip = notStarted
+          ? ` title="${esc(
+              [t.projectLabel || '', formatDatePill(t.publishDate), 'Не начато', t.title, kwFull].filter(Boolean).join('\n')
+            )}"`
+          : '';
+        return `<button type="button" class="${cls}" data-task-id="${esc(t.id)}"${notStartedTip}>${calMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${esc(t.title)}</span>${kwHtml}</span></button>`;
       })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
@@ -563,18 +573,65 @@ function renderCalendar() {
   document.getElementById('calendarGrid').innerHTML = cells.join('');
 }
 
+// Чистое переключение вида, без истории/URL — используется и открытием по
+// кнопке (openCalendar ниже), и синхронизацией с адресной строкой при её
+// изменении (см. applyCalendarViewFromLocation/popstate ниже), и авто-
+// открытием по "?calend"-ссылке при первой загрузке страницы (там URL уже
+// правильный, пушить в историю ещё раз не нужно).
+function showCalendarView(on) {
+  document.getElementById('listHead').hidden = on;
+  document.getElementById('listView').hidden = on;
+  document.getElementById('calendarView').hidden = !on;
+  if (on) renderCalendar();
+}
+
+// Убирает/добавляет флаг календаря в URL, сохраняя остальные query-параметры
+// как есть (?project=, ?color= и т.п. — актуально для /p/{boardId}-ссылок).
+function withCalendarFlag(on) {
+  const url = new URL(location.href);
+  [...url.searchParams.keys()]
+    .filter((k) => k.toLowerCase().startsWith('calend'))
+    .forEach((k) => url.searchParams.delete(k));
+  if (on) url.searchParams.set('calendar', '1');
+  return url;
+}
+
+// Нажатие 🗓️ — переходим на адрес именно с ?calendar=1 (pushState, новая
+// запись в истории), чтобы ЭТОТ адрес из адресной строки можно было
+// скопировать и отправить клиенту как прямую ссылку на календарь (см.
+// запрос пользователя — раньше URL не менялся вообще). Новая запись в
+// истории даёт открытию "бесплатную" системную кнопку "назад" — она тоже
+// закрывает календарь, см. popstate ниже.
 function openCalendar() {
-  document.getElementById('listHead').hidden = true;
-  document.getElementById('listView').hidden = true;
-  document.getElementById('calendarView').hidden = false;
-  renderCalendar();
+  history.pushState({ kfCalendar: true }, '', withCalendarFlag(true).toString());
+  showCalendarView(true);
 }
 
 function closeCalendar() {
-  document.getElementById('listHead').hidden = false;
-  document.getElementById('listView').hidden = false;
-  document.getElementById('calendarView').hidden = true;
+  // Если календарь был открыт именно нашим pushState (обычный путь — кнопка
+  // 🗓️ или клик по карточке в сетке) — используем history.back(), а не
+  // ещё один pushState, чтобы не плодить бесполезные записи в истории;
+  // popstate ниже сам приведёт вид и URL в соответствие. Если календарь
+  // сейчас открыт без нашей записи в истории (например, страница
+  // загрузилась сразу с ?calend в адресе — см. loadTasks) — откатывать
+  // назад нечего, просто заменяем текущую запись без флага.
+  if (history.state && history.state.kfCalendar) {
+    history.back();
+  } else {
+    history.replaceState({}, '', withCalendarFlag(false).toString());
+    showCalendarView(false);
+  }
 }
+
+// Синхронизирует вид с тем, что реально написано в адресной строке —
+// вызывается и при popstate (кнопка "назад"/"вперёд" браузера), и не
+// требует отдельного вызова при обычной загрузке страницы (см. loadTasks).
+function applyCalendarViewFromLocation() {
+  const p = new URLSearchParams(location.search);
+  const wants = [...p.keys()].some((k) => k.toLowerCase().startsWith('calend'));
+  showCalendarView(wants);
+}
+window.addEventListener('popstate', applyCalendarViewFromLocation);
 
 function render() {
   const tasks = clientFacingTasks();
@@ -651,8 +708,10 @@ async function loadTasks() {
     render();
     // Auto-open the calendar for a "?calendar=1"-flagged link — done after
     // the normal render() above (not instead of it) so the list is already
-    // built and ready underneath the moment someone taps "Назад".
-    if (wantsCalendarView) openCalendar();
+    // built and ready underneath the moment someone taps "Назад". Плоское
+    // showCalendarView (не openCalendar) — URL уже правильный при заходе по
+    // такой ссылке, лишняя запись в истории тут не нужна.
+    if (wantsCalendarView) showCalendarView(true);
   } catch (err) {
     document.getElementById('stack').innerHTML = `<div class="error-box">Не удалось загрузить задачи: ${esc(err.message)}</div>`;
   } finally {

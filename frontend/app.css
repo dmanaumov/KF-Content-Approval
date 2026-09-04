@@ -329,7 +329,20 @@ button{cursor:pointer}
 .cal-hint{font-size:10.5px;color:var(--muted);margin:-6px 0 10px;font-style:italic}
 .cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:6px;font-size:10.5px;font-weight:800;color:var(--muted);text-align:center}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
-.cal-day{background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 3px 5px;min-height:50px;display:flex;flex-direction:column;gap:3px}
+.cal-day{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 3px 5px;min-height:50px;display:flex;flex-direction:column;gap:3px}
+/* Быстрое добавление поста кликом по пустой ячейке (/team) — см. team.js
+   quickCreatePost/click-обработчик на teamCalendarGrid. Тот же фирменный
+   рыже-коралловый градиент, что у .fab-create ("Запланировать
+   публикацию") — тот же смысл действия, тот же цвет. */
+.cal-day-add-btn{
+  position:absolute;right:3px;bottom:3px;
+  width:18px;height:18px;border-radius:50%;border:0;
+  background:linear-gradient(120deg, #EE8145 0%, var(--kf-coral, #DF6162) 55%, #C8473F 140%);
+  color:#fff;font-size:14px;line-height:1;font-weight:900;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;box-shadow:0 3px 8px rgba(223,97,98,.4);
+  padding:0;
+}
 .cal-day.other-month{background:#F7F8F8;border-color:#EEF0EF}
 .cal-day.other-month .cal-day-num{color:#C9CFCD}
 .cal-day.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
@@ -358,11 +371,13 @@ button{cursor:pointer}
 .cal-post-keywords{font-size:7.5px;line-height:1.3;color:var(--muted);font-weight:600;white-space:pre-wrap}
 /* "Не начато" — карточка ещё не в работе (см. index.js/app.js:
    status:'not_started'), показана в календаре только для наглядности
-   планирования, поэтому вся целиком светло-серая и курсор подсказывает,
-   что провалиться в неё нельзя (см. клик-обработчик calendarGrid в app.js). */
-.cal-post-not-started{cursor:default}
-.cal-post-not-started .cal-post-title,
-.cal-post-not-started .cal-post-keywords{color:#C7CCCB}
+   планирования. По правке пользователя — текст чёрный, как у обычных
+   карточек (не приглушённый серый), а СЕРАЯ заливка на самой карточке
+   даёт понять, что это "план", а не готовый пост; курсор подсказывает, что
+   провалиться в неё нельзя (см. клик-обработчик calendarGrid в app.js —
+   вместо перехода просто показывает toast). Наведение — title-подсказка
+   с проектом/датой/статусом/темой/keywords целиком, см. renderCalendar().*/
+.cal-post-not-started{cursor:default;background:#EEF0EF;border-radius:6px;padding:2px 3px}
 
 @media(min-width:700px){.page{padding-top:28px}.card{border-radius:28px}.media{margin-left:16px;margin-right:16px}}
 @media(max-width:430px){
@@ -449,8 +464,7 @@ button{cursor:pointer}
   .cal-day{background:#262222}
   .cal-day.other-month{background:#222626;border-color:#3A403D}
   .cal-mark.dot.not-started{background:#4A5150}
-  .cal-post-not-started .cal-post-title,
-  .cal-post-not-started .cal-post-keywords{color:#4A5150}
+  .cal-post-not-started{background:#33393A}
   .cal-dot.not-started{background:#4A5150}
   .cal-day.drag-over{background:color-mix(in srgb, var(--accent) 16%, #262222)}
   .head-icon-link{background:#262222}
