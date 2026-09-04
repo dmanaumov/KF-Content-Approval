@@ -19,6 +19,13 @@
 .chip:not(.active){opacity:.45}
 
 .team-list{display:grid;gap:12px;padding:4px 12px 32px}
+/* Same reasoning as .proj-list in projects.css — the page's own max-width
+   is already widened there (projects.css, loaded before this file), this
+   just lets the task cards actually use that room as a grid instead of one
+   long single column. */
+@media(min-width:860px){
+  .team-list{grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));align-items:start}
+}
 
 /* Read-only task row for phase 1 — title/project/status/date only, no media,
    no actions yet. Deliberately its own (simpler) shape rather than reusing

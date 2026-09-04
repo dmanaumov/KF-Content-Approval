@@ -1,6 +1,17 @@
 /* Small additions on top of app.css's shared design tokens/components
    (--accent, --ink, .btn, .head, .loading, .empty, .error-box, .toast, ...)
    so this internal staff page matches the client cabinet's look. */
+/* Staff shell — loaded on BOTH /projects (this file directly) and /team
+   (team.html loads this file too, before team.css) — overrides app.css's
+   .page max-width for the two internal cabinets. Unlike the client cabinet
+   (a single-column card feed, capped at 900px in app.css for readable line
+   length — see the comment there), staff's project/task cards are meant to
+   flow into a multi-column grid on a wide monitor (.proj-list/.team-list
+   below), so there's no reason to cap this one as tightly — 1600px covers
+   even a large desktop display without cards going comically wide. */
+@media(min-width:860px){
+  .page{max-width:clamp(660px, 90vw, 1600px)}
+}
 /* SMM/ИИ tabs above the list — see tabOf()/render() in projects.js. Same
    "purple = ИИ" visual language as .edit-tab.ai in the edit popup and the
    avatar highlight on AI project cards, so it reads as one consistent idea
@@ -58,6 +69,14 @@
   .staff-head-pill{display:none}
 }
 .proj-list{display:grid;gap:12px}
+/* Multi-column on a wide screen — auto-fill so the column count adapts to
+   whatever width .page ends up at (see the clamp() above) instead of a
+   hardcoded 2 or 3. align-items:start stops grid from stretching every card
+   in a row to match the tallest one (cards vary in height — bead strip,
+   archived badge, net chips are all optional). */
+@media(min-width:860px){
+  .proj-list{grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));align-items:start}
+}
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
 /* AI-project cards: driven by the "ИИ-проект" checkbox (project_settings.
    is_ai_project), not by prompt completeness — see aiStatusOf() in

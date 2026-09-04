@@ -423,6 +423,15 @@ function calMarkerHtml(task) {
   return `<span class="cal-mark dot ${cls}" aria-hidden="true"></span>`;
 }
 
+// Short single-line-ish excerpt of "Ключевые слова/мысли" for the tiny
+// calendar day cells — collapses internal newlines/whitespace (the field is
+// usually multi-paragraph, "Ключевые слова: ...\n\nИдея поста: ...") down to
+// one run of text, then hard-truncates with an ellipsis.
+function shortExcerpt(text, max) {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length <= max ? clean : `${clean.slice(0, max).trimEnd()}…`;
+}
+
 function scrollToTask(id) {
   const el = document.getElementById(`task-${id}`);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -532,10 +541,11 @@ function renderCalendar() {
     const inMonth = d.getUTCMonth() === calMonth;
     const dayTasks = byDate.get(dateStr) || [];
     const posts = dayTasks
-      .map(
-        (t) =>
-          `<button type="button" class="cal-post" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-title">${esc(t.title)}</span></button>`
-      )
+      .map((t) => {
+        const kw = (t.keywords || '').trim();
+        const kwHtml = kw ? `<span class="cal-post-keywords">${esc(shortExcerpt(kw, 42))}</span>` : '';
+        return `<button type="button" class="cal-post" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${esc(t.title)}</span>${kwHtml}</span></button>`;
+      })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
     cells.push(`<div class="${cls}"><div class="cal-day-num">${d.getUTCDate()}</div>${posts}</div>`);
