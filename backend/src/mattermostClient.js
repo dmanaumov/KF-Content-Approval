@@ -39,8 +39,14 @@ const config = require('./config');
 // paying handshake cost again and again. node-fetch does NOT do this by
 // default — without an explicit agent it opens (and tears down) a brand new
 // connection per call.
-const keepAliveHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 30 });
-const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 30 });
+// maxSockets bumped 30→64 on 2026-09-03 — see the BUGFIX comment on
+// fetchCardsPage() below: the poisoned-card fallback firing on several
+// pages at once could briefly want 50+ concurrent sockets to this one host,
+// and anything past 30 was queueing (and sometimes timing out) INSIDE this
+// agent before ever reaching the wire — Mattermost's own logs showed zero
+// trace of those requests, confirming they never actually got sent.
+const keepAliveHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 function agentFor(url) {
   return url.startsWith('https:') ? keepAliveHttpsAgent : keepAliveHttpAgent;
 }
@@ -273,7 +279,7 @@ async function getBoard(boardId, teamId) {
 // Split out of listCards() so the pages themselves can be fetched in
 // parallel batches (see listCards() below) instead of one-after-another.
 async function fetchCardsPage(boardId, page, perPage) {
-  try {
+  const fetchWholePage = async () => {
     const res = await mmFetch(
       boardsUrl(`/boards/${boardId}/cards?page=${page}&per_page=${perPage}`),
       {},
@@ -281,43 +287,75 @@ async function fetchCardsPage(boardId, page, perPage) {
     );
     const data = await asJsonOrThrow(res, `listCards(${boardId},page=${page})`);
     const batch = Array.isArray(data) ? data : (data && data.cards) || [];
-    return { batch, reachedEnd: batch.length < perPage }; // short/empty page = last page reached
+    return { batch, reachedEnd: batch.length < perPage, skipped: 0 }; // short/empty page = last page reached
+  };
+  try {
+    return await fetchWholePage();
   } catch (err) {
-    // BUGFIX 2026-08-29 (reported live, confirmed REPRODUCIBLE — not a
-    // transient blip: mmFetch already retries a bare 5xx a couple of times,
-    // and the user separately confirmed Mattermost's own UI works fine,
-    // only this exact REST page keeps failing). Most likely one poisoned
-    // card on this page — malformed data that crashes Mattermost's own
-    // server-side serialization for that one record — was otherwise able
-    // to take the ENTIRE /projects list down forever, with nothing fixable
-    // on our side except finding and skipping the offending card. Fallback:
-    // re-fetch this page's range ONE CARD AT A TIME (per_page=1 keeps
-    // page=offset math integer-safe, unlike trying to binary-halve
-    // per_page=200 which drifts off exact page boundaries once the count
-    // stops dividing evenly) — skip whichever individual offset(s) still
-    // fail, logging loudly so the bad card is findable/fixable directly in
-    // Mattermost, and keep every other card on the board loading normally.
+    // BUGFIX 2026-09-03 (reported live: an incident that skipped ~99 cards
+    // across all 5 pages of the board within a 2-second window — Mattermost's
+    // OWN app + Postgres logs for that exact window were completely clean,
+    // no errors, no slow queries, pings succeeding throughout. So this was
+    // NOT Mattermost being down/overloaded. Root cause: this file's shared
+    // keep-alive HTTP agent caps concurrent sockets to one host — when
+    // listCards() fires 5 pages at once (BATCH_SIZE below) AND the old
+    // per-card fallback fired up to 10 more concurrent requests PER PAGE on
+    // top of that, a brief spike easily wanted 50+ simultaneous sockets.
+    // Requests that lost the race for a socket just sat QUEUED inside
+    // node-fetch/the agent — their own abort timer was already running from
+    // the moment they were CALLED, not from when they actually got sent — so
+    // several timed out ("The user aborted a request.") without Mattermost
+    // ever seeing them at all. The fallback below, built for one corrupt
+    // card, was making a real overload WORSE by piling on more concurrent
+    // requests instead of backing off. Fix, in order:
+    //   1. If the page-level failure was OUR OWN timeout (AbortError) rather
+    //      than a real error response from Mattermost, that's a strong sign
+    //      of exactly this kind of transient socket/network pressure — retry
+    //      the WHOLE page (one request, not per_page=1×200) a couple more
+    //      times with backoff first. This alone resolves a passing blip
+    //      without ever touching the expensive fallback.
+    //   2. Only fall through to the one-card-at-a-time fallback (still useful
+    //      for a genuinely corrupt single record, which fails with a real
+    //      error response, not a timeout) if that also doesn't recover.
+    //   3. Fallback concurrency lowered 10→4 so even several pages falling
+    //      back at once stay well under the (now-larger) socket cap instead
+    //      of amplifying the very pressure that caused the trouble.
+    if (err.name === 'AbortError') {
+      for (const delayMs of [800, 2000]) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        try {
+          return await fetchWholePage();
+        } catch (err2) {
+          err = err2; // still failing — try the next backoff step, or fall through below
+        }
+      }
+    }
     console.error(
       `[mattermost] listCards(${boardId},page=${page}) failed even after retry (${err.message}) — ` +
         `falling back to fetching this page one card at a time to isolate the bad record`
     );
-    // BUGFIX 2026-09-01 (reported live: a page hitting this fallback used
-    // to fetch its 200 cards fully sequentially — one at a time, each its
-    // own round-trip — which alone was enough to stretch a single page
-    // load out past 30 seconds ("Загружаем данные..." hanging), even
-    // though nothing on our own server was actually busy meanwhile. Now
-    // fetched with bounded concurrency instead, same as the disk-media-kind
-    // probes elsewhere in this app — a few seconds instead of tens.
     const offsets = [];
     for (let offset = page * perPage; offset < (page + 1) * perPage; offset++) offsets.push(offset);
-    const CONCURRENCY = 10;
+    const CONCURRENCY = 4;
+    // BUGFIX 2026-09-03: during a genuine widespread outage (see the big
+    // comment above), EVERY offset on the page would fail — without a cap,
+    // this loop would plow through all `perPage` (200) of them one by one
+    // at up to config.requestTimeoutMs each, i.e. potentially many MINUTES
+    // per page before finally giving up. listCards() below already throws
+    // once the aggregate skip count crosses SKIP_THRESHOLD, so once a
+    // single page alone has clearly blown past that, there's nothing to
+    // gain from grinding through the rest of it — bail out of THIS page
+    // early and let listCards() fail fast instead.
+    const PAGE_BAILOUT_SKIPS = 8;
     const found = []; // { offset, card }
     let reachedEnd = false;
+    let bailedOut = false;
     let endOffset = Infinity; // lowest offset any worker found empty (real end of board)
+    let skipped = 0;
     let i = 0;
     const runNext = async () => {
       while (i < offsets.length) {
-        if (reachedEnd) return; // another worker already found the real end of the board
+        if (reachedEnd || bailedOut) return; // another worker already found the real end — or this page is clearly a lost cause
         const offset = offsets[i++];
         try {
           const res1 = await mmFetch(
@@ -334,9 +372,15 @@ async function fetchCardsPage(boardId, page, perPage) {
             found.push({ offset, card: one[0] });
           }
         } catch (err1) {
+          skipped++;
           console.error(`[mattermost] listCards(${boardId}): SKIPPING card at offset ${offset} — Mattermost itself keeps failing on it: ${err1.message}`);
           // Deliberately swallowed — this one card is missing from the
-          // result, everything else on the board still loads.
+          // result, everything else on the board still loads. listCards()
+          // below decides whether the AGGREGATE skip count across the whole
+          // board is small enough to just live with (one genuinely corrupt
+          // card) or high enough to treat the whole load as failed instead
+          // of quietly serving/caching an incomplete list.
+          if (skipped >= PAGE_BAILOUT_SKIPS) bailedOut = true;
         }
       }
     };
@@ -347,7 +391,14 @@ async function fetchCardsPage(boardId, page, perPage) {
     // discovered by another worker would just be noise past the board).
     found.sort((a, b) => a.offset - b.offset);
     const batch = found.filter((x) => x.offset < endOffset).map((x) => x.card);
-    return { batch, reachedEnd };
+    if (skipped > 0) {
+      console.error(
+        `[mattermost] listCards(${boardId},page=${page}): SUMMARY — skipped ${skipped}/${offsets.length} cards on this page` +
+          (bailedOut ? ` (bailed out early past ${PAGE_BAILOUT_SKIPS} skips — this page looks broadly unavailable, not one bad record)` : '') +
+          ' (see SKIPPING lines above for exact offsets)'
+      );
+    }
+    return { batch, reachedEnd, skipped };
   }
 }
 
@@ -365,14 +416,32 @@ async function listCards(boardId) {
   // safe to discard even if they came back non-empty (over-fetching past
   // the end is harmless, Mattermost just returns whatever's there).
   const BATCH_SIZE = 5;
+  // BUGFIX 2026-09-03 (see fetchCardsPage() above for the full incident this
+  // is responding to): a handful of skipped cards is the ORIGINAL, still-
+  // legitimate "one poisoned/corrupt record" case this whole fallback exists
+  // for — fine to just quietly omit those and move on, same as before. But
+  // when skips run much higher than that, it's a strong sign of a broader
+  // hiccup (network/socket pressure, a Mattermost blip), and silently
+  // returning — and CACHING, see loadBoard() in index.js — a list that's
+  // missing dozens of real cards is worse than failing loudly: staff and
+  // clients would see posts "vanish" with no error on screen at all. Past
+  // this threshold, throw instead — loadBoard()'s callers already have a
+  // proper error path (/api/projects' error-box, /api/boards/:id/tasks'
+  // 502 mattermost_unavailable) that tells people to retry, rather than
+  // quietly showing wrong data. Checked INSIDE the loop too (not just at the
+  // end) so a genuine board-wide outage stops after the first bad batch
+  // instead of grinding through all `maxPages` batches one by one first.
+  const SKIP_THRESHOLD = 5;
   let all = [];
   let reachedEnd = false;
-  for (let batchStart = 0; batchStart < maxPages && !reachedEnd; batchStart += BATCH_SIZE) {
+  let totalSkipped = 0;
+  for (let batchStart = 0; batchStart < maxPages && !reachedEnd && totalSkipped <= SKIP_THRESHOLD; batchStart += BATCH_SIZE) {
     const pages = [];
     for (let p = batchStart; p < Math.min(batchStart + BATCH_SIZE, maxPages); p++) pages.push(p);
     const results = await Promise.all(pages.map((p) => fetchCardsPage(boardId, p, perPage)));
     for (const r of results) {
       all = all.concat(r.batch);
+      totalSkipped += r.skipped || 0;
       if (r.reachedEnd) {
         reachedEnd = true;
         break; // ignore any later pages already fetched in this same batch
@@ -381,6 +450,12 @@ async function listCards(boardId) {
     if (!reachedEnd && batchStart + BATCH_SIZE >= maxPages && config.debug) {
       console.warn(`[mattermost] listCards(${boardId}): hit the ${maxPages}-page safety cap, some cards may be missing`);
     }
+  }
+  if (totalSkipped > SKIP_THRESHOLD) {
+    throw new Error(
+      `listCards(${boardId}): не удалось загрузить ${totalSkipped} карточек из ${all.length + totalSkipped} — ` +
+        `похоже на временный сбой соединения с Mattermost, а не отдельные битые записи. Список отклонён целиком, чтобы не показывать неполные данные — попробуйте через минуту.`
+    );
   }
   return all;
 }
