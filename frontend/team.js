@@ -67,6 +67,16 @@ let reorderMode = false;
 let reorderIds = [];
 let dateCalYear = null;
 let dateCalMonth = null;
+// Отдельная от dateCalYear/dateCalMonth пара — та управляет мини-пикером
+// ОДНОЙ даты внутри модалки карточки, эта — общим календарём-обзором всех
+// своих задач (см. openTeamCalendarView ниже), который открывается по
+// кнопке 🗓️ в шапке, как в кабинете клиента.
+let tcalYear = null;
+let tcalMonth = null;
+// true во время (и сразу после) реального drag-жеста по календарю-обзору —
+// не даёт клику, которым браузер завершает drop, тут же открыть модалку
+// карточки поверх только что перетащенной даты.
+let calDragActive = false;
 const scheduleCache = {}; // 'YYYY-MM' -> {days}, from GET /api/team/schedule
 const teamCommentsCache = {}; // taskId -> [{id,authorId,authorName,text,createdAt,imageUrl}]
 // A photo picked/uploaded for the NEXT message in each chat, before Send is
@@ -159,6 +169,14 @@ const cfStatus = document.getElementById('cfStatus');
 const cfText = document.getElementById('cfText');
 const createError = document.getElementById('createError');
 const cfSubmit = document.getElementById('cfSubmit');
+const teamCalendarToggle = document.getElementById('teamCalendarToggle');
+const teamListView = document.getElementById('teamListView');
+const teamCalendarView = document.getElementById('teamCalendarView');
+const teamCalBack = document.getElementById('teamCalBack');
+const teamCalPrev = document.getElementById('teamCalPrev');
+const teamCalNext = document.getElementById('teamCalNext');
+const teamCalTitle = document.getElementById('teamCalTitle');
+const teamCalendarGrid = document.getElementById('teamCalendarGrid');
 
 function showLogin() {
   loginApp.hidden = false;
@@ -370,6 +388,170 @@ async function init() {
     showLogin();
   }
 }
+
+// ============================== Календарь-обзор (🗓️ в шапке) ==============================
+// Тот же принцип, что renderCalendar() в frontend/app.js (кабинет клиента):
+// месячная сетка, посты-кнопки в ячейке дня, цветной маркер по статусу.
+// Данные — currentTasks (уже отфильтрованы по исполнителю сервером, см.
+// loadTasks() выше), поэтому никакого отдельного запроса не требуется.
+// Единственное принципиально новое здесь — перетаскивание карточки на
+// другой день меняет её дату публикации через уже существующий
+// POST /api/team/tasks/:id/date (тот же эндпоинт, что использует мини-
+// пикер даты внутри модалки).
+const TEAM_CAL_DOT_CLASS = { waiting: 'waiting', approved: 'approved', changes: 'changes', published: 'published' };
+function teamCalMarkerHtml(task) {
+  if (isUrgentTask(task)) return '<span class="cal-mark fire" aria-hidden="true">🔥</span>';
+  // task.status — только 5 клиентских состояний (см. taskMapper.js); всё
+  // остальное (В ПРОЦЕССЕ, ТЗ РАЙТЕРУ, ЗАПЛАНИРОВАНО, "Не начато"...) —
+  // внутренние этапы, для которых в этом обзоре один общий серый маркер.
+  const cls = TEAM_CAL_DOT_CLASS[task.status] || 'not-started';
+  return `<span class="cal-mark dot ${cls}" aria-hidden="true"></span>`;
+}
+
+function renderTeamCalendarGrid() {
+  if (tcalYear == null) {
+    const now = new Date();
+    tcalYear = now.getFullYear();
+    tcalMonth = now.getMonth();
+  }
+  teamCalTitle.textContent = `${MONTHS_RU_FULL[tcalMonth]} ${tcalYear}`;
+
+  const byDate = new Map();
+  for (const t of currentTasks) {
+    if (!t.publishDate) continue;
+    if (!byDate.has(t.publishDate)) byDate.set(t.publishDate, []);
+    byDate.get(t.publishDate).push(t);
+  }
+
+  const first = new Date(Date.UTC(tcalYear, tcalMonth, 1));
+  const leadDow = first.getUTCDay() || 7; // Пн=1..Вс=7
+  const lead = leadDow - 1;
+  const daysInMonth = new Date(Date.UTC(tcalYear, tcalMonth + 1, 0)).getUTCDate();
+  const totalCells = Math.ceil((lead + daysInMonth) / 7) * 7;
+  const gridStart = new Date(Date.UTC(tcalYear, tcalMonth, 1 - lead));
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const cells = [];
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(gridStart);
+    d.setUTCDate(gridStart.getUTCDate() + i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const inMonth = d.getUTCMonth() === tcalMonth;
+    const dayTasks = (byDate.get(dateStr) || []).slice().sort(byDeadline);
+    const posts = dayTasks
+      .map((t) => {
+        const { social, bare } = splitTitle(t.title);
+        const socialBadge = social
+          ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
+          : '';
+        const title = stripAiTag(bare);
+        return `<button type="button" class="cal-post" draggable="true" data-task-id="${esc(t.id)}">${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
+      })
+      .join('');
+    const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
+    cells.push(`<div class="${cls}" data-date="${dateStr}"><div class="cal-day-num">${d.getUTCDate()}</div>${posts}</div>`);
+  }
+  teamCalendarGrid.innerHTML = cells.join('');
+}
+
+function openTeamCalendarView() {
+  teamListView.hidden = true;
+  fabCreate.hidden = true;
+  teamCalendarView.hidden = false;
+  renderTeamCalendarGrid();
+}
+
+function closeTeamCalendarView() {
+  teamListView.hidden = false;
+  fabCreate.hidden = false;
+  teamCalendarView.hidden = true;
+}
+
+async function moveTaskToDate(taskId, dateStr) {
+  const task = currentTasks.find((t) => t.id === taskId);
+  const prevDate = task ? task.publishDate : null;
+  if (prevDate === dateStr) return;
+  // Оптимистично — сразу перерисовываем сетку с постом на новом дне, не
+  // дожидаясь ответа сервера (drag-and-drop должен ощущаться мгновенным);
+  // при ошибке откатываем дату обратно и перерисовываем ещё раз.
+  if (task) task.publishDate = dateStr;
+  renderTeamCalendarGrid();
+  try {
+    const data = await teamApi(`/tasks/${encodeURIComponent(taskId)}/date`, { method: 'POST', body: { date: dateStr } });
+    applyUpdatedTask(data.task);
+    if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
+    toast('Дата публикации изменена');
+  } catch (err) {
+    if (task) task.publishDate = prevDate;
+    renderTeamCalendarGrid();
+    toast('Не удалось изменить дату: ' + err.message);
+  }
+}
+
+teamCalendarToggle.addEventListener('click', openTeamCalendarView);
+teamCalBack.addEventListener('click', closeTeamCalendarView);
+teamCalPrev.addEventListener('click', () => {
+  tcalMonth--;
+  if (tcalMonth < 0) { tcalMonth = 11; tcalYear--; }
+  renderTeamCalendarGrid();
+});
+teamCalNext.addEventListener('click', () => {
+  tcalMonth++;
+  if (tcalMonth > 11) { tcalMonth = 0; tcalYear++; }
+  renderTeamCalendarGrid();
+});
+
+// Клик по карточке в календаре — открыть её же модалку (как в списке), но
+// не сразу после drag-жеста (см. calDragActive: браузер шлёт click следом
+// за drop на том же элементе).
+teamCalendarGrid.addEventListener('click', (e) => {
+  if (calDragActive) return;
+  const btn = e.target.closest('.cal-post');
+  if (!btn) return;
+  openTaskModal(btn.dataset.taskId);
+});
+
+// --- Drag-and-drop переноса даты: HTML5 native DnD, делегировано на грид
+// целиком (ячейки/карточки перерисовываются при каждом render, поэтому
+// именно делегирование, а не listener на каждой карточке). ---
+teamCalendarGrid.addEventListener('dragstart', (e) => {
+  const btn = e.target.closest('.cal-post');
+  if (!btn) return;
+  calDragActive = true;
+  btn.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', btn.dataset.taskId);
+});
+teamCalendarGrid.addEventListener('dragend', (e) => {
+  const btn = e.target.closest('.cal-post');
+  if (btn) btn.classList.remove('dragging');
+  teamCalendarGrid.querySelectorAll('.cal-day.drag-over').forEach((el) => el.classList.remove('drag-over'));
+  // Сброс calDragActive с небольшой задержкой — click, которым браузер
+  // завершает drag, приходит уже ПОСЛЕ dragend.
+  setTimeout(() => { calDragActive = false; }, 50);
+});
+teamCalendarGrid.addEventListener('dragover', (e) => {
+  const day = e.target.closest('.cal-day');
+  if (!day) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  day.classList.add('drag-over');
+});
+teamCalendarGrid.addEventListener('dragleave', (e) => {
+  const day = e.target.closest('.cal-day');
+  if (day && !day.contains(e.relatedTarget)) day.classList.remove('drag-over');
+});
+teamCalendarGrid.addEventListener('drop', (e) => {
+  const day = e.target.closest('.cal-day');
+  if (!day) return;
+  e.preventDefault();
+  day.classList.remove('drag-over');
+  const taskId = e.dataTransfer.getData('text/plain');
+  const dateStr = day.dataset.date;
+  if (taskId && dateStr) moveTaskToDate(taskId, dateStr);
+});
 
 // ============================== Модалка карточки ==============================
 

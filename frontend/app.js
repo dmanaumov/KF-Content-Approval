@@ -170,6 +170,17 @@ function detectSocial(title) {
   return { ...SOCIAL_MAP[m[1].toLowerCase()], matchedPrefix: m[0] };
 }
 
+// "not_started" tasks (see backend's index.js — cards still in the "Не
+// начато" internal production stage, fetched separately and merged into
+// state.tasks ONLY so the calendar view can show them greyed out) must stay
+// invisible everywhere else in the client cabinet: week nav, list, filters,
+// the attention banner. Every one of those reads from this filtered view
+// instead of state.tasks directly; renderCalendar() is the one place that
+// still reads state.tasks itself.
+function clientFacingTasks() {
+  return state.tasks.filter((t) => t.status !== 'not_started');
+}
+
 function statusInfo(status) {
   if (status === 'approved') return { cls: 'approved', text: 'Согласовано' };
   if (status === 'changes') return { cls: 'changes', text: 'Правки' };
@@ -416,7 +427,7 @@ function weeksOf(tasks) {
 // it. Marker rule (agency's spec): urgent (waiting + due soon/overdue) shows
 // 🔥 instead of a dot; otherwise a status-colored dot. Title is CSS-clamped
 // to 3 lines so one long post name can't blow out a day cell on a phone.
-const CAL_DOT_CLASS = { waiting: 'waiting', approved: 'approved', changes: 'changes', published: 'published' };
+const CAL_DOT_CLASS = { waiting: 'waiting', approved: 'approved', changes: 'changes', published: 'published', not_started: 'not-started' };
 function calMarkerHtml(task) {
   if (isUrgent(task)) return '<span class="cal-mark fire" aria-hidden="true">🔥</span>';
   const cls = CAL_DOT_CLASS[task.status] || 'waiting';
@@ -450,7 +461,7 @@ function focusTask(id) {
 // Computed across ALL the client's tasks (not the active week).
 function updateAttention() {
   const el = document.getElementById('attention');
-  const all = state.tasks || [];
+  const all = clientFacingTasks();
   if (!all.length) { el.hidden = true; return; }
 
   const waiting = all.filter((t) => t.status === 'waiting');
@@ -533,13 +544,17 @@ function renderCalendar() {
     const dayTasks = byDate.get(dateStr) || [];
     const posts = dayTasks
       .map((t) => {
-        // Полный текст, не обрывок — по просьбе пользователя ("основная
-        // мысль должна показываться целиком"). Ячейка дня тянется по
-        // высоте вместе с остальными в её строке грида (см. .cal-post-
-        // keywords в app.css — больше никакого line-clamp/усечения).
-        const kw = (t.keywords || '').trim();
+        // Первые 500 символов, не полностью (пользователь сперва попросил
+        // ЦЕЛИКОМ, затем поправился — это слишком длинно для карточки дня).
+        // white-space:pre-wrap в app.css сохраняет переносы между абзацами
+        // исходного поля ("Ключевые слова: ...\n\nИдея поста: ...", см.
+        // backend/src/taskMapper.js) в пределах этого отрывка.
+        const kwFull = (t.keywords || '').trim();
+        const kw = kwFull.length > 500 ? `${kwFull.slice(0, 500)}…` : kwFull;
         const kwHtml = kw ? `<span class="cal-post-keywords">${esc(kw)}</span>` : '';
-        return `<button type="button" class="cal-post" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${esc(t.title)}</span>${kwHtml}</span></button>`;
+        const notStarted = t.status === 'not_started';
+        const cls = `cal-post${notStarted ? ' cal-post-not-started' : ''}`;
+        return `<button type="button" class="${cls}" data-task-id="${esc(t.id)}">${calMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${esc(t.title)}</span>${kwHtml}</span></button>`;
       })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
@@ -562,7 +577,8 @@ function closeCalendar() {
 }
 
 function render() {
-  const weeks = weeksOf(state.tasks);
+  const tasks = clientFacingTasks();
+  const weeks = weeksOf(tasks);
   if (!activeWeek || !weeks.some(([w]) => w === activeWeek)) {
     activeWeek = weeks.length ? weeks[0][0] : null;
   }
@@ -579,7 +595,7 @@ function render() {
     })
     .join('');
 
-  const inWeek = state.tasks.filter((t) => t.weekStart === activeWeek);
+  const inWeek = tasks.filter((t) => t.weekStart === activeWeek);
   const approved = inWeek.filter((t) => t.status === 'approved').length;
   document.getElementById('progressFill').style.width = (inWeek.length ? (approved / inWeek.length) * 100 : 0) + '%';
   document.getElementById('progressText').textContent = `${approved} из ${inWeek.length} согласовано`;
@@ -587,7 +603,7 @@ function render() {
   // Nothing left to approve anywhere (no 'waiting' task across the whole
   // board) → celebrate with the mascot and make sure the "Все" filter is
   // active so the approved posts are actually visible below it.
-  const nothingToApprove = !state.tasks.some((t) => t.status === 'waiting');
+  const nothingToApprove = !tasks.some((t) => t.status === 'waiting');
   if (nothingToApprove && activeFilter) {
     activeFilter = '';
     document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
@@ -1181,6 +1197,12 @@ document.getElementById('calendarGrid').addEventListener('click', (e) => {
   if (!btn) return;
   const id = btn.dataset.taskId;
   const task = state.tasks.find((t) => t.id === id);
+  // "Не начато" карточки не существуют в списке (см. clientFacingTasks) —
+  // переход туда невозможен, просто поясняем тапом вместо тишины.
+  if (task && task.status === 'not_started') {
+    toast('Работа над постом ещё не начата');
+    return;
+  }
   closeCalendar();
   if (task) {
     activeWeek = task.weekStart;

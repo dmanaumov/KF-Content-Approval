@@ -7,7 +7,7 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=13">
+  <link rel="stylesheet" href="/app.css?v=15">
   <link rel="stylesheet" href="/projects.css?v=14">
   <link rel="stylesheet" href="/team.css?v=17">
 </head>
@@ -48,6 +48,9 @@
           <a id="statLink" class="head-icon-link" href="/stat" title="Статистика доступа" aria-label="Статистика доступа" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="10" y="7" width="4" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="16" y="3" width="4" height="17" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
           </a>
+          <button id="teamCalendarToggle" class="cal-toggle" type="button" title="Календарь публикаций" aria-label="Календарь публикаций">
+            <span aria-hidden="true">🗓️</span>
+          </button>
           <button id="logoutBtn" class="cal-toggle" type="button" title="Выйти" aria-label="Выйти">
             <span aria-hidden="true">⎋</span>
           </button>
@@ -55,10 +58,36 @@
       </div>
     </header>
 
-    <div id="teamFilters" class="team-filters" hidden></div>
-    <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
-    <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
-    <main id="teamList" class="team-list"></main>
+    <div id="teamListView">
+      <div id="teamFilters" class="team-filters" hidden></div>
+      <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
+      <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
+      <main id="teamList" class="team-list"></main>
+    </div>
+
+    <div id="teamCalendarView" class="calendar-view" hidden>
+      <div class="cal-header">
+        <button id="teamCalBack" class="cal-back" type="button">← Назад</button>
+        <div class="cal-nav">
+          <button id="teamCalPrev" class="cal-nav-btn" type="button" aria-label="Предыдущий месяц">‹</button>
+          <span id="teamCalTitle" class="cal-title"></span>
+          <button id="teamCalNext" class="cal-nav-btn" type="button" aria-label="Следующий месяц">›</button>
+        </div>
+      </div>
+      <div class="cal-legend">
+        <span><i class="cal-dot published"></i>Опубликовано</span>
+        <span><i class="cal-dot approved"></i>Согласовано</span>
+        <span><i class="cal-dot waiting"></i>На согласовании</span>
+        <span><i class="cal-dot-fire" aria-hidden="true">🔥</i>Горит</span>
+        <span><i class="cal-dot changes"></i>Правки</span>
+        <span><i class="cal-dot not-started"></i>В работе / не начато</span>
+      </div>
+      <div class="cal-hint">Перетащите карточку на другой день, чтобы изменить дату публикации.</div>
+      <div class="cal-weekdays">
+        <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+      </div>
+      <div id="teamCalendarGrid" class="cal-grid"></div>
+    </div>
 
     <button id="fabCreate" class="fab-create" type="button" aria-label="Запланировать публикацию">
       <span class="fab-create-icon" aria-hidden="true">+</span>
@@ -140,7 +169,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=14"></script>
+<script src="/team.js?v=15"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

@@ -96,6 +96,16 @@ module.exports = {
     archived: process.env.MM_STATUS_ARCHIVED_LABEL || 'АРХИВ',
   },
 
+  // Deliberately NOT part of statusOptionLabels above (which many other
+  // places — computeScheduleStatus's clientTasks, admin allowed-statuses
+  // lists, etc. — treat as exactly "the 5 client-facing states"). "Не
+  // начато" stays an internal-only production stage everywhere except one
+  // narrow exception: the client cabinet's CALENDAR view additionally shows
+  // these cards (greyed out) so the client can see what's already scheduled
+  // before work has begun — see index.js's GET /api/boards/:boardId/tasks,
+  // which fetches them separately and tags them status:'not_started'.
+  notStartedLabel: process.env.MM_STATUS_NOT_STARTED_LABEL || 'Не начато',
+
   // How long a board's card list is cached in memory before re-fetching from
   // Mattermost. Not a database — just avoids hammering the API on every
   // client poll/re-render. Set to 0 to disable caching entirely.

@@ -224,6 +224,27 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
           'refusing to show tasks to avoid leaking other clients\' cards. Pass the project option id or exact label.',
       });
     }
+    // Calendar view (client cabinet) deliberately also shows cards still in
+    // the "Не начато" internal production stage — greyed out, purely so the
+    // client can see what's already scheduled before work has begun. Every
+    // other part of the client cabinet (list, week nav, filters, attention
+    // banner) must NOT see these — see app.js, which only surfaces
+    // status:'not_started' inside renderCalendar(). Fetched via a second,
+    // includeAllStatuses pass (same option the /team cabinet uses) and
+    // merged in only for cards that actually carry a publish date — an
+    // undated "Не начато" card has nowhere to show on a calendar anyway.
+    const notStartedLabel = normLabelLoose(config.notStartedLabel);
+    if (notStartedLabel) {
+      const { tasks: allTasks } = buildTasks(board, cards, blocks, {
+        projectFilter: req.query.project,
+        feedbackAuthorUserId,
+        includeAllStatuses: true,
+      });
+      const notStarted = allTasks
+        .filter((t) => !t.status && t.publishDate && normLabelLoose(t.statusLabel) === notStartedLabel)
+        .map((t) => ({ ...t, status: 'not_started' }));
+      tasks.push(...notStarted);
+    }
     const diskKindsStartedAt = Date.now();
     await resolveDiskMediaKinds(tasks);
     const diskKindsMs = Date.now() - diskKindsStartedAt;
