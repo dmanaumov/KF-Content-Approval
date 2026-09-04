@@ -147,6 +147,12 @@ function render(filterText) {
     visible
       .map((o) => {
         const link = clientLinkFor(o.token);
+        // Тот же кабинет, но с флагом ?calendar=1 — app.js при загрузке видит
+        // любой query-ключ, начинающийся на "calend" (см. wantsCalendarView),
+        // и сразу открывает вид календаря вместо списка. Отдельная ссылка —
+        // чтобы отправлять клиенту не обычное приглашение, а сразу "вот твой
+        // контент-план на месяц".
+        const calLink = `${link}?calendar=1`;
         const busy = busyProjectId === o.id;
         const initial = (o.label || '?').trim().charAt(0).toUpperCase();
         const logo = o.logoUrl
@@ -216,6 +222,9 @@ function render(filterText) {
               ${avatar}
               <button class="icon-btn proj-copy" type="button" data-tip="Скопировать — ссылка для клиента с приглашением" data-link="${esc(link)}" data-label="${esc(o.label)}" aria-label="Скопировать ссылку с приглашением">
                 <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <button class="icon-btn proj-copy-cal" type="button" data-tip="Скопировать — ссылка сразу в календарь" data-link="${esc(calLink)}" data-label="${esc(o.label)}" aria-label="Скопировать ссылку на календарь">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><path d="M3 10h18M8 2v4M16 2v4"></path></svg>
               </button>
               <button class="icon-btn proj-edit" type="button" data-tip="Редактировать — лого и креды соцсетей" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}" aria-label="Редактировать">
                 <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
@@ -350,6 +359,17 @@ document.getElementById('kpiBanner').addEventListener('click', (e) => {
 });
 
 document.getElementById('list').addEventListener('click', async (e) => {
+  const copyCalBtn = e.target.closest('.proj-copy-cal');
+  if (copyCalBtn) {
+    const text = `Направляю ссылку на контент-план проекта #${copyCalBtn.dataset.label} (сразу открывается календарь):\n${copyCalBtn.dataset.link}`;
+    try {
+      await copyToClipboard(text);
+      toast('Скопировано — можно вставлять');
+    } catch (err) {
+      toast('Не удалось скопировать — выделите ссылку вручную');
+    }
+    return;
+  }
   const copyBtn = e.target.closest('.proj-copy');
   if (copyBtn) {
     const text = `Направляю актуальную ссылку по управлению публикациями проекта #${copyBtn.dataset.label}:\n${copyBtn.dataset.link}`;

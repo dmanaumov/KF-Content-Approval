@@ -984,9 +984,15 @@ function renderPreviewPane(t) {
     : `<div class="tm-preview-empty" style="padding:60px 10px">Медиа не выбрано</div>`;
   const captionText = stripAiTag(t.caption || bare || '');
   const captionHtml = captionText ? esc(captionText) : '<span class="tm-preview-empty">Текст ещё не задан</span>';
+  // "Ключевые слова/мысли" — та же вводная для копирайтера/ИИ, что уже
+  // редактируется во вкладке "Текст" (см. renderTextPane выше), но здесь —
+  // мелким серым текстом под самим постом, чтобы бриф был виден с одного
+  // взгляда на превью, не заходя в отдельную вкладку.
+  const keywordsText = (t.keywords || '').trim();
+  const keywordsHtml = keywordsText ? `<div class="tm-preview-keywords">💡 ${esc(keywordsText)}</div>` : '';
   return `<div class="tm-preview-phone"><div class="tm-preview-inner">
     <div class="tm-preview-media">${mediaHtml}</div>
-    <div class="tm-preview-text">${socialBadge}<div class="tm-preview-caption">${captionHtml}</div></div>
+    <div class="tm-preview-text">${socialBadge}<div class="tm-preview-caption">${captionHtml}</div>${keywordsHtml}</div>
   </div></div>`;
 }
 

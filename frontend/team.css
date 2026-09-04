@@ -195,6 +195,7 @@
 .tm-preview-social{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#fff;border-radius:999px;padding:3px 8px;margin-bottom:7px}
 .tm-preview-caption{font-size:12.5px;line-height:1.5;white-space:pre-wrap}
 .tm-preview-empty{color:var(--muted);font-size:12px;text-align:center}
+.tm-preview-keywords{margin-top:9px;padding-top:9px;border-top:1px dashed var(--line);font-size:11px;line-height:1.5;color:var(--muted);white-space:pre-wrap}
 
 /* Иконки-ссылки в шапке — «Админка»/«Статистика» здесь, «Статистика»/
    «CEO-дашборд» на странице /admin (см. projects.html) — теперь общий стиль

@@ -14,6 +14,12 @@ const linkToken = (location.pathname.match(/^\/l\/([^/]+)/) || [])[1];
 // the /admin staff page.
 const directBoardId = (location.pathname.match(/^\/p\/([^/]+)/) || [])[1];
 const deepLinkTaskId = params.get('task');
+// ?calendar=1 (or really any query key starting with "calend", case-
+// insensitive — ?calend, ?Calendar, ?CALENDAR=1 all match, since the point
+// is a link a human can type/paste in a hurry without getting the exact
+// spelling right) — the cabinet opens straight into the calendar view
+// instead of the default list. See openCalendar() call in loadTasks().
+const wantsCalendarView = [...params.keys()].some((k) => k.toLowerCase().startsWith('calend'));
 
 let boardId = directBoardId || null;
 let projectFilter = params.get('project') || null; // which client this link is for, on a shared board
@@ -343,6 +349,14 @@ function cardHtml(task) {
           ${captionText ? `<div class="caption open">${formatTelegram(captionText)}</div>` : ''}
         </div>`
     : '';
+  // Ключевые слова/мысли — agency-internal planning notes (brief/keywords/
+  // рубрика/funnel stage, see backend's taskMapper.js), shown small and
+  // read-only under the post text — just enough for the client to see the
+  // thinking behind the post, not editable here.
+  const keywordsText = (task.keywords || '').trim();
+  const keywordsBlock = keywordsText
+    ? `<div class="keywords-note"><span class="keywords-note-icon">💡</span><span class="keywords-note-text">${esc(keywordsText)}</span></div>`
+    : '';
   const article = `<article class="card${swipeable ? ' swipeable' : ''}${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}" data-task-id="${esc(task.id)}">
     ${aiAvatar}
     <div class="meta">
@@ -359,6 +373,7 @@ function cardHtml(task) {
     </div>
     ${mediaHtml(task, canEditText)}
     ${captionBlock}
+    ${keywordsBlock}
     ${urlLink}
     ${clientDialogHtml(task)}
     ${actions}
@@ -613,6 +628,10 @@ async function loadTasks() {
       document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
     }
     render();
+    // Auto-open the calendar for a "?calendar=1"-flagged link — done after
+    // the normal render() above (not instead of it) so the list is already
+    // built and ready underneath the moment someone taps "Назад".
+    if (wantsCalendarView) openCalendar();
   } catch (err) {
     document.getElementById('stack').innerHTML = `<div class="error-box">Не удалось загрузить задачи: ${esc(err.message)}</div>`;
   } finally {

@@ -231,6 +231,9 @@ button{cursor:pointer}
 .caption a{color:var(--accent);font-weight:700;word-break:break-all}
 .caption code{background:#F1F4F3;border-radius:5px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 .caption pre{background:#F1F4F3;border-radius:10px;padding:10px 12px;margin:8px 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;overflow-x:auto}
+.keywords-note{margin:0 17px 15px;padding:10px 13px;border-radius:14px;background:#F7F8F8;border:1px solid var(--line);font-size:11.5px;line-height:1.5;color:var(--muted);display:flex;gap:8px}
+.keywords-note-icon{flex:0 0 auto}
+.keywords-note-text{white-space:pre-wrap;min-width:0}
 .more{border:0;background:transparent;color:var(--accent);font-weight:800;padding:8px 0 0;font-size:12px}
 .post-link{margin:12px 17px 0}
 .post-link a{display:inline-block;color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;border-bottom:1px solid currentColor}
@@ -393,6 +396,7 @@ button{cursor:pointer}
   .caption-editor{border:1px solid #3A4140}
   .caption code{background:#212624}
   .caption pre{background:#212624}
+  .keywords-note{background:#222626}
   .client-chat-msg.theirs{background:#1E2927;color:#78C4B9}
   .changes{background:#222525;color:#ECEEEE}
   .approved-box{background:#223526;color:#85DCA2}
