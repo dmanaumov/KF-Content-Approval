@@ -1127,11 +1127,8 @@ document.querySelectorAll('.edit-tab').forEach((b) => {
 });
 
 // Показывает CEO-иконки в шапке (ceoLink/botLink) только когда браузер уже
-// залогинен в /team ПОД CEO-аккаунтом (config.ceoEmails) — не любым
-// staffAuth-доступом к этой же странице (тот проверяется отдельным общим
-// паролем и не завязан на личность, см. currentAccess() в index.js). Тихо
-// молчит и оставляет иконки скрытыми, если такой сессии в этом браузере нет
-// (обычная ситуация — /projects открывают по общему паролю, без /team).
+// залогинен в /team ПОД CEO-аккаунтом (config.ceoEmails). Тихо молчит и
+// оставляет иконки скрытыми, если такой сессии в этом браузере нет.
 async function revealCeoLinksIfOwner() {
   try {
     const res = await fetch('/api/team/me');

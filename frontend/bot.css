@@ -7,9 +7,8 @@
 /* Shared 3-tab nav (SMM / Бот / Переписка) — same pill-tab visual language
    as projects.html's edit-popup tabs (.edit-tab/.edit-tab.active), redrawn
    here standalone since these pages don't load projects.css. "SMM" always
-   links out to /projects (a different auth realm — shared Basic Auth, not
-   the CEO session these two new tabs require); "Бот"/"Переписка" stay
-   inside the CEO-gated pages. */
+   links out to /projects (a separate page, gated by the same Mattermost
+   session with an admin role); "Бот"/"Переписка" stay within the CEO pages. */
 .ceo-tabs{display:flex;gap:6px;margin:14px 0 18px;padding:0 12px}
 .ceo-tab{flex:1;text-align:center;border:1px solid var(--line);background:#FAFBFB;color:var(--muted);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:800;text-decoration:none}
 .ceo-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}

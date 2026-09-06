@@ -16,7 +16,6 @@ const mediaOrder = require('./mediaOrder');
 const taskCreators = require('./taskCreators');
 const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
-const mailer = require('./mailer');
 const analytics = require('./analytics');
 const botStore = require('./botStore');
 const apiKeys = require('./apiKeys');
@@ -271,52 +270,38 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
 
 // Кто перед нами для внутренних страниц — разбор доступа:
 //   1) живая /team-сессия, чей Mattermost-email есть в одном из списков
-//      (adminEmails / statEmails / ceoEmails) — персональный доступ, это
-//      то, как теперь разграничиваются права «кому из команды разрешено»;
-//   2) общий HTTP Basic Auth (STAFF_AUTH_USER/PASSWORD) — полный админ,
-//      оставлен как fallback для тех, у кого нет аккаунта Mattermost.
+//    (adminEmails / statEmails / ceoEmails) — персональный доступ, это
+//    то, как теперь разграничиваются права «кому из команды разрешено».
+// НЕ существует отдельной «админки» с общим паролем (Basic Auth) — вся
+// авторизация идёт через Mattermost-аккаунт (см. /team). Это единственный
+// вход: у кого есть роль admin/stat/ceo по email — тот попадает.
 function currentAccess(req) {
   const session = teamAuth.getSession(teamAuth.sessionIdFromRequest(req));
   if (session && session.user) {
     const role = teamAuth.roleFor(session.user);
     if (role.admin || role.stat || role.ceo) return { source: 'team', ...role, user: session.user };
   }
-  if (config.staffAuthUser && config.staffAuthPassword) {
-    const header = req.headers.authorization || '';
-    const [scheme, encoded] = header.split(' ');
-    if (scheme === 'Basic' && encoded) {
-      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-      const sep = decoded.indexOf(':');
-      const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
-      const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
-      if (user === config.staffAuthUser && pass === config.staffAuthPassword) {
-        return { source: 'basic', admin: true, stat: true, ceo: true, user: null };
-      }
-    }
-  }
   return null;
 }
 
-// Админ-гейт: живая /team-сессия с ролью admin ИЛИ общий Basic Auth.
+// Админ-гейт: живая /team-сессия с ролью admin (Mattermost). Без
+// WWW-Authenticate намеренно — нет Basic Auth, так что браузерный диалог
+// неуместен; вместо него отдаём понятное сообщение со ссылкой на /team.
 function staffAuth(req, res, next) {
   const access = currentAccess(req);
   if (access && access.admin) return next();
-  res.set('WWW-Authenticate', 'Basic realm="KF staff"');
-  // The browser's native Basic Auth prompt covers this body until the user
-  // cancels it — at that point this is what they see, so it's worth a link
-  // rather than a bare "Authentication required."
   res.status(401).type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Нужен вход</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto 0;padding:0 20px;text-align:center;color:#222">
 <h3>Нужен доступ</h3>
-<p>Войдите в <a href="/team">кабинет команды</a> под своим Mattermost-аккаунтом или введите пароль админки.</p>
+<p>Войдите в <a href="/team">кабинет команды</a> под своим Mattermost-аккаунтом — если вам положен доступ, ссылка появится сама.</p>
 </body></html>`);
 }
 
-// Стат-гейт: /team-сессия с ролью stat (admin её получает автоматически)
-// ИЛИ общий Basic Auth. Без WWW-Authenticate намеренно — для тех, у кого
-// только статистика, браузер не должен показывать непонятный Basic-диалог:
-// вместо него отдаём понятное сообщение со ссылкой на /team.
+// Стат-гейт: /team-сессия с ролью stat (admin её получает автоматически).
+// Без WWW-Authenticate намеренно — для тех, у кого только статистика,
+// браузер не должен показывать непонятный Basic-диалог: вместо него
+// отдаём понятное сообщение со ссылкой на /team.
 function requireStatAuth(req, res, next) {
   const access = currentAccess(req);
   if (access && access.stat) return next();
@@ -329,21 +314,6 @@ function requireStatAuth(req, res, next) {
 </body></html>`);
   }
   res.status(401).json({ error: 'not_allowed', message: 'Нужен доступ к статистике.' });
-}
-
-// Simple in-memory per-IP rate limit for the forgot-password endpoint below
-// (it's deliberately unauthenticated, so it needs its own brake against
-// being hammered/used to spam an inbox). Not persisted — resets on
-// redeploy/restart, which is fine for this purpose.
-const forgotPasswordAttempts = new Map(); // ip -> timestamps[]
-function tooManyForgotPasswordAttempts(ip) {
-  const now = Date.now();
-  const windowMs = 60 * 60 * 1000;
-  const limit = 5;
-  const recent = (forgotPasswordAttempts.get(ip) || []).filter((t) => now - t < windowMs);
-  recent.push(now);
-  forgotPasswordAttempts.set(ip, recent);
-  return recent.length > limit;
 }
 
 // "В графике" / "Небольшое отклонение" / "Не укладываемся" — a project's
@@ -1324,8 +1294,9 @@ app.post('/api/projects/:projectId/reference-upload', staffAuth, (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Team cabinet (config.teamCabinetPath, default /team) — internal staff, one
-// account each, real Mattermost login. Separate from staffAuth above (single
-// shared Basic Auth login for the /projects list) — see teamAuth.js for why.
+// Mattermost account each, real login. This is now the SINGLE auth for the
+// whole internal surface: /team itself, /projects (admin role), /stat and
+// /ceo all read the same /team session (see teamAuth.js / currentAccess).
 // ---------------------------------------------------------------------------
 
 // POST /api/team/login — body: { login, password }. `login` is whatever
@@ -1378,7 +1349,8 @@ app.get('/api/team/me', teamAuth.requireTeamAuth, (req, res) => {
 });
 
 // GET /api/staff/me — what access the CURRENT viewer has on the internal
-// pages (team session with an allowlisted email, or the shared Basic Auth).
+// pages (always a live Mattermost /team session with an allowlisted email —
+// there is no separate Basic-Auth admin account anymore).
 // Used by the staff page to show role-appropriate links (stat/ceo buttons).
 // Open endpoint by design — it only tells a person their own role, which the
 // protected APIs enforce regardless.
@@ -4051,8 +4023,8 @@ app.get('/swagger', teamAuth.requireCeoAuth, sendSwaggerUiPage);
 // GET /ceo/bot-chats + /ceo/bot-leads — the two new owner-only tabs of the
 // Telegram bot control center (frontend/bot-chats.html, bot-leads.html; see
 // the /api/ceo/telegram/* data routes above). Same requireCeoAuth as /ceo
-// itself — a regular staff session (even the shared /projects Basic Auth)
-// never gets past this, matching "закладки 2 и 3 доступны только CEO".
+// itself — even a regular /team staff/session (admit or stat only, not here
+// CEO) never gets past this, matching "закладки 2 и 3 доступны только CEO".
 app.get('/ceo/bot-chats', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-chats.html')));
 app.get('/ceo/bot-leads', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-leads.html')));
 
@@ -4100,49 +4072,6 @@ app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.joi
 // load and shows either the login form or the task list. No staffAuth here —
 // real per-person Mattermost login (see teamAuth.js) is the actual gate.
 app.get(config.teamCabinetPath, (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
-
-// "Забыли пароль" recovery for the staff Basic Auth above. Deliberately
-// public (no staffAuth — that would be circular) but gated by a
-// pre-approved email allowlist (STAFF_RECOVERY_EMAILS): only an address
-// already on that list ever gets an email, and the response is IDENTICAL
-// either way (generic "if this address is trusted, we sent it"), so the
-// endpoint can't be used to probe which addresses are trusted. This app
-// only has one shared staff password (not per-person accounts), so
-// "recovery" here means emailing a reminder of the current password, not a
-// reset flow — see mailer.js and frontend/forgot-password.html.
-app.get('/forgot-password', (req, res) => res.sendFile(path.join(frontendDir, 'forgot-password.html')));
-
-app.post('/api/staff/forgot-password', async (req, res) => {
-  const genericOk = () =>
-    res.json({ ok: true, message: 'Если этот адрес есть в списке доверенных — письмо с логином и паролем отправлено.' });
-
-  if (!config.staffAuthUser || !config.staffAuthPassword) {
-    return res.status(400).json({
-      error: 'not_configured',
-      message: 'HTTP Basic Auth для внутренней страницы сейчас не включён (STAFF_AUTH_USER/PASSWORD) — восстанавливать нечего.',
-    });
-  }
-  if (tooManyForgotPasswordAttempts(req.ip)) {
-    return res.status(429).json({ error: 'too_many_requests', message: 'Слишком много попыток, попробуйте позже.' });
-  }
-  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
-  if (!email || !config.staffRecoveryEmails.includes(email)) {
-    return genericOk(); // no such address on the list — same response as success, on purpose
-  }
-  try {
-    await mailer.sendMail({
-      to: email,
-      subject: 'Напоминание пароля — внутренняя страница проектов (КФ)',
-      text: `Логин: ${config.staffAuthUser}\nПароль: ${config.staffAuthPassword}\n\nЭто письмо отправлено автоматически по запросу восстановления пароля.`,
-    });
-  } catch (err) {
-    // Still return the generic success message to the caller — the failure
-    // (e.g. SMTP not configured) is visible in the server log for staff to
-    // fix, but shouldn't leak details to whoever submitted the form.
-    console.error('[api] forgot-password mail send failed:', err.message);
-  }
-  return genericOk();
-});
 
 // On a brand-new deploy, the "db" container and this "app" container start
 // at roughly the same time — docker-compose's plain `depends_on: [db]`

@@ -1,8 +1,7 @@
 /* Team cabinet (frontend/team.html/js) — layered on top of app.css (brand
    vars, .card/.status/.media, .btn, .toast) and projects.css (.field-label/
-   .field-input/.fp-box/.error-box, reused here the same way
-   forgot-password.html already does — see the comment there). Only what's
-   actually specific to this page lives here. */
+   .field-input/.fp-box/.error-box, reused here the same way — see the
+   comment there). Only what's actually specific to this page lives here. */
 
 .team-login-box{max-width:420px;margin:18px auto 0}
 .team-login-error{margin-top:12px}

@@ -4,9 +4,9 @@
 // the access_log table (see initSchema in db.js), so a single cabinet visit is
 // counted once rather than on every re-render/swipe. Anonymous cabinet visitors
 // get a `kf_vid` cookie (1 year) so their return visits across days are the same
-// "visitor". "Наши" (team members logged into /team, or the staff basic-auth
-// user) are attributed as role=team/staff with their username; everyone else is
-// role=client. Device/browser are classified from the User-Agent header.
+// "visitor". "Наши" (team members logged into /team) are attributed as
+// role=team with their username; everyone else is role=client. Device/browser
+// are classified from the User-Agent header.
 //
 // The stats *views* (how often a client logs in, which projects a worker opens,
 // which devices/browsers, which dates) are a later phase — this module only
@@ -99,9 +99,10 @@ function visitorId(req, res) {
   return id;
 }
 
-// Кто сейчас перед нами: залогиненный в /team — team; валидный basic-auth
-// админки — staff; иначе анонимный client. Проверяется в первую очередь для
-// кабинетных запросов, где "наш" сотрудник может открывать клиентские ссылки.
+// Кто сейчас перед нами: залогиненный в /team — team; иначе анонимный client.
+// Проверяется в первую очередь для кабинетных запросов, где "наш" сотрудник
+// может открывать клиентские ссылки. Отдельной Basic-админки больше нет —
+// только залогиненный в Mattermost сотрудник получает роль team.
 function identify(req) {
   try {
     const session = teamAuth.getSession(teamAuth.sessionIdFromRequest(req));
@@ -113,18 +114,7 @@ function identify(req) {
       };
     }
   } catch (e) {
-    // no-op — fall through to staff/client
-  }
-  if (config.staffAuthUser && config.staffAuthPassword) {
-    const header = req.headers.authorization || '';
-    const [scheme, encoded] = header.split(' ');
-    if (scheme === 'Basic' && encoded) {
-      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-      const sep = decoded.indexOf(':');
-      if (sep >= 0 && decoded.slice(0, sep) === config.staffAuthUser && decoded.slice(sep + 1) === config.staffAuthPassword) {
-        return { role: 'staff', actor: config.staffAuthUser, actorName: config.staffAuthUser };
-      }
-    }
+    // no-op — fall through to client
   }
   return { role: 'client', actor: '', actorName: '' };
 }
