@@ -41,6 +41,11 @@ services:
     # way, so keep whichever password you hand out strong.
     # ports:
     #   - "5432:5432"
+    networks:
+      default:
+      dokploy-network:
+        aliases:
+          - db
 
   app:
     build:
@@ -66,7 +71,15 @@ services:
       # Postgres. Safe to remove once you've confirmed the staff page still
       # shows the same client link after the first deploy of this version.
       - project-links-data:/app/data
+    networks:
+      default:
+      dokploy-network:
 
 volumes:
   project-links-data:
   kf-db-data:
+
+networks:
+  default:
+  dokploy-network:
+    external: true
