@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=17">
   <link rel="stylesheet" href="/projects.css?v=14">
-  <link rel="stylesheet" href="/team.css?v=18">
+  <link rel="stylesheet" href="/team.css?v=19">
 </head>
 <body>
 <div class="page">
@@ -48,6 +48,9 @@
           <a id="statLink" class="head-icon-link" href="/stat" title="Статистика доступа" aria-label="Статистика доступа" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="10" y="7" width="4" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="16" y="3" width="4" height="17" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
           </a>
+          <button id="teamCommentsToggle" class="cal-toggle" type="button" title="Комментарии" aria-label="Комментарии">
+            <span aria-hidden="true">💬</span>
+          </button>
           <button id="teamCalendarToggle" class="cal-toggle" type="button" title="Календарь публикаций" aria-label="Календарь публикаций">
             <span aria-hidden="true">🗓️</span>
           </button>
@@ -93,6 +96,23 @@
         <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
       </div>
       <div id="teamCalendarGrid" class="cal-grid"></div>
+    </div>
+
+    <div id="teamCommentsView" class="calendar-view" hidden>
+      <div class="cal-header">
+        <button id="teamCommentsBack" class="cal-back" type="button">← Назад</button>
+        <div class="cal-nav"><span class="cal-title">Комментарии</span></div>
+      </div>
+      <div class="team-comments-empty">
+        <div class="team-comments-empty-icon" aria-hidden="true">💬</div>
+        <p class="team-comments-empty-text">Здесь появится общая лента комментариев, которые посетители и гости оставляют на опубликованных постах — автоматически разобранная по тональности:</p>
+        <div class="team-comments-legend">
+          <span class="tc-tag tc-positive">Позитивные</span>
+          <span class="tc-tag tc-neutral">Нейтральные</span>
+          <span class="tc-tag tc-negative">Негативные — подсвечиваются, чтобы команда могла оперативно их отработать</span>
+        </div>
+        <p class="team-comments-empty-sub">Раздел пока в разработке — источники комментариев ещё не подключены.</p>
+      </div>
     </div>
 
     <button id="fabCreate" class="fab-create" type="button" aria-label="Запланировать публикацию">
@@ -175,7 +195,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=19"></script>
+<script src="/team.js?v=20"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

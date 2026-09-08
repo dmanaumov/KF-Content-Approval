@@ -84,6 +84,10 @@ let tcalMonth = null;
 // не даёт клику, которым браузер завершает drop, тут же открыть модалку
 // карточки поверх только что перетащенной даты.
 let calDragActive = false;
+// Какой вид был открыт до раздела "Комментарии" (см. openTeamCommentsView
+// ниже) — список или календарь-обзор — чтобы вернуться туда же, а не всегда
+// на список, когда закроют "Комментарии".
+let preCommentsView = 'list';
 const scheduleCache = {}; // 'YYYY-MM' -> {days}, from GET /api/team/schedule
 const teamCommentsCache = {}; // taskId -> [{id,authorId,authorName,text,createdAt,imageUrl}]
 // A photo picked/uploaded for the NEXT message in each chat, before Send is
@@ -186,6 +190,9 @@ const teamCalTitle = document.getElementById('teamCalTitle');
 const teamCalendarGrid = document.getElementById('teamCalendarGrid');
 const teamProjectFilterRow = document.getElementById('teamProjectFilterRow');
 const teamProjectFilter = document.getElementById('teamProjectFilter');
+const teamCommentsToggle = document.getElementById('teamCommentsToggle');
+const teamCommentsView = document.getElementById('teamCommentsView');
+const teamCommentsBack = document.getElementById('teamCommentsBack');
 
 function showLogin() {
   loginApp.hidden = false;
@@ -545,6 +552,38 @@ function teamCalendarToggleClick() {
   if (teamCalendarView.hidden) openTeamCalendarView(); else closeTeamCalendarView();
 }
 
+// Раздел "Комментарии" (заглушка — см. запрос пользователя 2026-09-08):
+// в будущем сюда будет стекаться общая лента комментариев, которые
+// посетители и гости оставляют на опубликованных постах, автоматически
+// разобранная по тональности (позитив/нейтрально/негатив, последние —
+// подсвечены, чтобы команда могла оперативно их отработать). Источники
+// комментариев (соцсети клиента и т.п.) пока не подключены — сам источник
+// данных и то, как именно их собирать, нужно обсудить отдельно, поэтому
+// пока это просто видимая закладка с описанием будущей функциональности,
+// без реальных данных.
+//
+// Третий полноэкранный вид наравне со списком и календарём-обзором —
+// открывается поверх того, что было показано (список ИЛИ календарь), и
+// при закрытии возвращает именно его, а не всегда список.
+function openTeamCommentsView() {
+  preCommentsView = (teamCalendarView && !teamCalendarView.hidden) ? 'calendar' : 'list';
+  teamListView.hidden = true;
+  teamCalendarView.hidden = true;
+  fabCreate.hidden = true;
+  teamCommentsView.hidden = false;
+}
+
+function closeTeamCommentsView() {
+  teamCommentsView.hidden = true;
+  fabCreate.hidden = false;
+  if (preCommentsView === 'calendar') {
+    teamCalendarView.hidden = false;
+    renderTeamCalendarGrid();
+  } else {
+    teamListView.hidden = false;
+  }
+}
+
 async function moveTaskToDate(taskId, dateStr) {
   const task = currentTasks.find((t) => t.id === taskId);
   const prevDate = task ? task.publishDate : null;
@@ -568,6 +607,8 @@ async function moveTaskToDate(taskId, dateStr) {
 
 teamCalendarToggle.addEventListener('click', teamCalendarToggleClick);
 teamCalBack.addEventListener('click', closeTeamCalendarView);
+teamCommentsToggle.addEventListener('click', openTeamCommentsView);
+teamCommentsBack.addEventListener('click', closeTeamCommentsView);
 teamCalPrev.addEventListener('click', () => {
   tcalMonth--;
   if (tcalMonth < 0) { tcalMonth = 11; tcalYear--; }

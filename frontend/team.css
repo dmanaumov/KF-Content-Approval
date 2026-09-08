@@ -1,12 +1,25 @@
 /* Team cabinet (frontend/team.html/js) — layered on top of app.css (brand
    vars, .card/.status/.media, .btn, .toast) and projects.css (.field-label/
-   .field-input/.fp-box/.error-box, reused here the same way — see the
-   comment there). Only what's actually specific to this page lives here. */
+   .field-input/.fp-box/.error-box, reused here the same way
+   forgot-password.html already does — see the comment there). Only what's
+   actually specific to this page lives here. */
 
 .team-login-box{max-width:420px;margin:18px auto 0}
 .team-login-error{margin-top:12px}
 
 .team-empty{margin:40px 20px;text-align:center;color:var(--muted);font-size:14px}
+
+/* Раздел "Комментарии" (заглушка — реальная лента и разбор по тональности
+   ещё не подключены, см. team.js openTeamCommentsView). */
+.team-comments-empty{max-width:420px;margin:48px auto;padding:0 20px;text-align:center}
+.team-comments-empty-icon{font-size:36px;margin-bottom:14px}
+.team-comments-empty-text{margin:0 0 18px;color:var(--ink);font-size:14px;line-height:1.5}
+.team-comments-legend{display:flex;flex-direction:column;gap:8px;margin:0 0 18px}
+.tc-tag{display:inline-block;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:700;text-align:left}
+.tc-tag.tc-positive{background:#E1F3E5;color:#216A39}
+.tc-tag.tc-neutral{background:#F2F4F4;color:#33413F}
+.tc-tag.tc-negative{background:#FBE0E0;color:#A12E2E}
+.team-comments-empty-sub{margin:0;color:var(--muted);font-size:12.5px}
 
 /* Фильтр-чипы по статусам: все включены по умолчанию; статусы, где нужны
    действия ответственного (В ПРОЦЕССЕ, КОРРЕКТИРОВКА) — тёплым цветом,
@@ -369,4 +382,7 @@
   .tm-dropzone-icon{background:#1E2927}
   .tm-attach-link-row{background:#212727}
   .tm-attach-link-row input{background:#262222}
+  .tc-tag.tc-positive{background:#213626;color:#85DCA2}
+  .tc-tag.tc-neutral{background:#222626;color:#ECEEEE}
+  .tc-tag.tc-negative{background:#2E1919;color:#E58A8A}
 }
