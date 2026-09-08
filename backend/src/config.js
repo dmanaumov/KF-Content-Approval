@@ -329,4 +329,12 @@ module.exports = {
   // docs/N8N_AUTOMATION.md for the full wiring. Blank (default) = those
   // routes respond 503 rather than silently accepting requests.
   botApiKey: process.env.BOT_API_KEY || '',
+
+  // Name (slug, as it appears in the channel URL — e.g.
+  // https://<host>/<team>/channels/smm-team) of the team's own Mattermost
+  // channel, shown as a slide-out "chat" panel in the /team cabinet (see
+  // index.js's /api/team/chat/* routes). Reuses config.teamId (the team the
+  // channel lives in) — no separate team slug is stored since the core API
+  // resolves channels by teamId, not by team slug.
+  smmTeamChannelName: process.env.MM_TEAM_CHAT_CHANNEL_NAME || 'smm-team',
 };

@@ -331,6 +331,56 @@
 .fab-create-submit:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(223,97,98,.38)}
 .fab-create-submit:disabled{opacity:.6;cursor:default;transform:none;box-shadow:none}
 
+/* --- «Открыть чат» — вторая плавающая кнопка, тот же приём/стиль, что и
+   «Запланировать публикацию» (см. .fab-create выше), но с двумя явными
+   состояниями: обычная (спокойная, без пульса) — нет новых сообщений, и
+   акцентная (фирменный рыжий градиент + дыхание тени, .fab-chat-unread) —
+   есть непрочитанные (см. team.js's refreshChatStatus/updateChatButtonState,
+   опрашивает GET /api/team/chat/status). Стоит НАД «Запланировать
+   публикацию», а не рядом — на мобильной ширине рядом было бы тесно. */
+.fab-chat{
+  bottom:calc(82px + env(safe-area-inset-bottom, 0px));
+  background:linear-gradient(120deg, #6B7674 0%, #4B5654 60%, #33403D 140%);
+  box-shadow:0 10px 22px rgba(20,30,28,.28), 0 3px 8px rgba(20,30,28,.18);
+  animation:none;
+}
+.fab-chat:hover{box-shadow:0 14px 28px rgba(20,30,28,.32), 0 4px 10px rgba(20,30,28,.2)}
+.fab-chat.fab-chat-unread{
+  background:linear-gradient(120deg, #EE8145 0%, var(--kf-coral) 55%, #C8473F 140%);
+  box-shadow:0 12px 28px rgba(223,97,98,.38), 0 3px 10px rgba(223,97,98,.26);
+  animation:fab-breathe 3.4s ease-in-out infinite;
+}
+.fab-chat.fab-chat-unread:hover{box-shadow:0 16px 34px rgba(223,97,98,.44), 0 4px 12px rgba(223,97,98,.3)}
+
+/* --- Панель чата команды — выезжает СБОКУ (справа), а не снизу как
+   .tm-modal/.tm-card — по прямому запросу ("при нажатии на кнопку сбоку
+   должна открыться панель"). Переиспользует .tm-chat-* словарь классов
+   (сообщения/composer) из карточки задачи для визуальной консистентности. */
+.chat-panel{position:fixed;inset:0;z-index:55;display:flex;justify-content:flex-end}
+.chat-panel-backdrop{position:absolute;inset:0;background:rgba(15,25,24,.45)}
+.chat-panel-card{
+  position:relative;
+  width:min(400px, 100vw);
+  height:100%;
+  background:var(--card);
+  box-shadow:-16px 0 50px rgba(15,25,24,.25);
+  display:flex;
+  flex-direction:column;
+  animation:chat-panel-slide-in .22s ease;
+}
+@keyframes chat-panel-slide-in{from{transform:translateX(100%)}to{transform:translateX(0)}}
+.chat-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 56px 14px 18px;border-bottom:1px solid var(--line)}
+.chat-panel-title-wrap{display:flex;align-items:center;gap:10px;min-width:0}
+.chat-panel-icon{font-size:19px;flex:0 0 auto}
+.chat-panel-title{margin:0;font-size:15px;font-weight:850;letter-spacing:-.01em;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-panel-head .tm-close{position:absolute;top:14px;right:14px}
+.chat-messages{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.chat-messages .tm-chat-msg{max-width:82%}
+.chat-panel-compose{padding:12px 14px calc(12px + env(safe-area-inset-bottom, 0px));border-top:1px solid var(--line)}
+@media (max-width:480px){
+  .chat-panel-card{width:100vw}
+}
+
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#12181A;
@@ -385,4 +435,7 @@
   .tc-tag.tc-positive{background:#213626;color:#85DCA2}
   .tc-tag.tc-neutral{background:#222626;color:#ECEEEE}
   .tc-tag.tc-negative{background:#2E1919;color:#E58A8A}
+  .chat-panel-card{background:#1B2320}
+  .chat-panel-head{border-color:#2A3532}
+  .chat-panel-compose{border-color:#2A3532}
 }

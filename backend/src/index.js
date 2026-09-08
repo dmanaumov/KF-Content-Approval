@@ -1893,6 +1893,126 @@ app.post('/api/team/tasks/:taskId/client-message', teamAuth.requireTeamAuth, asy
   }
 });
 
+// --- Team chat panel (config.smmTeamChannelName) ---------------------------
+// "Открыть чат" button in /team: reads/sends messages in the SMM team's own
+// Mattermost channel using each team member's OWN Mattermost session token
+// (already stored per /team login — see teamAuth.js), so messages appear as
+// that real person and unread state rides on Mattermost's native per-user
+// tracking rather than a second custom read-tracking system in our own
+// Postgres — see mattermostClient.js's *AsUser functions for the full
+// rationale.
+
+// The channel's id/team almost never changes — resolved by name once and
+// cached in memory (module-level, same pattern as mattermostClient.js's own
+// userIdCache) instead of re-resolving by name on every single status poll.
+// Whichever team member's request happens to resolve it first "wins" — the
+// channel itself is shared for the whole team either way. Only cached on
+// SUCCESS (left null on failure) so a wrong/renamed channel name doesn't get
+// stuck failing forever once someone fixes MM_TEAM_CHAT_CHANNEL_NAME.
+let smmChannelCache = null; // { id } | null
+async function resolveSmmChannel(mmToken) {
+  if (smmChannelCache) return smmChannelCache;
+  const channel = await mm.getChannelByNameAsUser(mmToken, config.teamId, config.smmTeamChannelName);
+  smmChannelCache = { id: channel.id };
+  return smmChannelCache;
+}
+
+// A per-user Mattermost token can go stale (password changed, session
+// revoked in Mattermost itself, etc.) independently of our own 24h /team
+// cookie TTL — mattermostClient.js's coreFetchAsUser() flags that case via
+// err.mmSessionExpired. Surfaced as a DISTINCT error code (not a generic
+// 502) so the frontend can specifically prompt "log into /team again"
+// instead of a generic "chat unavailable" message.
+function handleMmSessionExpired(res, err, context) {
+  if (!err.mmSessionExpired) return false;
+  console.error(`[api] ${context}: team member's Mattermost session expired/invalid`);
+  res.status(401).json({ error: 'mm_session_expired', message: 'Сессия Mattermost истекла — войдите в команду заново.' });
+  return true;
+}
+
+// GET /api/team/chat/status — { unread } for the header button's accent
+// (highlighted vs. plain) state. Cheap and meant to be polled.
+app.get('/api/team/chat/status', teamAuth.requireTeamAuth, async (req, res) => {
+  try {
+    const { mmToken } = req.teamSession;
+    const channel = await resolveSmmChannel(mmToken);
+    const { unread } = await mm.getChannelUnreadAsUser(mmToken, channel.id);
+    res.json({ unread });
+  } catch (err) {
+    if (handleMmSessionExpired(res, err, 'team chat status')) return;
+    console.error('[api] team chat status failed:', err.message);
+    res.status(502).json({ error: 'chat_unavailable', message: err.message });
+  }
+});
+
+// GET /api/team/chat/messages — recent messages with resolved author display
+// names, newest-last (ready to render top-to-bottom). Marks the channel as
+// viewed (clears unread in Mattermost itself) as a side effect of opening
+// the panel, matching how Mattermost's own app behaves — done AFTER fetching
+// the messages, not before, so a message that arrives in between the two
+// calls isn't counted "read" without ever having been shown.
+app.get('/api/team/chat/messages', teamAuth.requireTeamAuth, async (req, res) => {
+  try {
+    const { mmToken, user } = req.teamSession;
+    const channel = await resolveSmmChannel(mmToken);
+    const perPage = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const data = await mm.listChannelPostsAsUser(mmToken, channel.id, perPage);
+    const order = data.order || [];
+    const posts = data.posts || {};
+    const authorIds = order.map((id) => posts[id] && posts[id].user_id).filter(Boolean);
+    const profiles = await mm.getUsersByIdsAsUser(mmToken, authorIds);
+    const nameById = new Map(
+      profiles.map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(' ').trim() || p.username])
+    );
+    const messages = order
+      .map((id) => posts[id])
+      .filter((p) => p && !p.delete_at) // skip deleted posts still present in the map
+      .sort((a, b) => a.create_at - b.create_at) // `order` is newest-first; render oldest-first
+      .map((p) => ({
+        id: p.id,
+        text: p.message,
+        createAt: p.create_at,
+        userId: p.user_id,
+        authorName: nameById.get(p.user_id) || 'Участник команды',
+        mine: p.user_id === user.id,
+      }));
+    await mm.markChannelViewedAsUser(mmToken, user.id, channel.id).catch((err) => {
+      console.error('[api] team chat mark-viewed failed (non-fatal, messages still shown):', err.message);
+    });
+    res.json({ messages });
+  } catch (err) {
+    if (handleMmSessionExpired(res, err, 'team chat messages')) return;
+    console.error('[api] team chat messages failed:', err.message);
+    res.status(502).json({ error: 'chat_unavailable', message: err.message });
+  }
+});
+
+// POST /api/team/chat/messages — body: { text }. Posts as the logged-in team
+// member's OWN Mattermost account (a real person, not a shared bot).
+app.post('/api/team/chat/messages', teamAuth.requireTeamAuth, async (req, res) => {
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text_required' });
+  try {
+    const { mmToken, user } = req.teamSession;
+    const channel = await resolveSmmChannel(mmToken);
+    const post = await mm.createChannelPostAsUser(mmToken, channel.id, text);
+    res.json({
+      message: {
+        id: post.id,
+        text: post.message,
+        createAt: post.create_at,
+        userId: post.user_id,
+        authorName: [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.username,
+        mine: true,
+      },
+    });
+  } catch (err) {
+    if (handleMmSessionExpired(res, err, 'team chat send')) return;
+    console.error('[api] team chat send failed:', err.message);
+    res.status(502).json({ error: 'chat_send_failed', message: err.message });
+  }
+});
+
 // POST /api/boards/:boardId/tasks/:taskId/approve — idempotent.
 app.post('/api/boards/:boardId/tasks/:taskId/approve', async (req, res) => {
   try {
@@ -2089,10 +2209,10 @@ async function saveDescriptionText(boardId, taskId, blocks, text) {
       await mm.deleteBlock(boardId, extra.id);
     }
   } else {
-    proseBlockId = `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    await mm.addBlocks(boardId, [
+    const tempId = `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const createResult = await mm.addBlocks(boardId, [
       {
-        id: proseBlockId,
+        id: tempId,
         boardId,
         parentId: taskId,
         type: 'text',
@@ -2103,6 +2223,37 @@ async function saveDescriptionText(boardId, taskId, blocks, text) {
         fields: {},
       },
     ], 'addDescriptionBlock');
+    // ROOT CAUSE (2026-09-08, reported live — card cgznfo8aejjrpjrjusc8bdkqnhy:
+    // bytesSaved matched what was sent, so the text genuinely reached
+    // Mattermost, but the card rendered EMPTY in Mattermost's own Boards UI).
+    // Same underlying issue already documented above createAutomationTask's
+    // cardId/actualCardId fix (2026-08-25): Mattermost Boards does NOT honor
+    // a client-supplied block id on insert — it reassigns its OWN
+    // server-generated id, including for this text block. This code used to
+    // just keep trusting the LOCAL tempId as if it were the real one and
+    // patch contentOrder to point at it below — a contentOrder entry for an
+    // id that doesn't exist in Mattermost is exactly as good as no entry at
+    // all, so the card's real body block (under ITS real, server-assigned
+    // id) never made it into contentOrder. This app's own caption reader
+    // (extractDescriptionText in taskMapper.js) scans children by parentId
+    // regardless of contentOrder — so GET .../tasks' `caption` and
+    // bytesSaved both looked correct the whole time — but Mattermost's own
+    // Boards UI renders ONLY blocks listed in contentOrder. The BUGFIX
+    // 2026-08-27 self-heal below only ever re-added whatever id THIS
+    // variable already held, so it could never catch this — it was healing
+    // the symptom (missing contentOrder entry) with the wrong id already
+    // baked in. Fix: read the real id back out of addBlocks' own response,
+    // exactly like createAutomationTask already does for the card id.
+    const createdBlocks = Array.isArray(createResult) ? createResult : [];
+    const createdTextBlock = createdBlocks.find((b) => b.type === 'text') || createdBlocks[0];
+    if (!createdTextBlock) {
+      console.error(
+        `[api] saveDescriptionText(${boardId},${taskId}): addBlocks response didn't include the new text block ` +
+          `(got: ${JSON.stringify(createResult).slice(0, 300)}) — falling back to the locally-generated id, ` +
+          `contentOrder may end up pointing at a non-existent block again.`
+      );
+    }
+    proseBlockId = (createdTextBlock && createdTextBlock.id) || tempId;
   }
 
   // BUGFIX 2026-08-27 (reported live, card

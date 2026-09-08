@@ -199,6 +199,13 @@ const teamProjectFilter = document.getElementById('teamProjectFilter');
 const teamCommentsToggle = document.getElementById('teamCommentsToggle');
 const teamCommentsView = document.getElementById('teamCommentsView');
 const teamCommentsBack = document.getElementById('teamCommentsBack');
+const fabChat = document.getElementById('fabChat');
+const chatPanel = document.getElementById('chatPanel');
+const chatPanelClose = document.getElementById('chatPanelClose');
+const chatMessages = document.getElementById('chatMessages');
+const chatSendForm = document.getElementById('chatSendForm');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
 
 function showLogin() {
   loginApp.hidden = false;
@@ -252,6 +259,8 @@ async function login() {
 }
 
 async function logout() {
+  clearInterval(chatPollTimer);
+  closeChatPanel();
   try {
     await fetch('/api/team/logout', { method: 'POST' });
   } catch (err) {
@@ -447,6 +456,7 @@ async function init() {
     currentUser = data.user;
     showApp(data.user, data.access);
     loadTasks();
+    startChatPolling();
   } catch (err) {
     showLogin();
   }
@@ -595,6 +605,114 @@ function closeTeamCommentsView() {
     teamListView.hidden = false;
   }
 }
+
+// ============================== Чат команды (💬 «Открыть чат») ==============================
+// Панель поверх кабинета с реальной перепиской в команднОм канале Mattermost
+// (config.smmTeamChannelName на бэкенде) — каждый видит и пишет как СВОЙ
+// реальный аккаунт Mattermost (сервер использует токен именно этой сессии),
+// не общий бот. Кнопка акцентная (фирменный градиент + дыхание тени, как у
+// «Запланировать публикацию»), пока есть непрочитанные — опрашивается ниже.
+const CHAT_POLL_MS = 25000;
+let chatUnreadCount = 0;
+let chatPollTimer = null;
+let chatPanelOpen = false;
+
+function updateChatButtonState() {
+  fabChat.classList.toggle('fab-chat-unread', chatUnreadCount > 0);
+  fabChat.setAttribute('aria-label', chatUnreadCount > 0 ? `Открыть чат (есть новые сообщения)` : 'Открыть чат');
+}
+
+async function refreshChatStatus() {
+  if (chatPanelOpen) return; // пока панель открыта, счётчик и так будет обнулён при закрытии/загрузке сообщений
+  try {
+    const data = await teamApi('/chat/status');
+    chatUnreadCount = data.unread || 0;
+    updateChatButtonState();
+  } catch (err) {
+    // тихо — это фоновый опрос, не отвлекаем тостами на каждый неудачный тик
+  }
+}
+
+function startChatPolling() {
+  refreshChatStatus();
+  clearInterval(chatPollTimer);
+  chatPollTimer = setInterval(refreshChatStatus, CHAT_POLL_MS);
+}
+
+function formatChatTime(ms) {
+  if (!ms) return '';
+  try {
+    return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+  } catch (e) {
+    return '';
+  }
+}
+
+function chatMessageHtml(m) {
+  return `<div class="tm-chat-msg${m.mine ? ' mine' : ''}">
+    <div class="tm-chat-msg-author">${esc(m.authorName || 'Команда')}</div>
+    <div class="tm-chat-msg-text">${esc(m.text || '')}</div>
+    <div class="tm-chat-msg-time">${formatChatTime(m.createAt)}</div>
+  </div>`;
+}
+
+function scrollChatToBottom() {
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+async function openChatPanel() {
+  chatPanelOpen = true;
+  chatPanel.hidden = false;
+  chatMessages.innerHTML = '<div class="tm-chat-empty">Загружаем сообщения…</div>';
+  try {
+    const data = await teamApi('/chat/messages');
+    const items = data.messages || [];
+    chatMessages.innerHTML = items.length
+      ? items.map(chatMessageHtml).join('')
+      : '<div class="tm-chat-empty">Сообщений пока нет — напишите первым!</div>';
+    scrollChatToBottom();
+    chatUnreadCount = 0;
+    updateChatButtonState();
+  } catch (err) {
+    chatMessages.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+  }
+  chatInput.focus();
+}
+
+function closeChatPanel() {
+  chatPanelOpen = false;
+  chatPanel.hidden = true;
+}
+
+async function sendChatMessage(e) {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatSendBtn.disabled = true;
+  try {
+    const data = await teamApi('/chat/messages', { method: 'POST', body: { text } });
+    const empty = chatMessages.querySelector('.tm-chat-empty');
+    if (empty) empty.remove();
+    chatMessages.insertAdjacentHTML('beforeend', chatMessageHtml(data.message));
+    scrollChatToBottom();
+    chatInput.value = '';
+  } catch (err) {
+    toast('Не удалось отправить: ' + err.message);
+  } finally {
+    chatSendBtn.disabled = false;
+  }
+}
+
+fabChat.addEventListener('click', openChatPanel);
+chatPanelClose.addEventListener('click', closeChatPanel);
+chatPanel.querySelector('.chat-panel-backdrop').addEventListener('click', closeChatPanel);
+chatSendForm.addEventListener('submit', sendChatMessage);
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage(e);
+  }
+});
 
 async function moveTaskToDate(taskId, dateStr) {
   const task = currentTasks.find((t) => t.id === taskId);

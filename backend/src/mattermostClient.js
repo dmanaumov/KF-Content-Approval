@@ -620,6 +620,114 @@ async function getUserIdByUsername(username) {
   }
 }
 
+// --- Core API "as a real team member" ------------------------------------
+// Everything above uses the ONE shared bot-account session (module-level
+// `session`) to talk to the Boards plugin API. The functions below are a
+// separate, deliberately parallel path: they call Mattermost's CORE
+// (/api/v4/...) API using a caller-SUPPLIED token — specifically, a /team
+// cabinet member's own real Mattermost session token, already stored per
+// login by teamAuth.js (req.teamSession.mmToken). This is what powers the
+// "открыть чат" team-channel panel: messages are read/sent AS that actual
+// person (not a shared bot), and unread state rides on Mattermost's own
+// native per-user tracking (ChannelMember.msg_count vs Channel.total_msg_count)
+// instead of a second, custom read-tracking system in our own Postgres.
+//
+// Deliberately NOT routed through mmFetch()/getBearerToken() above — those
+// always mean "the bot account", and there is no bot-side relogin story for
+// a token that belongs to someone else. If a per-user token has expired/been
+// revoked, the caller gets a plain 401 back from Mattermost and the route
+// handlers below turn that into { error: 'mm_session_expired' } — the
+// frontend's job is then to prompt that person to log back into /team (which
+// re-runs loginAs() and stores a fresh mmToken).
+async function coreFetchAsUser(token, path, opts = {}, context = 'coreFetchAsUser') {
+  if (!config.mattermostUrl) throw new Error('MATTERMOST_URL is not configured');
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const res = await fetchWithTimeout(`${config.mattermostUrl}/api/v4${path}`, { ...opts, headers });
+  if (res.status === 401) {
+    const err = new Error(`${context}: сессия Mattermost истекла или недействительна (HTTP 401)`);
+    err.mmSessionExpired = true;
+    throw err;
+  }
+  return asJsonOrThrow(res, context);
+}
+
+// GET /teams/{teamId}/channels/name/{channelName} — resolve a channel by its
+// URL slug (what config.smmTeamChannelName holds) to its id + metadata,
+// including total_msg_count (used for unread computation below).
+async function getChannelByNameAsUser(token, teamId, channelName) {
+  return coreFetchAsUser(
+    token,
+    `/teams/${teamId}/channels/name/${encodeURIComponent(channelName)}`,
+    {},
+    `getChannelByNameAsUser(${channelName})`
+  );
+}
+
+// GET /channels/{channelId}/members/me — this user's own membership record
+// for the channel (msg_count = how many of the channel's messages they've
+// "read" as of last_viewed_at, per Mattermost's own bookkeeping).
+async function getChannelMemberMeAsUser(token, channelId) {
+  return coreFetchAsUser(token, `/channels/${channelId}/members/me`, {}, `getChannelMemberMeAsUser(${channelId})`);
+}
+
+// Combines a fresh channel fetch (for its current total_msg_count) with this
+// user's membership record to compute how many messages they haven't seen
+// yet. Fetching the channel fresh (rather than trusting a cached value from
+// getChannelByNameAsUser) matters because total_msg_count changes every time
+// ANYONE posts — exactly the number this button's accent state depends on.
+async function getChannelUnreadAsUser(token, channelId) {
+  const [channel, member] = await Promise.all([
+    coreFetchAsUser(token, `/channels/${channelId}`, {}, `getChannelUnreadAsUser:channel(${channelId})`),
+    getChannelMemberMeAsUser(token, channelId),
+  ]);
+  const unread = Math.max(0, (channel.total_msg_count || 0) - (member.msg_count || 0));
+  return { unread, totalMsgCount: channel.total_msg_count || 0, msgCount: member.msg_count || 0 };
+}
+
+// GET /channels/{channelId}/posts?per_page=N — recent posts. Response shape
+// is { order: [...ids, newest first], posts: { id: Post } } — callers
+// re-order via `order` since Object.values(posts) has no guaranteed order.
+async function listChannelPostsAsUser(token, channelId, perPage = 30) {
+  return coreFetchAsUser(
+    token,
+    `/channels/${channelId}/posts?per_page=${encodeURIComponent(perPage)}`,
+    {},
+    `listChannelPostsAsUser(${channelId})`
+  );
+}
+
+// POST /posts — creates the post as the token's own user (Mattermost infers
+// the author from the auth token, not a field in the body).
+async function createChannelPostAsUser(token, channelId, message) {
+  return coreFetchAsUser(
+    token,
+    '/posts',
+    { method: 'POST', body: JSON.stringify({ channel_id: channelId, message }) },
+    `createChannelPostAsUser(${channelId})`
+  );
+}
+
+// POST /channels/members/{userId}/view — tells Mattermost itself "I've now
+// seen this channel", which is what advances member.msg_count / last_viewed_at
+// (i.e. this is how the unread badge gets cleared, and it stays consistent
+// even if the person separately opens real Mattermost).
+async function markChannelViewedAsUser(token, userId, channelId) {
+  return coreFetchAsUser(
+    token,
+    `/channels/members/${userId}/view`,
+    { method: 'POST', body: JSON.stringify({ channel_id: channelId }) },
+    `markChannelViewedAsUser(${channelId})`
+  );
+}
+
+// POST /users/ids — bulk id→profile lookup, used to resolve each post's
+// user_id to a display name when rendering the message list.
+async function getUsersByIdsAsUser(token, ids) {
+  const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!uniqueIds.length) return [];
+  return coreFetchAsUser(token, '/users/ids', { method: 'POST', body: JSON.stringify(uniqueIds) }, 'getUsersByIdsAsUser');
+}
+
 module.exports = {
   listTeamBoards,
   getBoard,
@@ -633,4 +741,10 @@ module.exports = {
   fetchFileStream,
   getUserIdByUsername,
   loginAs,
+  getChannelByNameAsUser,
+  getChannelUnreadAsUser,
+  listChannelPostsAsUser,
+  createChannelPostAsUser,
+  markChannelViewedAsUser,
+  getUsersByIdsAsUser,
 };

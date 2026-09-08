@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=17">
   <link rel="stylesheet" href="/projects.css?v=14">
-  <link rel="stylesheet" href="/team.css?v=19">
+  <link rel="stylesheet" href="/team.css?v=20">
 </head>
 <body>
 <div class="page">
@@ -115,6 +115,11 @@
       </div>
     </div>
 
+    <button id="fabChat" class="fab-create fab-chat" type="button" aria-label="Открыть чат">
+      <span class="fab-create-icon" aria-hidden="true">💬</span>
+      <span class="fab-create-label">Открыть чат</span>
+    </button>
+
     <button id="fabCreate" class="fab-create" type="button" aria-label="Запланировать публикацию">
       <span class="fab-create-icon" aria-hidden="true">+</span>
       <span class="fab-create-label">Запланировать публикацию</span>
@@ -187,6 +192,28 @@
   </div>
 </div>
 
+<div id="chatPanel" class="chat-panel" hidden>
+  <div class="chat-panel-backdrop"></div>
+  <div class="chat-panel-card">
+    <div class="chat-panel-head">
+      <div class="chat-panel-title-wrap">
+        <span class="chat-panel-icon" aria-hidden="true">💬</span>
+        <h2 class="chat-panel-title">Чат команды SMM</h2>
+      </div>
+      <button id="chatPanelClose" class="tm-close" type="button" aria-label="Закрыть">✕</button>
+    </div>
+    <div id="chatMessages" class="chat-messages">
+      <div class="tm-chat-empty">Загружаем сообщения…</div>
+    </div>
+    <form id="chatSendForm" class="tm-chat-compose chat-panel-compose">
+      <div class="tm-chat-compose-row">
+        <textarea id="chatInput" placeholder="Написать сообщение…" rows="1"></textarea>
+        <button id="chatSendBtn" class="tm-chat-send" type="submit" aria-label="Отправить">➤</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="lightbox" class="lightbox" hidden>
   <div class="lightbox-backdrop"></div>
   <button type="button" class="lightbox-close" aria-label="Закрыть">✕</button>
@@ -195,7 +222,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=21"></script>
+<script src="/team.js?v=22"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>
