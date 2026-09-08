@@ -1158,6 +1158,10 @@ function renderModalHead(t) {
         ${networkPillHtml(t)}
         <div class="tm-popover" id="tmNetworkPop" hidden>${networkPopHtml(t)}</div>
       </div>
+      <button type="button" class="tm-delete-btn" data-action="delete-task" aria-label="Удалить пост" title="Удалить пост">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="13" height="13"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Удалить
+      </button>
     </div>
   `;
   if (editingTitle) {
@@ -1597,6 +1601,26 @@ tmHead.addEventListener('click', async (e) => {
       flashSaved(document.querySelector('#tmHead .tm-date-pill'));
     } catch (err) {
       toast('Не удалось изменить дату: ' + err.message);
+    }
+    return;
+  }
+  if (action === 'delete-task') {
+    const { bare } = splitTitle(t.title);
+    const label = stripAiTag(bare) || '(без названия)';
+    const sure = confirm(`Удалить пост «${label}»?\n\nЭто действие нельзя отменить — карточка будет удалена из Mattermost навсегда.`);
+    if (!sure) return;
+    btn.disabled = true;
+    try {
+      await teamApi(`/tasks/${encodeURIComponent(t.id)}/delete`, { method: 'POST' });
+      currentTasks = currentTasks.filter((x) => x.id !== t.id);
+      closeTaskModal();
+      renderChips();
+      renderTasks();
+      if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
+      toast('Пост удалён.');
+    } catch (err) {
+      btn.disabled = false;
+      toast('Не удалось удалить: ' + err.message);
     }
     return;
   }

@@ -1770,6 +1770,23 @@ app.post('/api/team/tasks/:taskId/title', teamAuth.requireTeamAuth, async (req, 
   }
 });
 
+// POST /api/team/tasks/:taskId/delete — no body. Permanently deletes the
+// card (see deleteTask above for what "permanently" means here — this is
+// Mattermost's own block delete, not a soft/archive flag). The client is
+// expected to have already confirmed with the person before calling this —
+// see the "небольшая красная" delete button in the card header (team.js).
+app.post('/api/team/tasks/:taskId/delete', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    await deleteTask(boardId, req.params.taskId, teamActorName(req));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] team task delete failed:', err.message);
+    res.status(502).json({ error: 'delete_failed', message: err.message });
+  }
+});
+
 // POST /api/team/tasks/:taskId/network — body: { network: 'ig'|'tg'|'vk'|'ok'|'max'|'' }.
 // Which platform this post is going out to — was missing a UI for it
 // entirely before this; see updateTaskNetwork for why this is a title
@@ -2645,6 +2662,28 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
   await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ДОБАВЛЕН МАТЕРИАЛ (${actorName || 'команда'}): ${shareUrl}`);
   invalidate(boardId);
   return refetchTeamTask(boardId, taskId);
+}
+
+// Permanently deletes a card — the "Удалить" button in the /team card
+// header (added per direct request, 2026-09-08: "должна быть кнопка
+// (небольшая красная) удалить и перед удалением надо переспросить"). Uses
+// the SAME block-delete call already relied on elsewhere in this app (see
+// saveDescriptionText's cleanup of extra prose blocks) — Mattermost's own
+// DELETE /boards/{boardId}/blocks/{blockId}. No "flip status"/audit comment
+// gets left on the card the way other edits do — there's nowhere for a
+// comment to live once the card itself is gone — so the only record is this
+// server log line. The confirmation step lives ENTIRELY on the client
+// (team.js's delete-task handler — a plain confirm() dialog, same pattern
+// already used for the "новая ссылка" regenerate action in
+// frontend/projects.js): by the time a request reaches this route, the
+// asking has already happened — this just deletes.
+async function deleteTask(boardId, taskId, actorName) {
+  const { cards } = await loadBoard(boardId, { fresh: true });
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} — возможно, уже удалена.`);
+  await mm.deleteBlock(boardId, taskId);
+  console.log(`[api] team task deleted: board=${boardId} task=${taskId} title="${card.title}" actor=${actorName || 'команда'}`);
+  invalidate(boardId);
 }
 
 // ---------------------------------------------------------------------------

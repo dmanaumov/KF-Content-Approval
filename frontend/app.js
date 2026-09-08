@@ -1203,6 +1203,46 @@ stackEl.addEventListener('pointermove', (e) => {
 stackEl.addEventListener('pointerup', endSwipe);
 stackEl.addEventListener('pointercancel', cancelSwipe);
 
+// «1 / 6» под фото-каруселью (см. mediaHtml's .dots) — раньше это была
+// статичная строка, отрисованная один раз при построении карточки, и
+// никогда не менялась при пролистывании: клиент реально листает фото/видео
+// (нативный горизонтальный скролл с scroll-snap — см. .carousel в app.css),
+// но счётчик так и оставался «1 / N» (жалоба клиента, 2026-09-08). Фикс —
+// слушаем 'scroll' на самой карусели и пересчитываем номер текущего слайда
+// из scrollLeft. 'scroll' не всплывает (bubbles:false), поэтому вешаем
+// делегированный слушатель на stackEl В ФАЗЕ ЗАХВАТА (capture:true) — это
+// единственный способ поймать scroll с произвольного вложенного элемента
+// одним обработчиком, не перевешивая слушатель на каждую карусель заново
+// после каждого render() (список карточек периодически перерисовывается
+// целиком — см. loadTasks/render — так что слушатели на самих .carousel
+// всё равно пришлось бы навешивать заново после каждого опроса).
+function updateCarouselCounter(carousel) {
+  const dots = carousel.nextElementSibling;
+  if (!dots || !dots.classList.contains('dots')) return;
+  const count = parseInt(carousel.dataset.count, 10) || 0;
+  if (count <= 1) return;
+  const width = carousel.clientWidth || 1;
+  const index = Math.max(0, Math.min(count - 1, Math.round(carousel.scrollLeft / width)));
+  dots.textContent = `${index + 1} / ${count}`;
+}
+// Множество, а не один булев флаг — если пользователь (редкий, но возможный
+// случай на широком экране с несколькими карточками во вьюпорте) листает
+// две карусели почти одновременно, обеим достаётся обновление на следующий
+// кадр, а не только той, что успела отсканить scroll первой.
+const pendingCarouselUpdates = new Set();
+stackEl.addEventListener('scroll', (e) => {
+  const carousel = e.target && e.target.classList && e.target.classList.contains('carousel') ? e.target : null;
+  if (!carousel) return;
+  // Скролл с scroll-snap стреляет событием на каждый кадр анимации — не
+  // обновляем DOM чаще одного раза за отрисовку кадра на карусель.
+  if (pendingCarouselUpdates.has(carousel)) return;
+  pendingCarouselUpdates.add(carousel);
+  requestAnimationFrame(() => {
+    pendingCarouselUpdates.delete(carousel);
+    updateCarouselCounter(carousel);
+  });
+}, true);
+
 document.getElementById('stack').addEventListener('click', (e) => {
   if (suppressClick) return;
   const btn = e.target.closest('[data-action]');
