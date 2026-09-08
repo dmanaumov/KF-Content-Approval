@@ -351,6 +351,27 @@ async function listExpiringCredentials(boardId, network, expiringWithinDays) {
   return out;
 }
 
+// Board-wide list of archived project ids — a single query, used to hide
+// archived projects from every project PICKER in the team cabinet (the
+// "фильтр по проекту" over already-scheduled posts, and the "Проект" select
+// in the "Запланировать публикацию" create form) without a per-project round
+// trip like getTokenAndLogo() would need. Deliberately just ids, same
+// minimal shape as GET /api/team/projects itself — a picker only needs to
+// know WHICH projects to hide, not any other archived-project detail.
+// Existing cards already tied to an archived project are completely
+// unaffected — this only hides the project from pickers used to create NEW
+// things (a new post, a new filter selection), per the user's request
+// (2026-09-08): "как только проект ушёл в архив — скрываем его, чтобы не
+// мешал".
+async function listArchivedProjectIds(boardId) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT project_id FROM project_settings WHERE board_id = $1 AND is_archived = true',
+    [boardId]
+  );
+  return rows.map((r) => r.project_id);
+}
+
 // One-time (but idempotent — safe to run on every boot) import of the OLD
 // flat-JSON link store into Postgres, so a link already handed to a client
 // (already tested live by the agency, see project docs) keeps working after
@@ -399,6 +420,7 @@ module.exports = {
   updateSettings,
   upsertNetworkCredentials,
   listExpiringCredentials,
+  listArchivedProjectIds,
   importLegacyFileTokens,
   KNOWN_NETWORKS,
 };

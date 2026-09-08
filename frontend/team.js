@@ -54,6 +54,12 @@ let currentTasks = [];
 let activeStatuses = null;
 let statusOptions = []; // [{id,label}] — every raw "Статус" option, from GET /api/team/tasks
 let keywordsPropertyFound = false;
+// Id архивных проектов (см. GET /api/team/tasks -> archivedProjectIds) —
+// прячем их из фильтра по проекту (renderProjectFilterOptions), чтобы не
+// мешали, но НЕ трогаем уже существующие карточки под таким проектом — они
+// продолжают показываться в списке/календаре как обычно (см. запрос
+// пользователя 2026-09-08).
+let archivedProjectIds = new Set();
 let boardId = null; // only needed to build /api/files/:boardId/:fileId src urls — see loadTasks()
 let currentUser = null;
 let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
@@ -356,7 +362,12 @@ function renderChips() {
 function renderProjectFilterOptions() {
   const seen = new Map(); // id -> label
   currentTasks.forEach((t) => {
-    if (t.projectId && !seen.has(t.projectId)) seen.set(t.projectId, t.projectLabel || t.projectId);
+    // Архивный проект не предлагаем в фильтре (см. archivedProjectIds выше)
+    // — карточки под ним по-прежнему в списке, просто саму опцию фильтра
+    // прячем, чтобы архивные проекты не мешали среди активных.
+    if (t.projectId && !archivedProjectIds.has(t.projectId) && !seen.has(t.projectId)) {
+      seen.set(t.projectId, t.projectLabel || t.projectId);
+    }
   });
   if (seen.size < 2) {
     teamProjectFilterRow.hidden = true;
@@ -411,6 +422,7 @@ async function loadTasks() {
     teamLoading.hidden = true;
     statusOptions = data.statusOptions || [];
     keywordsPropertyFound = !!data.keywordsPropertyFound;
+    archivedProjectIds = new Set(data.archivedProjectIds || []);
     if (data.boardId) boardId = data.boardId;
     currentTasks = (data.tasks || []).slice().sort(byDeadline);
     renderChips();
