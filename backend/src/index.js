@@ -3243,6 +3243,42 @@ app.get('/api/automation/projects/:projectId/settings', requireAutomationAuth, a
   }
 });
 
+// POST /api/automation/projects/:projectId/settings — body: { startDate?,
+// paidThroughDate? }, each YYYY-MM-DD (or '' to clear), at least one
+// required. Added 2026-09-08 by request: startDate ("отчётная дата
+// проекта") was being written once by staff in the /projects edit popup and
+// never updated again; the n8n content-planning flow ("темник") needs to
+// roll it forward to the next reporting month on its own via the API.
+// paidThroughDate ("оплачено до") gets the same automation write access at
+// the same time, for the same reason (renewing it currently means a staff
+// member opening the edit popup by hand). Deliberately narrow/merge (see
+// projectSettings.updatePlanningDates) — unlike the staff PUT
+// /api/projects/:projectId/settings route (whole-row replace, fine there
+// since the popup always resends every field), this NEVER touches
+// logo/credentials/prompts/isAiProject/anything else, so n8n never needs to
+// know or resend them just to bump a date.
+app.post('/api/automation/projects/:projectId/settings', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const id = resolveAutomationProjectId(board, req.params.projectId);
+    const body = req.body || {};
+    if (body.startDate === undefined && body.paidThroughDate === undefined) {
+      throw badRequest('planning_dates_required', 'Укажите хотя бы одно поле: startDate или paidThroughDate (YYYY-MM-DD).');
+    }
+    await projectSettings.updatePlanningDates(boardId, id, {
+      startDate: body.startDate !== undefined ? String(body.startDate).trim() : undefined,
+      paidThroughDate: body.paidThroughDate !== undefined ? String(body.paidThroughDate).trim() : undefined,
+    });
+    const settings = await getAutomationProjectSettings(boardId, id);
+    res.json({ projectId: id, ...settings });
+  } catch (err) {
+    console.error('[api] automation project settings update failed:', err.message);
+    res.status(err.httpStatus || 400).json({ error: err.code || 'invalid_planning_dates', message: err.message });
+  }
+});
+
 // GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
 // status is required — see getAutomationTasks above for the two shapes it
 // accepts. project and date are both optional narrowing.

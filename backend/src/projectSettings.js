@@ -266,6 +266,46 @@ async function updateSettings(boardId, projectId, {
   );
 }
 
+// Narrow, MERGE-style update for just the two "moving" planning dates —
+// startDate ("отчётная дата проекта" — was being written once by staff and
+// never touched again) and paidThroughDate ("оплачено до") — added
+// 2026-09-08 so the n8n content-planning flow ("темник") can roll startDate
+// forward to the next reporting month via the automation API, and set/renew
+// paidThroughDate, WITHOUT resending the whole settings row the way
+// updateSettings() above (the staff edit popup's whole-row replace) would
+// require — a well-intentioned partial payload aimed at updateSettings
+// would silently WIPE logo/credentials/prompts/everything else it didn't
+// include. Same "only touch what you're told to" posture as
+// upsertNetworkCredentials below. At least one of the two fields must be
+// provided (undefined = leave that column alone); an explicit '' clears a
+// date back to unset, same convention updateSettings already uses.
+async function updatePlanningDates(boardId, projectId, { startDate, paidThroughDate }) {
+  if (startDate === undefined && paidThroughDate === undefined) {
+    throw new Error('Укажите хотя бы одно поле: startDate или paidThroughDate.');
+  }
+  for (const [name, value] of [['startDate', startDate], ['paidThroughDate', paidThroughDate]]) {
+    if (value !== undefined && value !== null && value !== '' && !DATE_ONLY_RE.test(String(value))) {
+      throw new Error(`${name} must be YYYY-MM-DD (or empty to clear it) — got "${value}".`);
+    }
+  }
+  await ensureRow(boardId, projectId);
+  const pool = db.requirePool();
+  const sets = ['updated_at = now()'];
+  const params = [boardId, projectId];
+  if (startDate !== undefined) {
+    params.push(textOrEmpty(startDate));
+    sets.push(`start_date = $${params.length}`);
+  }
+  if (paidThroughDate !== undefined) {
+    params.push(textOrEmpty(paidThroughDate));
+    sets.push(`paid_through_date = $${params.length}`);
+  }
+  await pool.query(
+    `UPDATE project_settings SET ${sets.join(', ')} WHERE board_id = $1 AND project_id = $2`,
+    params
+  );
+}
+
 // Merge-upsert ONE network's credentials for a project, without touching any
 // other field on the row (other networks, isAiProject, prompts, ...) and
 // without a read-modify-write race — a single atomic UPDATE via Postgres
@@ -418,6 +458,7 @@ module.exports = {
   resolveToken,
   getSettings,
   updateSettings,
+  updatePlanningDates,
   upsertNetworkCredentials,
   listExpiringCredentials,
   listArchivedProjectIds,

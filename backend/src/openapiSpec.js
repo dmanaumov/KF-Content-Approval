@@ -420,6 +420,61 @@ function buildOpenApiSpec() {
             401: { $ref: '#/components/responses/Unauthorized' },
           },
         },
+        post: {
+          summary: 'Обновить startDate и/или paidThroughDate ОДНОГО проекта',
+          description:
+            'Узкое, MERGE-обновление — трогает ТОЛЬКО присланные поля (startDate — "отчётная дата проекта", ' +
+            'paidThroughDate — "оплачено до"), никогда не задевает logo/social-креды/четыре промта/isAiProject и ' +
+            'т.д. Нужен хотя бы один из двух параметров. Каждое поле — YYYY-MM-DD, либо пустая строка "" чтобы ' +
+            'очистить дату. Добавлено 2026-09-08 для планировщика контента ("темник") — раньше startDate задавался ' +
+            'staff-ом один раз в попапе "Редактировать" на /projects и больше никогда не обновлялся.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    startDate: { type: 'string', example: '2026-10-01', description: 'YYYY-MM-DD, либо "" чтобы очистить. Хотя бы одно из двух полей обязательно.' },
+                    paidThroughDate: { type: 'string', example: '2026-12-31', description: 'YYYY-MM-DD, либо "" чтобы очистить.' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'OK — актуальные настройки проекта после обновления (тот же состав полей, что у GET выше)',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      projectId: { type: 'string' },
+                      isAiProject: { type: 'boolean' },
+                      projectManager: { type: 'string', nullable: true },
+                      startDate: { type: 'string', nullable: true },
+                      postsPerMonth: { type: 'string', nullable: true },
+                      publishTimeMsk: { type: 'string', nullable: true },
+                      paidThroughDate: { type: 'string', nullable: true },
+                      strategyPrompt: { type: 'string' },
+                      planningPrompt: { type: 'string' },
+                      postPrompt: { type: 'string' },
+                      imagePrompt: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+            400: {
+              description: 'projectId не найден, ни одно из полей не передано, либо дата не в формате YYYY-MM-DD',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
       },
       '/api/automation/tasks/{taskId}': {
         get: {

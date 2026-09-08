@@ -79,6 +79,33 @@ GET  /api/automation/projects/{projectId}/settings — НОВОЕ: настро�
                                                       logoUrl/токен ссылки
                                                       (staff-only, автоматизации
                                                       не нужны)
+POST /api/automation/projects/{projectId}/settings — НОВОЕ (2026-09-08):
+                                                      обновить startDate и/или
+                                                      paidThroughDate ОДНОГО
+                                                      проекта {startDate?,
+                                                      paidThroughDate?} — оба
+                                                      YYYY-MM-DD (или "" чтобы
+                                                      очистить), хотя бы одно
+                                                      обязательно. Узкое, MERGE-
+                                                      обновление — трогает
+                                                      ТОЛЬКО эти поля, никогда
+                                                      не задевает logo/креды/
+                                                      промты/isAiProject.
+                                                      Раньше startDate ("отчёт-
+                                                      ная дата проекта")
+                                                      задавался staff-ом один
+                                                      раз в попапе "Редакти-
+                                                      ровать" на /projects и
+                                                      больше никогда не
+                                                      обновлялся — теперь
+                                                      планировщик контента
+                                                      ("темник") может сам
+                                                      переносить её на
+                                                      следующий отчётный месяц.
+                                                      Отвечает актуальными
+                                                      настройками проекта (тот
+                                                      же состав полей, что у
+                                                      GET выше)
 GET  /api/automation/tasks/{taskId}                 — НОВОЕ: одна карточка по id,
                                                       её ТЕКУЩИЙ полный состав —
                                                       title (тема поста), caption
@@ -495,6 +522,58 @@ disk.kontentferma в подпапку `референсы` клиента), ко
 
 **Ошибки**: `400 project_id_required` / `400 project_not_found`, `401` без
 `X-Api-Key`.
+
+### `POST /api/automation/projects/{projectId}/settings` — подробно
+
+Обновляет **только** `startDate` и/или `paidThroughDate` ОДНОГО проекта —
+добавлено 2026-09-08 по прямому запросу: `startDate` («отчётная дата
+проекта») раньше задавался staff-ом ровно один раз в попапе «Редактировать»
+на `/projects` и после этого никогда не обновлялся, хотя должен сдвигаться
+на следующий отчётный месяц по мере работы. Теперь планировщик контента
+(«темник») может переносить её сам через API. `paidThroughDate` («оплачено
+до») получил тот же доступ на запись заодно, по той же логике — раньше
+продление тоже требовало staff-а руками.
+
+**Важно**: это узкое, MERGE-обновление, а не то же самое, что
+`PUT /api/projects/{projectId}/settings` (staff-only, весь попап
+«Редактировать»/whole-row replace). Присланные сюда поля обновляются
+ТОЧЕЧНО — `social_credentials`, четыре промта, `isAiProject`, `logoUrl` и
+всё остальное остаётся как было, даже если этот вызов их не упоминает.
+
+```
+POST /api/automation/projects/ajdkoks6pmti4bk388yuarrjdnr/settings
+X-Api-Key: <ваш ключ>
+Content-Type: application/json
+
+{ "startDate": "2026-10-01" }
+```
+```json
+{
+  "projectId": "ajdkoks6pmti4bk388yuarrjdnr",
+  "isAiProject": true,
+  "projectManager": "Ирина",
+  "startDate": "2026-10-01",
+  "postsPerMonth": "20",
+  "publishTimeMsk": "10:00",
+  "paidThroughDate": "2026-12-31",
+  "strategyPrompt": "...",
+  "planningPrompt": "...",
+  "postPrompt": "...",
+  "imagePrompt": "...",
+  "imageReferences": [...]
+}
+```
+
+Можно передать оба поля сразу (`{"startDate": "...", "paidThroughDate": "..."}`)
+или только одно — какое не передано, то и не трогается. Каждое значение —
+строго `YYYY-MM-DD`, либо пустая строка `""`, чтобы очистить дату обратно в
+«не задано». Ответ — актуальные настройки проекта целиком (тот же состав
+полей, что у `GET` выше), удобно сразу проверить, что записалось.
+
+**Ошибки**: `400 project_id_required` / `400 project_not_found`,
+`400 planning_dates_required` (не передано ни одно из двух полей),
+`400 invalid_planning_dates` (значение не `YYYY-MM-DD` и не пустая строка),
+`401` без `X-Api-Key`.
 
 ### `GET /api/automation/tasks/{taskId}` — подробно
 
