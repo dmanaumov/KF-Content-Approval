@@ -45,11 +45,52 @@ const config = require('./config');
 // and anything past 30 was queueing (and sometimes timing out) INSIDE this
 // agent before ever reaching the wire — Mattermost's own logs showed zero
 // trace of those requests, confirming they never actually got sent.
-const keepAliveHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
-const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
+let keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000, maxSockets: 64 });
+let keepAliveHttpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 10000, maxSockets: 64 });
 function agentFor(url) {
   return url.startsWith('https:') ? keepAliveHttpsAgent : keepAliveHttpAgent;
 }
+
+// BUGFIX 2026-09-09 (live incident): the WHOLE /team cabinet stopped loading —
+// every request to Mattermost died with "The user aborted a request." (our own
+// AbortError from fetchWithTimeout below) at exactly the 15s timeout, INCLUDING
+// a fresh login call, while `curl` from the same host answered /system/ping in
+// ~0.25s every time. MM was fine; our keep-alive pool was not: idle connections
+// that the nginx/LB in front of Mattermost silently closed were being reused as
+// if alive, so each request hung until OUR timeout aborted it. A container
+// restart (fresh sockets) fixed it instantly — classic symptom, hence this
+// self-healing instead of a manual redeploy every time:
+//
+//   1. Every request that hits OUR abort timeout counts; a single success
+//      resets the count.
+//   2. After AGENT_ROTATE_AFTER_TIMEOUTS consecutive timeouts (a whole-pool
+//      "went stale" burst, not a one-off blip — one-off blips stay just that,
+//      the existing backoff in fetchCardsPage() handles them), drop the old
+//      agents and build fresh ones from scratch. New connections force a real
+//      TCP/TLS handshake instead of reusing whatever got orphaned.
+//   3. keepAliveMsecs: 10000 — Node sends a TCP keepalive probe after ~10s of
+//      socket idleness, so a peer that died on the proxy side gets detected in
+//      seconds instead of the OS default of hours.
+function rotateAgentPool(reason) {
+  keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000, maxSockets: 64 });
+  keepAliveHttpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 10000, maxSockets: 64 });
+  // Deliberately do NOT destroy() the old agents: any request still in flight
+  // on one of their sockets must be allowed to finish normally. Once no
+  // request references them anymore, the old agent (and its dead sockets) is
+  // unreferenced and GC'd. New requests all land on the fresh pool.
+  console.error(`[mattermost] rotated keep-alive agent pool (${reason}) — stale sockets reset, new connections will be established`);
+}
+let consecutiveTimeouts = 0;
+let firstTimeoutAt = null;
+let lastRotatedAt = 0;
+const AGENT_ROTATE_AFTER_TIMEOUTS = 5;
+// Don't let a parallel burst of aborts (e.g. listCards' per-card fallback
+// firing on several pages at once) spin the rotation hot: once we've rotated,
+// give the fresh pool a moment to actually establish connections before even
+// considering rotating again. The threshold check below then needs 5 more
+// aborts after the cooldown to re-trigger, which conveniently also caps the
+// log spam from a genuinely down Mattermost.
+const AGENT_ROTATE_COOLDOWN_MS = 15000;
 
 function usingSessionLogin() {
   return !!(config.mattermostLoginId && config.mattermostPassword);
@@ -74,8 +115,46 @@ function boardsUrl(path) {
 // long video body is unaffected — only time-to-headers is bounded).
 function fetchWithTimeout(url, opts = {}, ms = config.requestTimeoutMs) {
   const controller = new AbortController();
+  const startedAt = Date.now();
   const timer = setTimeout(() => controller.abort(), ms);
-  return fetch(url, { agent: agentFor(url), ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return fetch(url, { agent: agentFor(url), ...opts, signal: controller.signal })
+    .then((res) => {
+      consecutiveTimeouts = 0;
+      firstTimeoutAt = null;
+      const ttfh = Date.now() - startedAt;
+      // Headers took suspiciously long (but still under the timeout) — log
+      // it so a slowly-degrading upstream shows up in the logs as a trend
+      // long before it turns into a hard failure.
+      if (ttfh > 3000) console.error(`[mattermost] slow response after ${ttfh}ms: ${opts.method || 'GET'} ${url}`);
+      return res;
+    })
+    .catch((err) => {
+      // Not every AbortError is a stale-socket problem — but a BURST of them
+      // in a row is exactly the signature of the 2026-09-09 incident above.
+      // Count on our own timeout only, not on arbitrary errors: a real error
+      // from Mattermost is handled up the stack (retry/fallback), it says
+      // nothing about the health of OUR connection pool.
+      if (err && err.name === 'AbortError') {
+        if (!firstTimeoutAt) firstTimeoutAt = Date.now();
+        consecutiveTimeouts++;
+        const ttfh = Date.now() - startedAt;
+        console.error(
+          `[mattermost] request aborted after ${ttfh}ms (timeout ${ms}ms): ${opts.method || 'GET'} ${url} — ` +
+            `consecutive timeouts: ${consecutiveTimeouts}/${AGENT_ROTATE_AFTER_TIMEOUTS}`
+        );
+        if (
+          consecutiveTimeouts >= AGENT_ROTATE_AFTER_TIMEOUTS &&
+          Date.now() - lastRotatedAt >= AGENT_ROTATE_COOLDOWN_MS
+        ) {
+          lastRotatedAt = Date.now();
+          rotateAgentPool(`timeout-storm: ${consecutiveTimeouts} consecutive aborts since ${new Date(firstTimeoutAt).toISOString()}`);
+          consecutiveTimeouts = 0;
+          firstTimeoutAt = null;
+        }
+      }
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
 }
 
 // --- Session login --------------------------------------------------------
