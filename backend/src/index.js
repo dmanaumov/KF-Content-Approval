@@ -1437,6 +1437,7 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       });
     }
     const myId = req.teamSession.user.id;
+    const myUsername = req.teamSession.user.username || '';
     // Visibility rule (per the team's request, 2026-08-25):
     //   - лидеры / СЕО и его зам (role.admin — see config.js's own comment
     //     on adminEmails: "CEO + his deputy"; role.ceo folded in too for the
@@ -1448,14 +1449,24 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     //     публикацию" — even when it's since been assigned to someone else.
     //     Creation is tracked in our own task_creators table, NOT
     //     Mattermost's block.createdBy (see taskCreators.js for why).
+    //   - И С 2026-09-14 — если человек указан «Менеджером проекта»
+    //     (project_manager в project_settings) хотя бы по одному клиенту —
+    //     он видит ВСЕ посты по такому проекту (не только свои), потому
+    //     что отвечает за проект целиком. Менеджер равен по username —
+    //     тот же формат, что сохраняет dropdown на /projects. Правка в
+    //     настройках применяется к следующему запросу списка, без рестарта.
     const role = teamAuth.roleFor(req.teamSession.user);
     const seesAll = role.admin || role.ceo;
     let mine;
     if (seesAll) {
       mine = tasks;
     } else {
-      const creatorMap = await taskCreators.getCreators(boardId, tasks.map((t) => t.id));
-      mine = tasks.filter((t) => t.assigneeId === myId || creatorMap.get(t.id) === myId);
+      const creators = await taskCreators.getCreators(boardId, tasks.map((t) => t.id));
+      const managers = await projectSettings.listProjectManagers(boardId);
+      mine = tasks.filter((t) => {
+        if (t.assigneeId === myId || creators.get(t.id) === myId) return true;
+        return !!t.projectId && myUsername && managers.get(t.projectId) === myUsername;
+      });
     }
     await resolveDiskMediaKinds(mine);
     await mediaOrder.applyStoredOrder(boardId, mine);

@@ -412,6 +412,26 @@ async function listArchivedProjectIds(boardId) {
   return rows.map((r) => r.project_id);
 }
 
+// projectId -> project_manager (Mattermost username) for EVERY project on the
+// board — one query, no per-project round trips. Powers the "менеджер видит
+// все посты своего проекта" visibility rule in GET /api/team/tasks
+// (index.js): a row created by ensureRow() with an empty manager just maps
+// to '' (empty string), which no logged-in username ever equals, so projects
+// without a set manager contribute nothing.
+async function listProjectManagers(boardId) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT project_id, project_manager FROM project_settings WHERE board_id = $1',
+    [boardId]
+  );
+  const map = new Map();
+  for (const r of rows) {
+    const manager = String(r.project_manager || '').trim();
+    if (manager) map.set(r.project_id, manager);
+  }
+  return map;
+}
+
 // One-time (but idempotent — safe to run on every boot) import of the OLD
 // flat-JSON link store into Postgres, so a link already handed to a client
 // (already tested live by the agency, see project docs) keeps working after
@@ -462,6 +482,7 @@ module.exports = {
   upsertNetworkCredentials,
   listExpiringCredentials,
   listArchivedProjectIds,
+  listProjectManagers,
   importLegacyFileTokens,
   KNOWN_NETWORKS,
 };
