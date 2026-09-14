@@ -16,7 +16,6 @@ const mediaOrder = require('./mediaOrder');
 const taskCreators = require('./taskCreators');
 const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
-const mailer = require('./mailer');
 const analytics = require('./analytics');
 const botStore = require('./botStore');
 const apiKeys = require('./apiKeys');
@@ -269,54 +268,84 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
   }
 });
 
-// Кто перед нами для внутренних страниц — разбор доступа:
-//   1) живая /team-сессия, чей Mattermost-email есть в одном из списков
-//      (adminEmails / statEmails / ceoEmails) — персональный доступ, это
-//      то, как теперь разграничиваются права «кому из команды разрешено»;
-//   2) общий HTTP Basic Auth (STAFF_AUTH_USER/PASSWORD) — полный админ,
-//      оставлен как fallback для тех, у кого нет аккаунта Mattermost.
+// Кто перед нами для внутренних страниц — живая /team-сессия (Mattermost
+// login, см. teamAuth.js). Возвращает факт логина + роли (admin/stat/ceo,
+// см. teamAuth.roleFor) для ЛЮБОГО залогиненного сотрудника — решать, кому
+// именно доступна конкретная страница, должны сами гейты (staffAuth
+// проверяет admin/ceo/менеджера; requireStatAuth — только stat; CEO-роуты
+// — ceo). Это единственный механизм доступа — общий HTTP Basic Auth
+// окончательно убран (2026-09-14).
 function currentAccess(req) {
   const session = teamAuth.getSession(teamAuth.sessionIdFromRequest(req));
   if (session && session.user) {
     const role = teamAuth.roleFor(session.user);
-    if (role.admin || role.stat || role.ceo) return { source: 'team', ...role, user: session.user };
-  }
-  if (config.staffAuthUser && config.staffAuthPassword) {
-    const header = req.headers.authorization || '';
-    const [scheme, encoded] = header.split(' ');
-    if (scheme === 'Basic' && encoded) {
-      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-      const sep = decoded.indexOf(':');
-      const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
-      const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
-      if (user === config.staffAuthUser && pass === config.staffAuthPassword) {
-        return { source: 'basic', admin: true, stat: true, ceo: true, user: null };
-      }
-    }
+    return { source: 'team', ...role, user: session.user };
   }
   return null;
 }
 
-// Админ-гейт: живая /team-сессия с ролью admin ИЛИ общий Basic Auth.
-function staffAuth(req, res, next) {
+// Админ-гейт для внутренней страницы проектов (config.staffProjectsPath)
+// и её /api/projects* API. Пропускает:
+//   - admin (CEO + его зам) и ceo (владелец /ceo-дашборда) — видят ВСЕ
+//     проекты;
+//   - любой сотрудник, который указан «Менеджером проекта» (project_manager
+//     в project_settings) хотя бы по одному клиенту — получает доступ, но
+//     только к своим проектам (видимость фильтруется там же, где данные —
+//     см. фильтр в GET /api/projects и пре-гейт по projectId в
+//     POST /api/projects/:projectId/*).
+// Никакого Basic Auth — только живая team-сессия. При неудаче — JSON 401
+// (под /api/*) или HTML со ссылкой на /team.
+async function staffAuth(req, res, next) {
   const access = currentAccess(req);
-  if (access && access.admin) return next();
-  res.set('WWW-Authenticate', 'Basic realm="KF staff"');
-  // The browser's native Basic Auth prompt covers this body until the user
-  // cancels it — at that point this is what they see, so it's worth a link
-  // rather than a bare "Authentication required."
-  res.status(401).type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
+  if (access && (access.admin || access.ceo)) {
+    req.staffScope = { full: true, user: access.user, username: access.user.username || '' };
+    return next();
+  }
+  if (access && access.user && access.user.username) {
+    try {
+      const boardId = config.mattermostBoardId;
+      if (boardId) {
+        const managers = await projectSettings.listProjectManagers(boardId);
+        if ([...managers.values()].includes(access.user.username)) {
+          req.staffScope = { full: false, user: access.user, username: access.user.username };
+          return next();
+        }
+      }
+    } catch (err) {
+      console.error('[staffAuth] manager-scope check failed:', err.message);
+    }
+  }
+  if (req.accepts('html')) {
+    return res.status(401).type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Нужен вход</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto 0;padding:0 20px;text-align:center;color:#222">
 <h3>Нужен доступ</h3>
-<p>Войдите в <a href="/team">кабинет команды</a> под своим Mattermost-аккаунтом или введите пароль админки.</p>
+<p>Войдите в <a href="/team">кабинет команды</a> под своим Mattermost-аккаунтом.</p>
 </body></html>`);
+  }
+  res.status(401).json({ error: 'not_allowed', message: 'Требуется вход в кабинет команды.' });
 }
 
-// Стат-гейт: /team-сессия с ролью stat (admin её получает автоматически)
-// ИЛИ общий Basic Auth. Без WWW-Authenticate намеренно — для тех, у кого
-// только статистика, браузер не должен показывать непонятный Basic-диалог:
-// вместо него отдаём понятное сообщение со ссылкой на /team.
+// True, если запросу (уже прошедшему staffAuth) разрешён НЕ только доступ
+// к списку, но и к конкретному проекту: админ/ceo — любой; менеджер —
+// только тот, где он указан менеджером.
+async function staffCanAccessProject(req, projectId) {
+  const scope = req.staffScope;
+  if (!scope) return false;
+  if (scope.full) return true;
+  if (!projectId || !scope.username) return false;
+  try {
+    const managers = await projectSettings.listProjectManagers(config.mattermostBoardId);
+    return managers.get(projectId) === scope.username;
+  } catch (err) {
+    console.error('[staffAuth] project-scope check failed:', err.message);
+    return false;
+  }
+}
+
+// Стат-гейт: /team-сессия с ролью stat (admin её получает автоматически).
+// Без WWW-Authenticate намеренно — браузер не должен показывать Basic-
+// диалог: вместо него отдаём понятное сообщение со ссылкой на /team.
 function requireStatAuth(req, res, next) {
   const access = currentAccess(req);
   if (access && access.stat) return next();
@@ -329,21 +358,6 @@ function requireStatAuth(req, res, next) {
 </body></html>`);
   }
   res.status(401).json({ error: 'not_allowed', message: 'Нужен доступ к статистике.' });
-}
-
-// Simple in-memory per-IP rate limit for the forgot-password endpoint below
-// (it's deliberately unauthenticated, so it needs its own brake against
-// being hammered/used to spam an inbox). Not persisted — resets on
-// redeploy/restart, which is fine for this purpose.
-const forgotPasswordAttempts = new Map(); // ip -> timestamps[]
-function tooManyForgotPasswordAttempts(ip) {
-  const now = Date.now();
-  const windowMs = 60 * 60 * 1000;
-  const limit = 5;
-  const recent = (forgotPasswordAttempts.get(ip) || []).filter((t) => now - t < windowMs);
-  recent.push(now);
-  forgotPasswordAttempts.set(ip, recent);
-  return recent.length > limit;
 }
 
 // "В графике" / "Небольшое отклонение" / "Не укладываемся" — a project's
@@ -572,6 +586,12 @@ function postsForMonth(tasks) {
 // Reads live from the board's property definition (same source of truth as
 // everything else in this app) — a new client project shows up here
 // automatically as soon as it's added as an option in Mattermost.
+//
+// Visibility (2026-09-14): admin/ceo see every project; a member who is
+// "Менеджер проекта" somewhere sees only the projects they manage
+// (req.staffScope, set by staffAuth). Frame not filtered here is a
+// deliberate optimization — both the board load AND the property options
+// are the same for everyone, only the final list gets narrowed.
 app.get('/api/projects', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
@@ -607,10 +627,23 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks };
       })
     );
+    // Manager scoping: не-админы видят только те проекты, где они указаны
+    // менеджером (см. staffAuth). admin/ceo (scope.full) — все без фильтра.
+    let visible = options;
+    if (req.staffScope && !req.staffScope.full) {
+      let managers;
+      try {
+        managers = await projectSettings.listProjectManagers(boardId);
+      } catch (err) {
+        console.error('[api] GET projects manager-scope failed:', err.message);
+        managers = new Map();
+      }
+      visible = options.filter((o) => managers.get(o.id) === req.staffScope.username);
+    }
     const who = analytics.identify(req);
     analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
-    console.log(`[perf] GET /api/projects: TOTAL ${Date.now() - routeStartedAt}ms (projects=${options.length})`);
-    res.json({ mattermostWebUrl: config.mattermostWebUrl, options });
+    console.log(`[perf] GET /api/projects: TOTAL ${Date.now() - routeStartedAt}ms (projects=${visible.length}/${options.length})`);
+    res.json({ mattermostWebUrl: config.mattermostWebUrl, options: visible });
   } catch (err) {
     console.error('[api] GET projects failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
@@ -1115,6 +1148,9 @@ app.get('/api/analytics/projects', requireStatAuth, async (req, res) => {
 app.post('/api/projects/:projectId/regenerate-link', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
   try {
     const token = await projectSettings.regenerateToken(boardId, req.params.projectId);
     res.json({ token });
@@ -1188,6 +1224,9 @@ app.get('/api/projects/telegram-chats', staffAuth, async (req, res) => {
 app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
   try {
     const settings = await projectSettings.getSettings(boardId, req.params.projectId);
     res.json(settings);
@@ -1212,6 +1251,9 @@ app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
 app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
   try {
     await projectSettings.updateSettings(boardId, req.params.projectId, req.body || {});
     const settings = await projectSettings.getSettings(boardId, req.params.projectId);
@@ -1244,6 +1286,9 @@ app.post('/api/projects/:projectId/validate-instagram', staffAuth, async (req, r
   if (!accessToken || !igUserId) {
     return res.status(400).json({ ok: false, error: 'missing_fields', message: 'Укажите accessToken и igUserId.' });
   }
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ ok: false, error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
   try {
     const result = await validateInstagramCredentials(accessToken, igUserId);
     res.json({ ok: true, ...result });
@@ -1272,6 +1317,9 @@ app.post('/api/projects/:projectId/validate-instagram', staffAuth, async (req, r
 app.post('/api/projects/:projectId/refresh-instagram-token', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
   try {
     const settings = await projectSettings.getSettings(boardId, req.params.projectId);
     const current = (settings.socialCredentials && settings.socialCredentials.ig) || null;
@@ -1317,6 +1365,9 @@ app.post('/api/projects/:projectId/reference-upload', staffAuth, (req, res) => {
     }
     const boardId = requireStaffBoardId(res);
     if (!boardId) return;
+    if (!(await staffCanAccessProject(req, req.params.projectId))) {
+      return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+    }
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     try {
       const { board } = await loadBoard(boardId);
@@ -1343,8 +1394,9 @@ app.post('/api/projects/:projectId/reference-upload', staffAuth, (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Team cabinet (config.teamCabinetPath, default /team) — internal staff, one
-// account each, real Mattermost login. Separate from staffAuth above (single
-// shared Basic Auth login for the /projects list) — see teamAuth.js for why.
+// account each, real Mattermost login (see teamAuth.js). Now the SINGLE login
+// for everything internal: /team, and (for admins/CEOs + project managers)
+// the /projects staff page.
 // ---------------------------------------------------------------------------
 
 // POST /api/team/login — body: { login, password }. `login` is whatever
@@ -1361,13 +1413,14 @@ app.post('/api/team/login', async (req, res) => {
     const sessionId = await teamAuth.createSession(token, user);
     teamAuth.setSessionCookie(res, sessionId);
     analytics.note('team', { actor: user.username || login, actorName: [user.first_name, user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
-    const role = teamAuth.roleFor(user);
     res.json({
       user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name },
-      // staffProjectsPath only handed to admins — it's meant to stay
-      // unguessable (see config.js's comment on STAFF_PROJECTS_PATH), so
-      // non-admins never even see it in this response.
-      access: { ...role, staffProjectsPath: role.admin ? config.staffProjectsPath : undefined },
+      // staffProjectsPath — admins/CEO and any project manager (someone who
+      // is "Менеджер проекта" on ≥1 client) get the /projects staff page
+      // link; for managers the list itself is scoped to their projects (see
+      // staffAuth / GET /api/projects). Un-guessable path, so only handed
+      // to those who may actually use it.
+      access: await staffAccessFor(user),
     });
   } catch (err) {
     // Wrong password, unknown user, Mattermost unreachable — all land here.
@@ -1387,27 +1440,62 @@ app.post('/api/team/logout', (req, res) => {
 // page load without re-submitting credentials (the session cookie is enough).
 // Also returns the user's access roles (admin/stat/ceo) so the cabinet can
 // show role-appropriate links (e.g. "Статистика" for those who may view it).
-app.get('/api/team/me', teamAuth.requireTeamAuth, (req, res) => {
+app.get('/api/team/me', teamAuth.requireTeamAuth, async (req, res) => {
   const { user } = req.teamSession;
-  const role = teamAuth.roleFor(user);
   res.json({
     user: { id: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name },
-    access: { ...role, staffProjectsPath: role.admin ? config.staffProjectsPath : undefined },
+    access: await staffAccessFor(user),
   });
 });
 
-// GET /api/staff/me — what access the CURRENT viewer has on the internal
-// pages (team session with an allowlisted email, or the shared Basic Auth).
-// Used by the staff page to show role-appropriate links (stat/ceo buttons).
-// Open endpoint by design — it only tells a person their own role, which the
-// protected APIs enforce regardless.
-app.get('/api/staff/me', (req, res) => {
+// Собирает "что этому пользователю доступно" для внутренних страниц: роль
+// (admin/stat/ceo) + path staff-страницы, если пользователь может на неё
+// попасть (admin/ceo — всегда; менеджер проекта — да, с видимостью только
+// своих проектов). Используется и /api/team/login, и /api/team/me.
+async function staffAccessFor(user) {
+  const role = teamAuth.roleFor(user);
+  if (role.admin || role.ceo) {
+    return { ...role, staffProjectsPath: config.staffProjectsPath };
+  }
+  if (user && user.username && config.mattermostBoardId) {
+    try {
+      const managers = await projectSettings.listProjectManagers(config.mattermostBoardId);
+      if ([...managers.values()].includes(user.username)) {
+        return { ...role, staffProjectsPath: config.staffProjectsPath };
+      }
+    } catch (err) {
+      console.error('[staff] staffAccessFor failed:', err.message);
+    }
+  }
+  return role;
+}
+
+// Доступ текущего запроса к /projects-странице: null (нет сессии/прав),
+// иначе { access, user }. Менеджер проекта получается из той же логики,
+// что staffAuth (см. staffAccessFor) — но требовать живой сессии и прав —
+// здесь не наша работа (страница сама пропустит/отклонит), поэтому этот
+// endpoint просто говорит правду о текущем viewer'е.
+async function staffAccessForSession(req) {
   const access = currentAccess(req);
-  if (!access) return res.status(401).json({ error: 'not_allowed' });
-  const user = access.user
-    ? { id: access.user.id, username: access.user.username, firstName: access.user.first_name, lastName: access.user.last_name, email: access.user.email }
-    : null;
-  res.json({ access: { admin: access.admin, stat: access.stat, ceo: access.ceo }, user });
+  if (access && access.user) {
+    const withStaff = await staffAccessFor(access.user);
+    return {
+      access: { admin: withStaff.admin, stat: withStaff.stat, ceo: withStaff.ceo, staffProjectsPath: withStaff.staffProjectsPath },
+      user: { id: access.user.id, username: access.user.username, firstName: access.user.first_name, lastName: access.user.last_name, email: access.user.email },
+    };
+  }
+  return null;
+}
+
+// GET /api/staff/me — what access the CURRENT viewer has on the internal
+// staff page (team session with an allowlisted email, OR a project manager
+// — see staffAuth above). Used by the staff page to show role-appropriate
+// links (stat/ceo buttons). Open endpoint by design — it only tells a person
+// their own role, which the protected APIs enforce regardless.
+app.get('/api/staff/me', async (req, res) => {
+  const result = await staffAccessForSession(req);
+  if (!result) return res.status(401).json({ error: 'not_allowed' });
+  res.json(result);
 });
 
 // GET /api/team/tasks — every card where "Исполнитель" == the logged-in
@@ -4320,8 +4408,8 @@ app.get('/swagger', teamAuth.requireCeoAuth, sendSwaggerUiPage);
 // GET /ceo/bot-chats + /ceo/bot-leads — the two new owner-only tabs of the
 // Telegram bot control center (frontend/bot-chats.html, bot-leads.html; see
 // the /api/ceo/telegram/* data routes above). Same requireCeoAuth as /ceo
-// itself — a regular staff session (even the shared /projects Basic Auth)
-// never gets past this, matching "закладки 2 и 3 доступны только CEO".
+// itself — a regular staff session never gets past this, matching "закладки
+// 2 и 3 доступны только CEO".
 app.get('/ceo/bot-chats', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-chats.html')));
 app.get('/ceo/bot-leads', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-leads.html')));
 
@@ -4369,49 +4457,6 @@ app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.joi
 // load and shows either the login form or the task list. No staffAuth here —
 // real per-person Mattermost login (see teamAuth.js) is the actual gate.
 app.get(config.teamCabinetPath, (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
-
-// "Забыли пароль" recovery for the staff Basic Auth above. Deliberately
-// public (no staffAuth — that would be circular) but gated by a
-// pre-approved email allowlist (STAFF_RECOVERY_EMAILS): only an address
-// already on that list ever gets an email, and the response is IDENTICAL
-// either way (generic "if this address is trusted, we sent it"), so the
-// endpoint can't be used to probe which addresses are trusted. This app
-// only has one shared staff password (not per-person accounts), so
-// "recovery" here means emailing a reminder of the current password, not a
-// reset flow — see mailer.js and frontend/forgot-password.html.
-app.get('/forgot-password', (req, res) => res.sendFile(path.join(frontendDir, 'forgot-password.html')));
-
-app.post('/api/staff/forgot-password', async (req, res) => {
-  const genericOk = () =>
-    res.json({ ok: true, message: 'Если этот адрес есть в списке доверенных — письмо с логином и паролем отправлено.' });
-
-  if (!config.staffAuthUser || !config.staffAuthPassword) {
-    return res.status(400).json({
-      error: 'not_configured',
-      message: 'HTTP Basic Auth для внутренней страницы сейчас не включён (STAFF_AUTH_USER/PASSWORD) — восстанавливать нечего.',
-    });
-  }
-  if (tooManyForgotPasswordAttempts(req.ip)) {
-    return res.status(429).json({ error: 'too_many_requests', message: 'Слишком много попыток, попробуйте позже.' });
-  }
-  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
-  if (!email || !config.staffRecoveryEmails.includes(email)) {
-    return genericOk(); // no such address on the list — same response as success, on purpose
-  }
-  try {
-    await mailer.sendMail({
-      to: email,
-      subject: 'Напоминание пароля — внутренняя страница проектов (КФ)',
-      text: `Логин: ${config.staffAuthUser}\nПароль: ${config.staffAuthPassword}\n\nЭто письмо отправлено автоматически по запросу восстановления пароля.`,
-    });
-  } catch (err) {
-    // Still return the generic success message to the caller — the failure
-    // (e.g. SMTP not configured) is visible in the server log for staff to
-    // fix, but shouldn't leak details to whoever submitted the form.
-    console.error('[api] forgot-password mail send failed:', err.message);
-  }
-  return genericOk();
-});
 
 // On a brand-new deploy, the "db" container and this "app" container start
 // at roughly the same time — docker-compose's plain `depends_on: [db]`

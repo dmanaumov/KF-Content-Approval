@@ -197,14 +197,6 @@ module.exports = {
   // upgrading. Safe to leave as-is indefinitely.
   projectLinksFile: process.env.PROJECT_LINKS_FILE || '/app/data/project-links.json',
 
-  // Optional HTTP Basic Auth in front of the internal staff page and its
-  // /api/projects* API. Both blank (default) = exactly as open as before
-  // (unguessable path only — see README). Now that this page also stores
-  // real social-network publishing credentials rather than just non-secret
-  // share links, setting these is STRONGLY recommended.
-  staffAuthUser: process.env.STAFF_AUTH_USER || '',
-  staffAuthPassword: process.env.STAFF_AUTH_PASSWORD || '',
-
   // Static link to the Mattermost web app itself, shown on the internal
   // staff page next to each project (same URL for every project — Boards
   // doesn't have a per-project deep-link, it's one shared board with a
@@ -240,17 +232,6 @@ module.exports = {
   n8nDbUser: process.env.N8N_DB_USER || 'n8n',
   n8nDbPassword: process.env.N8N_DB_PASSWORD || '',
 
-  // Comma-separated allowlist of email addresses allowed to request a
-  // reminder of the STAFF_AUTH_USER/PASSWORD above (see POST
-  // /api/staff/forgot-password in index.js and frontend/forgot-password.html).
-  // Only an address already on this list ever receives anything — the
-  // endpoint gives the same generic response either way, so it can't be
-  // used to find out which addresses are trusted.
-  staffRecoveryEmails: (process.env.STAFF_RECOVERY_EMAILS || '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean),
-
   // Comma-separated allowlist of Mattermost EMAILS allowed to open the /ceo
   // dashboard (see teamAuth.requireCeoAuth) — the person authenticates via
   // the /team cabinet with their own real Mattermost credentials, and this
@@ -277,19 +258,6 @@ module.exports = {
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
-
-  // Plain SMTP for sending the forgot-password reminder above. Any provider
-  // that supports SMTP + a password/app-password works (Yandex, Mail.ru,
-  // Gmail, agency's own mail server, ...) — see .env.example for per-provider
-  // notes. If any of these three are blank, the reminder email silently
-  // can't be sent (the API still responds, it just won't deliver anything —
-  // see mailer.js).
-  smtpHost: process.env.SMTP_HOST || '',
-  smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
-  smtpSecure: (process.env.SMTP_SECURE || 'false').toLowerCase() === 'true',
-  smtpUser: process.env.SMTP_USER || '',
-  smtpPassword: process.env.SMTP_PASSWORD || '',
-  smtpFrom: process.env.SMTP_FROM || '',
 
   // Shared secret for the machine-to-machine automation API (see the
   // /api/automation/* routes in index.js — n8n publishing/content flows use

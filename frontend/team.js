@@ -217,12 +217,12 @@ function showApp(user, access) {
   teamApp.hidden = false;
   teamUserName.textContent = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Команда';
   statLink.hidden = !(access && access.stat);
-  // Руководители и лидеры — те, чей email в ADMIN_EMAILS (см. config.js) —
-  // видят кнопку «Админка», ведущую на internal-страницу клиентов/проектов.
-  // Путь берём с сервера (access.staffProjectsPath), а не хардкодим /projects
-  // — этот путь специально настраиваемый/неочевидный (STAFF_PROJECTS_PATH).
-  adminLink.hidden = !(access && access.admin);
-  if (access && access.admin) adminLink.href = access.staffProjectsPath || '/projects';
+  // Кнопка «Проекты/Админка» — для админов/CEO и для менеджеров проектов
+  // (которым доступ к /projects с видимостью только своих проектов) —
+  // сервер отдаёт staffProjectsPath тем, кто может зайти (см. staffAuth /
+  // staffAccessFor в index.js); кто не может — кнопки нет.
+  adminLink.hidden = !(access && access.staffProjectsPath);
+  if (access && access.staffProjectsPath) adminLink.href = access.staffProjectsPath;
 }
 
 async function login() {
