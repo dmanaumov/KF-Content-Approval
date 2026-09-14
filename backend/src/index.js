@@ -1139,6 +1139,25 @@ app.get('/api/projects/telegram-bots', staffAuth, async (req, res) => {
   }
 });
 
+// GET /api/projects/team-members — every worker who has Mattermost team
+// membership (== board access, since boards are shared per team at the
+// Mattermost level), for the "ответственный работник" dropdown in the
+// settings popup. staffAuth (project editors need it to pick a responsible
+// worker). Reads live from the Mattermost core API via the shared bot
+// session — no local roster table to drift out of sync with who actually
+// has board access. Returns a stable sorted list; the value the frontend
+// stores back in project_manager is the member's *username*, which is unique
+// and stays identical to how Mattermost identifies the person.
+app.get('/api/projects/team-members', staffAuth, async (req, res) => {
+  try {
+    const members = await mm.listTeamUsers();
+    res.json({ members });
+  } catch (err) {
+    console.error('[api] project team-members failed:', err.message);
+    res.status(500).json({ error: 'team_members_unavailable', message: err.message });
+  }
+});
+
 // GET /api/projects/telegram-chats — every group/channel/supergroup the bot
 // currently belongs to, for the "куда публикует" picker. Trimmed version of
 // GET /api/ceo/telegram/chats: staffAuth (not CEO-only) so any project

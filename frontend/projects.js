@@ -459,6 +459,55 @@ async function loadTgPickerData() {
   renderTgChatSelect();
 }
 
+// Список работников команды (все, у кого есть доступ к борду на уровне
+// Mattermost — см. GET /api/projects/team-members) — для выпадающего списка
+// «Менеджер проекта» в попапе настроек. Кэшируется на время сессии страницы
+// (состав команды меняется редко, а попап открывается часто); при ошибке
+// падаем в пустой список с подсказкой, а не валим весь попап — текстовое
+// поле раньше всё равно не требовало этого запроса.
+let teamMembersCache = null;
+function teamMemberLabel(m) {
+  return m.name ? `${m.name} (@${m.username})` : `@${m.username}`;
+}
+async function loadTeamMembers() {
+  if (teamMembersCache) return teamMembersCache;
+  try {
+    const res = await fetch('/api/projects/team-members');
+    const data = await res.json();
+    teamMembersCache = res.ok ? (data.members || []) : [];
+    if (!res.ok && !teamMembersCache.length) {
+      // все равно продолжаем с пустым списком
+      console.warn('[projects] team-members unavailable:', data.message || data.error);
+    }
+  } catch (err) {
+    teamMembersCache = [];
+    console.warn('[projects] team-members failed:', err.message);
+  }
+  return teamMembersCache;
+}
+
+function renderTeamMemberSelect(currentValue) {
+  const sel = document.getElementById('editProjectManager');
+  const value = (currentValue || '').trim();
+  if (!teamMembersCache.length) {
+    sel.innerHTML = value
+      ? `<option value="">${esc(value)}</option><option value="${esc(value)}">${esc(value)}</option>`
+      : '<option value="">(список команды недоступен)</option>';
+    if (value) sel.value = value;
+    return;
+  }
+  sel.innerHTML =
+    '<option value="">— не выбран —</option>' +
+    teamMembersCache.map((m) => `<option value="${esc(m.username)}"${m.username === value ? ' selected' : ''}>${esc(teamMemberLabel(m))}</option>`).join('');
+  // Раньше поле было текстовым — там могло сохраниться произвольное «Имя,
+  // фамилия», которого нет среди username'ов. Если так — показываем его
+  // отдельной опцией, чтобы значение не потерялось при повторном сохранении.
+  const isKnown = teamMembersCache.some((m) => m.username === value);
+  if (value && !isKnown) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(value)}" selected>${esc(value)} (не из списка команды)</option>`);
+  }
+}
+
 // Bot select only shows once there's actually something to choose between —
 // with the (today: usual) single active bot, its @username is just shown
 // as a hint instead of a one-option dropdown nobody needs to touch.
@@ -966,6 +1015,7 @@ async function openEdit(projectId, label) {
     const [res] = await Promise.all([
       fetch(`/api/projects/${encodeURIComponent(projectId)}/settings`),
       loadTgPickerData(),
+      loadTeamMembers(),
     ]);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
@@ -974,7 +1024,7 @@ async function openEdit(projectId, label) {
     document.getElementById('editIsAiProject').checked = !!data.isAiProject;
     document.getElementById('editIsArchived').checked = !!data.isArchived;
     document.getElementById('editStartDate').value = data.startDate || '';
-    document.getElementById('editProjectManager').value = data.projectManager || '';
+    renderTeamMemberSelect(data.projectManager || '');
     document.getElementById('editPostsPerMonth').value = data.postsPerMonth || '';
     document.getElementById('editPublishTimeMsk').value = data.publishTimeMsk || '';
     document.getElementById('editPaidThroughDate').value = data.paidThroughDate || '';

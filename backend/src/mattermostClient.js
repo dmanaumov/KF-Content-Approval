@@ -699,6 +699,51 @@ async function getUserIdByUsername(username) {
   }
 }
 
+// GET /api/v4/users?team_id={teamId} — every worker who has Mattermost TEAM
+// membership in config.teamId. Since the app's board is shared at the team
+// level (Mattermost grants board access per team), team members == the people
+// who have board access. This is what powers the responsible-worker dropdown
+// in the staff project-settings popup (see GET /api/projects/team-members in
+// index.js). Stable, documented core API; fetched with the shared bot session
+// like getUserIdByUsername above. Paginates per_page=200 — a roster that big
+// is unrealistic here, but the loop is cheap and keeps the list complete if
+// the team ever grows past a single page. Deactivated accounts (delete_at
+// set) are filtered out so the dropdown only offers real, usable people.
+async function listTeamUsers() {
+  assertConfigured();
+  if (!config.teamId) return [];
+  const profiles = [];
+  let page = 0;
+  for (;;) {
+    const headers = await authHeaders();
+    delete headers['Content-Type'];
+    const url = `${config.mattermostUrl}/api/v4/users?team_id=${encodeURIComponent(config.teamId)}&page=${page}&per_page=200`;
+    let res = await fetchWithTimeout(url, { headers });
+    if (res.status === 401 && usingSessionLogin()) {
+      const retryHeaders = await authHeaders(undefined, { forceRelogin: true });
+      delete retryHeaders['Content-Type'];
+      res = await fetchWithTimeout(url, { headers: retryHeaders });
+    }
+    if (!res.ok) {
+      if (config.debug) console.warn(`[mattermost] listTeamUsers: HTTP ${res.status}`);
+      throw new Error(`listTeamUsers: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
+    }
+    const users = await res.json();
+    const batch = Array.isArray(users) ? users : [];
+    profiles.push(...batch);
+    if (batch.length < 200) break;
+    page++;
+  }
+  return profiles
+    .filter((u) => u && u.id && u.username && !u.delete_at)
+    .map((u) => ({
+      id: u.id,
+      username: u.username,
+      name: [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || u.username,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
 // --- Core API "as a real team member" ------------------------------------
 // Everything above uses the ONE shared bot-account session (module-level
 // `session`) to talk to the Boards plugin API. The functions below are a
@@ -819,6 +864,7 @@ module.exports = {
   addBlocks,
   fetchFileStream,
   getUserIdByUsername,
+  listTeamUsers,
   loginAs,
   getChannelByNameAsUser,
   getChannelUnreadAsUser,
