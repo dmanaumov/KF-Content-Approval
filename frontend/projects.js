@@ -1171,6 +1171,23 @@ document.getElementById('refFileInput').addEventListener('change', async (e) => 
   }
 });
 document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
+// Клик по фону попапа (облёте самой панели .sheet) закрывает его — тот же
+// паттерн, что в team.js для #taskModal: слушаем НА САМОМ backdrop
+// (#editModal, .modal-wrap), а не инферируем "клик вне .sheet" через
+// closest() на всплытии. Внутренние ре-рендеры (табы, пикеры) перерисовывают
+// контент панели в ответ на тот же клик и могут отвязать целевой элемент от
+// документа до того, как он доплывёт до модалки — тогда closest() вернул бы
+// null и закрыл попап на каждом клике. Попадания по фону это исключают:
+// клик может достичь #editModal, только в буквальном смысле приземлившись
+// на него (на .sheet он останавливается), поэтому проверка по event.target.
+document.getElementById('editModal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeEdit();
+});
+// Esc закрывает попап точно так же, как клик по фону (см. выше) — тот же
+// паттерн, что в team.js (#taskModal/#createModal) и app.js (lightbox).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('editModal').classList.contains('show')) closeEdit();
+});
 document.querySelector('[data-action="save-edit"]').addEventListener('click', saveEdit);
 document.querySelectorAll('.edit-tab').forEach((b) => {
   b.addEventListener('click', () => switchEditTab(b.dataset.tab));

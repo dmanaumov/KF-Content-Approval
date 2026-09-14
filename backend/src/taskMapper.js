@@ -417,6 +417,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       projectId,
       projectLabel,
       createAt: card.createAt || 0,
+      updateAt: card.updateAt || 0,
     };
   });
 

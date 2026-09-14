@@ -235,12 +235,35 @@ function teamHeatmap(monthDays, daily) {
   return heatmapTable(monthDays, series, 'Работник');
 }
 
-function render(data, proj, team) {
+// Матрица «работник × выполнение задач» — строки исполнители (исполнитель на
+// карточке), столбцы: невыполненных карточек и выполненных за последние 14
+// дней (статус «Согласовано НА ПУБЛИКАЦИЮ»/«ОПУБЛИКОВАНО» И updateAt карточки
+// моложе 14 дней — см. /api/analytics/team-tasks). Такой же вид проматрицы,
+// как у остальных таблиц этой страницы. Не зависит от выбранного месяца —
+// это скользящее 14-дневное окно, не календарный месяц.
+function workerTasksTable(rows) {
+  if (!rows || !rows.length) return '<div class="muted">Нет задач с назначенным исполнителем.</div>';
+  return `<table class="stat-table">
+    <thead><tr><th>Работник</th><th>Невыполнено задач</th><th>Выполнено за 14 дней</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (r) => `<tr>
+        <td class="stat-actor">${esc(r.name)}</td>
+        <td>${r.notDone}</td>
+        <td>${r.done14}</td>
+      </tr>`
+      )
+      .join('')}</tbody>
+  </table>`;
+}
+
+function render(data, proj, team, tasks) {
   const html = [
     monthNav(),
     section(`Активность по проектам · ${proj.month}`, projectDevicesTable(proj.projectDevices)),
     section(`Активность по проекту · ${proj.month}`, projectHeatmap(proj.monthDays, proj.projectDaily)),
     section(`Активность команды · ${team.month}`, teamHeatmap(team.monthDays, team.teamDaily)),
+    section('Выполнение задач · за 14 дней', workerTasksTable(tasks.rows), 'невыполнено — карточки не в статусах «Согласовано НА ПУБЛИКАЦИЮ» / «ОПУБЛИКОВАНО»; выполнено за 14 дней — карточка в одном из этих статусов, обновлённая менее 14 дней назад'),
     section('За 30 дней', cards(data)),
     section('Посещения по дням', dateChart(data.byDate), 'все кабинеты (клиенты, команда, админка) · один заход на посетителя за 20 минут'),
     section('Заходы по проектам', hbars(data.byProject, 'project')),
@@ -289,6 +312,9 @@ async function renderAll() {
       fetch('/api/analytics/projects' + monthQuery()),
       fetch('/api/analytics/team' + monthQuery()),
     ]);
+    // Матрица «выполнение задач» не зависит от месяца (скользящее окно 14
+    // дней), поэтому тянется один раз — параллельно с месячными вью.
+    const tasksRes = await fetch('/api/analytics/team-tasks');
     if (projRes.status === 401 || teamRes.status === 401) {
       errorBox.textContent = 'Нужен доступ администратора (введите пароль от админки). Обновите страницу после входа.';
       errorBox.hidden = false;
@@ -296,11 +322,13 @@ async function renderAll() {
     }
     const proj = await projRes.json();
     const team = await teamRes.json();
+    const tasks = await tasksRes.json();
     if (!projRes.ok) throw new Error(proj.message || 'Ошибка загрузки статистики');
     if (!teamRes.ok) throw new Error(team.message || 'Ошибка загрузки статистики');
+    if (!tasksRes.ok) throw new Error(tasks.message || 'Ошибка загрузки статистики');
     loading.hidden = true;
     errorBox.hidden = true;
-    render(summary, proj, team);
+    render(summary, proj, team, tasks);
   } catch (err) {
     loading.hidden = true;
     errorBox.textContent = 'Не удалось загрузить статистику: ' + err.message;

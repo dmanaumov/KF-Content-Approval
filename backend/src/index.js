@@ -1140,6 +1140,53 @@ app.get('/api/analytics/projects', requireStatAuth, async (req, res) => {
   }
 });
 
+// GET /api/analytics/team-tasks — матрица "работник × выполнение задач" для
+// /stat (frontend/stat.js, секция сразу после "Активность команды").
+// Строки — исполнители (свойство «Исполнитель» на карточке, назначенные на
+// хотя бы одну карточку, не в архиве); столбцы — по скользящему окну:
+//   notDone — карточек, статус которых НЕ «Согласовано НА ПУБЛИКАЦИЮ» и НЕ
+//             «ОПУБЛИКОВАНО» (все остальные этапы производства: внутренние
+//             и клиентские) — «ещё не выполнено»;
+//   done14  — карточек в одном из двух «выполненных» статусов, у которых
+//             updateAt (последнее редактирование карточки в Mattermost)
+//             попадает в последние 14 дней.
+// «Выполнено» задано пользователем как approved || published (см.
+// config.statusOptionLabels). updateAt карточки — это поле блока из
+// Mattermost (см. loadBoard/listCards), прокинутое наружу как taskMapper's
+// updateAt; статус меняется именно через редактирование карточки, поэтому
+// "дата редактирования" и есть момент выполнения, эвристика без хранения
+// отдельных timestamp'ов в этом приложении. Имена исполнителей берутся из
+// listTeamUsers() (id → имя) — такой же маппинг, что в проектах dropdown;
+// неизвестный id показывается как есть, карточка не теряется.
+app.get('/api/analytics/team-tasks', requireStatAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const cutoff14 = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const { board, cards, blocks } = await loadBoard(boardId);
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const members = await mm.listTeamUsers();
+    const nameById = new Map(members.map((u) => [u.id, u.name]));
+    const rows = new Map(); // worker id -> { name, notDone, done14 }
+    for (const t of tasks) {
+      if (!t.assigneeId) continue;
+      let row = rows.get(t.assigneeId);
+      if (!row) {
+        row = { name: nameById.get(t.assigneeId) || t.assigneeId, notDone: 0, done14: 0 };
+        rows.set(t.assigneeId, row);
+      }
+      const done = t.status === 'approved' || t.status === 'published';
+      if (!done) row.notDone++;
+      else if (t.updateAt && t.updateAt > cutoff14) row.done14++;
+    }
+    const result = [...rows.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    res.json({ rows: result, days: 14 });
+  } catch (err) {
+    console.error('[api] analytics team-tasks failed:', err.message);
+    res.status(500).json({ error: 'analytics_unavailable', message: err.message });
+  }
+});
+
 // POST /api/projects/:projectId/regenerate-link — issues a brand new short
 // link for this project and immediately invalidates the old one. Internal
 // staff action (not reachable from anywhere in the client-facing cabinet) —
