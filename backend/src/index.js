@@ -2892,7 +2892,13 @@ async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {
   if (key && !SOCIAL_LABELS[key]) {
     throw new Error(`Неизвестная соцсеть "${networkKey}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
   }
-  const { cards } = await loadBoard(boardId, { fresh: true });
+  // NOT fresh — каждая правка в /team уже заканчивается свежим чтением
+  // борда в refetchTeamTask ниже (которое и возвращает итоговую карточку),
+  // а здесь нам нужен лишь текущий title, чтобы пересобрать префикс;
+  // кэш на 10с (config.cacheTtlMs) заведомо актуальнее, чем платить ещё
+  // одним полным чтением БОРДА ради одной строки (см. PERF LOGGING в
+  // loadBoard — холодное чтение на борде с сотнями блоков — это секунды).
+  const { cards } = await loadBoard(boardId);
   const card = cards.find((c) => c.id === taskId);
   if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before network update.`);
   // AI_TAG_RE ('[ai]', see app.js) is never anchored at the very start of a
@@ -2918,7 +2924,10 @@ async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {
 async function updateTaskTitle(boardId, taskId, newBareTitle, actorName) {
   const trimmed = String(newBareTitle || '').trim();
   if (!trimmed) throw new Error('Название не может быть пустым.');
-  const { cards } = await loadBoard(boardId, { fresh: true });
+  // NOT fresh — см. комментарий в updateTaskNetwork: итоговое актуальное
+  // состояние возвращает refetchTeamTask ниже, здесь читаем только текущий
+  // префикс из кэша, чтобы пересобрать заголовок.
+  const { cards } = await loadBoard(boardId);
   const card = cards.find((c) => c.id === taskId);
   if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before title update.`);
   const existingPrefix = String(card.title || '').match(SOCIAL_PREFIX_RE);
@@ -2938,7 +2947,9 @@ async function updateTaskDate(boardId, taskId, dateStr) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     throw new Error(`Некорректная дата "${dateStr}" — ожидался формат YYYY-MM-DD.`);
   }
-  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  // NOT fresh — см. комментарий в updateTaskNetwork: итоговое актуальное
+  // состояние возвращает refetchTeamTask ниже.
+  const { board, cards } = await loadBoard(boardId);
   const dateProp = findPropertyDef(board, config.publishDatePropertyName);
   if (!dateProp) {
     throw new Error(`Свойство "${config.publishDatePropertyName}" не найдено на борде ${boardId}.`);
