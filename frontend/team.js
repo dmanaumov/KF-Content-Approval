@@ -1575,6 +1575,7 @@ tmHead.addEventListener('click', async (e) => {
   if (!t) return;
   const mmEl = e.target.closest('[data-action="copy-card-link"]');
   if (mmEl) {
+    e.preventDefault();
     navigator.clipboard.writeText(`${location.origin}/team?task=${encodeURIComponent(t.id)}`).catch(() => {});
     toast('Ссылка на карточку скопирована');
     return;
@@ -1603,6 +1604,7 @@ tmHead.addEventListener('click', async (e) => {
   if (action === 'toggle-network-pop') { togglePopover(document.getElementById('tmNetworkPop')); return; }
   if (action === 'toggle-date-pop') { await onToggleDatePop(t); return; }
   if (action === 'pick-status') {
+    closeAllPopovers();
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/status`, { method: 'POST', body: { status: btn.dataset.label } });
       applyUpdatedTask(data.task);
@@ -1613,6 +1615,7 @@ tmHead.addEventListener('click', async (e) => {
     return;
   }
   if (action === 'pick-network') {
+    closeAllPopovers();
     try {
       const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/network`, { method: 'POST', body: { network: btn.dataset.network } });
       applyUpdatedTask(data.task);
