@@ -643,9 +643,105 @@ app.get('/api/projects', staffAuth, async (req, res) => {
     const who = analytics.identify(req);
     analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
     console.log(`[perf] GET /api/projects: TOTAL ${Date.now() - routeStartedAt}ms (projects=${visible.length}/${options.length})`);
-    res.json({ mattermostWebUrl: config.mattermostWebUrl, options: visible });
+    res.json({ mattermostWebUrl: config.mattermostWebUrl, options: visible, canManage: !!(req.staffScope && req.staffScope.full) });
   } catch (err) {
     console.error('[api] GET projects failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// POST /api/projects — create a NEW client project on /admin. A "project" is
+// just an option of the board's "Проект" select property (the board is shared
+// across all clients — see docs/MATTERMOST_INTEGRATION.md §7), so creating
+// one means adding { id, value, color } to that property's options via
+// updateBoardCardProperties(). The project_settings row (link token, logo,
+// creds, KPI, ...) is created lazily on the next read (see ensureRow), so
+// nothing else to seed here. Restricted to admin/ceo (staffScope.full) —
+// project managers manage cards, not the project list itself. See answer:
+// "Только admin/ceo" from 2026-09-16.
+app.post('/api/projects', staffAuth, async (req, res) => {
+  const scope = req.staffScope;
+  if (!scope || !scope.full) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Создавать проекты могут только администратор и владелец.' });
+  }
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const label = String((req.body && req.body.label) || '').trim();
+  if (!label) return res.status(400).json({ error: 'label_required', message: 'Название проекта обязательно.' });
+  if (label.length > 120) return res.status(400).json({ error: 'label_too_long', message: 'Название проекта слишком длинное (макс. 120 символов).' });
+  const nowMs = Date.now();
+  const optionId = `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const color = ['#FCB900', '#7BDCB5', '#00D68F', '#FF8FA3', '#82C9D7'][nowMs % 5];
+  try {
+    const board = await loadBoard(boardId).then(({ board }) => board);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    if (!projectProp) {
+      return res.status(400).json({ error: 'project_property_not_found', message: `Свойство "${config.projectPropertyName}" не найдено на борде.` });
+    }
+    const options = projectProp.options || [];
+    const duplicate = options.some((o) => String(o.value).trim().toLowerCase() === label.toLowerCase());
+    if (duplicate) return res.status(409).json({ error: 'duplicate_label', message: `Проект «${label}» уже есть на борде.` });
+    const newCardProperties = (board.cardProperties || []).map((p) =>
+      p.id === projectProp.id ? { ...p, options: [...options, { id: optionId, value: label, color }] } : p
+    );
+    await mm.updateBoardCardProperties(boardId, newCardProperties);
+    invalidate(boardId);
+    console.log(`[api] POST /api/projects: created project "${label}" (${optionId})`);
+    res.status(201).json({ id: optionId, label, color });
+  } catch (err) {
+    console.error('[api] POST projects failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// DELETE /api/projects/:projectId — remove a client project from /admin.
+// Like POST above, the project is a "Проект" property option; deleting it
+// removes that option from the board AND the project_settings row (so the
+// rotatable link/token dies with it — a deleted project must never keep a
+// working cabinet link). Guardrails: admin/ceo only (scope.full), and a
+// project that still has cards attached is refused — its cards would lose
+// their "Проект" value and fall out of every filter, so the user must move
+// them to another project first (chosen behavior 2026-09-16). Re-reads the
+// board fresh so a card added between the list load and this request is
+// caught too.
+app.delete('/api/projects/:projectId', staffAuth, async (req, res) => {
+  const scope = req.staffScope;
+  if (!scope || !scope.full) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Удалять проекты могут только администратор и владелец.' });
+  }
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const projectId = req.params.projectId;
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    if (!projectProp) {
+      return res.status(400).json({ error: 'project_property_not_found', message: `Свойство "${config.projectPropertyName}" не найдено на борде.` });
+    }
+    const option = (projectProp.options || []).find((o) => o.id === projectId);
+    if (!option) {
+      return res.status(404).json({ error: 'project_not_found', message: 'Проект не найден на борде.' });
+    }
+    // Any card whose "Проект" points at this option — every status, archived
+    // or not — blocks deletion. count is read-only, no extra Mattermost call
+    // beyond the board/cards/blocks already fetched above.
+    const cardCount = buildTasks(board, cards, blocks, { projectFilter: projectId, skipProjectFilter: false, includeAllStatuses: true }).tasks.length;
+    if (cardCount > 0) {
+      return res.status(409).json({
+        error: 'project_has_cards',
+        message: `У проекта «${option.value}» ещё ${cardCount} ${pluralRu(cardCount, 'карточка', 'карточки', 'карточек')} на борде. Перенесите их в другой проект и попробуйте ещё раз.`,
+      });
+    }
+    const newCardProperties = (board.cardProperties || []).map((p) =>
+      p.id === projectProp.id ? { ...p, options: (projectProp.options || []).filter((o) => o.id !== projectId) } : p
+    );
+    await mm.updateBoardCardProperties(boardId, newCardProperties);
+    await projectSettings.deleteProjectSettings(boardId, projectId);
+    invalidate(boardId);
+    console.log(`[api] DELETE /api/projects: removed project "${option.value}" (${projectId})`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] DELETE project failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
   }
 });
@@ -765,6 +861,14 @@ function previousMonthKey(y, m) {
 //              не опубликована (архив не считается опозданием — это закрытие).
 function moscowDateStr(ms) {
   return new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+// Русское склонение: pluralRu(2, 'карточка', 'карточки', 'карточек') → "карточки".
+function pluralRu(n, one, few, many) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+  return many;
 }
 function mondayOf(dateStr) {
   if (!dateStr) return '';

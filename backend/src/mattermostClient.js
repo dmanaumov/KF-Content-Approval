@@ -584,6 +584,24 @@ async function patchBlock(boardId, blockId, body) {
   return asJsonOrThrow(res, `patchBlock(${boardId},${blockId})`);
 }
 
+// PATCH /boards/{boardId}/blocks/{boardId} — updates the BOARD block itself
+// (a board is just a block whose id equals its own boardId). Used to change
+// the select property definitions themselves — specifically adding/removing
+// an option of the "Проект" property when a project is created/deleted from
+// the /admin staff page. Same BlockPatch mechanics as patchCardProperty():
+// `updatedFields` is merged into the block's top-level `fields` by KEY, so
+// `cardProperties` is replaced WHOLESALE — callers must pass the FULL new
+// array (not just the one changed property), or every other property
+// definition (Статус, Дедлайн, Исполнитель, ...) would be silently wiped.
+async function updateBoardCardProperties(boardId, cardProperties) {
+  const res = await mmFetch(
+    boardsUrl(`/boards/${boardId}/blocks/${boardId}?disable_notify=true`),
+    { method: 'PATCH', body: JSON.stringify({ updatedFields: { cardProperties } }) },
+    `updateBoardCardProperties(${boardId})`
+  );
+  return asJsonOrThrow(res, `updateBoardCardProperties(${boardId})`);
+}
+
 async function deleteBlock(boardId, blockId) {
   const res = await mmFetch(
     boardsUrl(`/boards/${boardId}/blocks/${blockId}?disable_notify=true`),
@@ -859,6 +877,7 @@ module.exports = {
   listBlocks,
   patchCardProperty,
   patchBlock,
+  updateBoardCardProperties,
   deleteBlock,
   addCardComment,
   addBlocks,

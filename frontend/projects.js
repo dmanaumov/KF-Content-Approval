@@ -76,6 +76,10 @@ async function copyToClipboard(text) {
 
 let options = [];
 let busyProjectId = null;
+// Полные права (admin/ceo) — показываем/скрываем кнопки «Создать проект» и
+// «Удалить». Менеджеры проекта редактируют карточки, но список проектов им
+// не даём трогать (backend отдаёт canManage из staffScope.full).
+let canManage = false;
 
 // SMM/ИИ tabs above the list (added once AI projects stopped being rare
 // exceptions — see the old TODO this replaces). Ground truth for "which tab"
@@ -232,6 +236,9 @@ function render(filterText) {
               <button class="icon-btn proj-regen${busy ? ' busy' : ''}" type="button" data-tip="Новая ссылка — старая сразу перестанет работать" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}" ${busy ? 'disabled' : ''} aria-label="Сгенерировать новую ссылку">
                 <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
               </button>
+              ${canManage ? `<button class="icon-btn proj-del danger" type="button" data-tip="Удалить проект — только если на него нет карточек" data-project-id="${esc(o.id)}" data-label="${esc(o.label)}" aria-label="Удалить проект">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>` : ''}
             </div>
           </div>
           ${beadsHtml(o)}
@@ -287,6 +294,8 @@ async function load() {
     const res = await fetch('/api/projects');
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
+    canManage = !!data.canManage;
+    updateManageUi();
     const KPI_TIER_RANK = { off: 0, minor: 1, ontrack: 2 };
     const kpiRank = (o) => (o.scheduleStatus ? KPI_TIER_RANK[o.scheduleStatus.tier] : 3);
     options = data.options.slice().sort((a, b) => {
@@ -389,7 +398,101 @@ document.getElementById('list').addEventListener('click', async (e) => {
   const editBtn = e.target.closest('.proj-edit');
   if (editBtn) {
     openEdit(editBtn.dataset.projectId, editBtn.dataset.label);
+    return;
   }
+  const delBtn = e.target.closest('.proj-del');
+  if (delBtn) {
+    deleteProject(delBtn.dataset.projectId, delBtn.dataset.label);
+  }
+});
+
+// --- Создание проекта (admin/ceo) --------------------------------------
+// Показываем/прячем кнопки, доступные только с полными правами (canManage
+// приходит в GET /api/projects из staffScope.full — backend сам режет, тут
+// только UX: менеджеру кнопок просто не рисуем).
+function updateManageUi() {
+  document.getElementById('createProjectBtn').hidden = !canManage;
+}
+
+const createModal = document.getElementById('createModal');
+const createProjectName = document.getElementById('createProjectName');
+const createError = document.getElementById('createError');
+
+function openCreate() {
+  createProjectName.value = '';
+  createError.hidden = true;
+  createModal.hidden = false;
+  createModal.classList.add('show');
+  setTimeout(() => createProjectName.focus(), 30);
+}
+
+function closeCreate() {
+  createModal.classList.remove('show');
+  createModal.hidden = true;
+}
+
+async function saveCreate() {
+  const label = createProjectName.value.trim();
+  if (!label) {
+    createError.textContent = 'Введите название проекта.';
+    createError.hidden = false;
+    return;
+  }
+  const btn = createModal.querySelector('[data-action="save-create"]');
+  const original = btn.innerHTML;
+  btn.innerHTML = 'Создаём…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || 'Ошибка создания');
+    closeCreate();
+    toast(`Проект «${data.label}» создан`);
+    await load();
+  } catch (err) {
+    createError.textContent = err.message;
+    createError.hidden = false;
+  } finally {
+    btn.innerHTML = original;
+    btn.disabled = false;
+  }
+}
+
+async function deleteProject(projectId, label) {
+  const sure = confirm(`Удалить проект «${label}»?\n\nЭто удалит его опцию с борда и сделает нерабочей его ссылку для клиента (настройки проекта будут удалены).\n\nУдалить можно только проект без карточек на борде.`);
+  if (!sure) return;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || 'Ошибка удаления');
+    toast(`Проект «${label}» удалён`);
+    await load();
+  } catch (err) {
+    toast('Не удалось удалить: ' + err.message);
+  }
+}
+
+document.getElementById('createProjectBtn').addEventListener('click', openCreate);
+createModal.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-wrap')) closeCreate();
+});
+createModal.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && createModal.classList.contains('show')) closeCreate();
+});
+createModal.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="close-create"]');
+  if (btn) closeCreate();
+});
+createModal.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="save-create"]');
+  if (btn) saveCreate();
+});
+createProjectName.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveCreate();
 });
 
 // --- "Редактировать" popup: logo URL + per-network publishing credentials

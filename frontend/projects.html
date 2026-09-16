@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=17">
-  <link rel="stylesheet" href="/projects.css?v=14">
+  <link rel="stylesheet" href="/projects.css?v=15">
 </head>
 <body>
 <div class="page">
@@ -44,6 +44,7 @@
     </div>
     <div class="proj-search-row">
       <input id="search" class="proj-search" type="text" placeholder="Поиск по названию клиента…">
+      <button id="createProjectBtn" type="button" class="btn approve" hidden>＋ Создать проект</button>
       <label class="archive-toggle-check" for="showArchived">
         <input id="showArchived" type="checkbox">
         <span>Архивные проекты</span>
@@ -218,9 +219,30 @@
   </div>
 </div>
 
+<div id="createModal" class="modal-wrap" hidden>
+  <div class="sheet create-sheet">
+    <div class="edit-sheet-head">
+      <div>
+        <h3>Новый проект</h3>
+        <p class="muted">Проект появится на общем борде как новая опция свойства «Проект». Настройки (ссылка, лого, креды, KPI) появятся после первого открытия карточки проекта.</p>
+      </div>
+    </div>
+
+    <label class="field-label" for="createProjectName">Название проекта (клиент)</label>
+    <input id="createProjectName" class="field-input" type="text" maxlength="120" placeholder="Например, Кофейня «Небо»" autocomplete="off">
+
+    <div id="createError" class="error-box" hidden></div>
+
+    <div class="sheet-actions">
+      <button class="btn changes" data-action="close-create">Отмена</button>
+      <button class="btn approve" data-action="save-create">Создать</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=12"></script>
+<script src="/projects.js?v=13"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

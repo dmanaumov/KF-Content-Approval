@@ -302,6 +302,7 @@
 .icon-btn svg{width:12px;height:12px}
 .icon-btn:active{transform:scale(.94)}
 .icon-btn:disabled{opacity:.55;cursor:default}
+.icon-btn.danger{background:#CE3B3B;border-color:rgba(255,255,255,.25)}
 .icon-btn.busy svg{animation:icon-spin .9s linear infinite}
 @keyframes icon-spin{to{transform:rotate(360deg)}}
 .icon-btn::after,

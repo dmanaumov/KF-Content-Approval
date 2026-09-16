@@ -471,6 +471,16 @@ async function importLegacyFileTokens() {
   }
 }
 
+// Permanently removes a project's settings row (link token, logo, creds,
+// planning metadata). Called when a project option is deleted from the board
+// via the /admin staff page — a deleted project must not keep a resolvable
+// link/token behind. Returns true if a row was actually deleted.
+async function deleteProjectSettings(boardId, projectId) {
+  const pool = db.requirePool();
+  const result = await pool.query('DELETE FROM project_settings WHERE board_id = $1 AND project_id = $2', [boardId, projectId]);
+  return result.rowCount > 0;
+}
+
 module.exports = {
   getToken,
   getTokenAndLogo,
@@ -483,6 +493,7 @@ module.exports = {
   listExpiringCredentials,
   listArchivedProjectIds,
   listProjectManagers,
+  deleteProjectSettings,
   importLegacyFileTokens,
   KNOWN_NETWORKS,
 };
