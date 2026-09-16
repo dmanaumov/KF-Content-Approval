@@ -584,22 +584,32 @@ async function patchBlock(boardId, blockId, body) {
   return asJsonOrThrow(res, `patchBlock(${boardId},${blockId})`);
 }
 
-// PATCH /boards/{boardId}/blocks/{boardId} — updates the BOARD block itself
-// (a board is just a block whose id equals its own boardId). Used to change
-// the select property definitions themselves — specifically adding/removing
-// an option of the "Проект" property when a project is created/deleted from
-// the /admin staff page. Same BlockPatch mechanics as patchCardProperty():
-// `updatedFields` is merged into the block's top-level `fields` by KEY, so
-// `cardProperties` is replaced WHOLESALE — callers must pass the FULL new
-// array (not just the one changed property), or every other property
-// definition (Статус, Дедлайн, Исполнитель, ...) would be silently wiped.
-async function updateBoardCardProperties(boardId, cardProperties) {
+// ROOT CAUSE (2026-09-16, reported live: "Удаление проекта" failing with
+// HTTP 404 "{block ID=<boardId>} not found") — the ORIGINAL assumption here
+// ("a board is just a block whose id equals its own boardId") is simply
+// wrong on this Mattermost Boards version: confirmed against the actual
+// mattermost-plugin-boards source (server/model/board.go) that `Board` is
+// its own model, entirely separate from `Block` — a board is NOT a row in
+// the blocks table at all, so PATCHing /blocks/{boardId} 404s because no
+// such block ever existed to find. The real, dedicated route for a board's
+// own fields (including its card property DEFINITIONS — "Проект"/"Статус"/
+// etc. as a whole, not a card's VALUES for them) is `PATCH /boards/{boardId}`
+// with a BoardPatch body — and it has genuinely BETTER semantics than the
+// old (broken) approach: `updatedCardProperties` merges by the property's
+// OWN id (server/model/board.go's BoardPatch.Patch()), so a caller only
+// needs to send the ONE property definition that changed (with its full,
+// already-merged `options` array) — Mattermost keeps every other property
+// (Статус, Дедлайн, Исполнитель, ...) untouched on its own, no need to
+// resend the board's entire cardProperties array and risk wiping something
+// by omission (the exact class of bug patchCardProperty's own history
+// already warns about for CARD-level properties).
+async function patchBoardCardProperty(boardId, propertyDef) {
   const res = await mmFetch(
-    boardsUrl(`/boards/${boardId}/blocks/${boardId}?disable_notify=true`),
-    { method: 'PATCH', body: JSON.stringify({ updatedFields: { cardProperties } }) },
-    `updateBoardCardProperties(${boardId})`
+    boardsUrl(`/boards/${boardId}`),
+    { method: 'PATCH', body: JSON.stringify({ updatedCardProperties: [propertyDef] }) },
+    `patchBoardCardProperty(${boardId},${propertyDef && propertyDef.id})`
   );
-  return asJsonOrThrow(res, `updateBoardCardProperties(${boardId})`);
+  return asJsonOrThrow(res, `patchBoardCardProperty(${boardId},${propertyDef && propertyDef.id})`);
 }
 
 async function deleteBlock(boardId, blockId) {
@@ -877,7 +887,7 @@ module.exports = {
   listBlocks,
   patchCardProperty,
   patchBlock,
-  updateBoardCardProperties,
+  patchBoardCardProperty,
   deleteBlock,
   addCardComment,
   addBlocks,

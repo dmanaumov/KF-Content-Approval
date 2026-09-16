@@ -654,7 +654,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
 // just an option of the board's "Проект" select property (the board is shared
 // across all clients — see docs/MATTERMOST_INTEGRATION.md §7), so creating
 // one means adding { id, value, color } to that property's options via
-// updateBoardCardProperties(). The project_settings row (link token, logo,
+// patchBoardCardProperty(). The project_settings row (link token, logo,
 // creds, KPI, ...) is created lazily on the next read (see ensureRow), so
 // nothing else to seed here. Restricted to admin/ceo (staffScope.full) —
 // project managers manage cards, not the project list itself. See answer:
@@ -681,10 +681,8 @@ app.post('/api/projects', staffAuth, async (req, res) => {
     const options = projectProp.options || [];
     const duplicate = options.some((o) => String(o.value).trim().toLowerCase() === label.toLowerCase());
     if (duplicate) return res.status(409).json({ error: 'duplicate_label', message: `Проект «${label}» уже есть на борде.` });
-    const newCardProperties = (board.cardProperties || []).map((p) =>
-      p.id === projectProp.id ? { ...p, options: [...options, { id: optionId, value: label, color }] } : p
-    );
-    await mm.updateBoardCardProperties(boardId, newCardProperties);
+    const updatedProjectProp = { ...projectProp, options: [...options, { id: optionId, value: label, color }] };
+    await mm.patchBoardCardProperty(boardId, updatedProjectProp);
     invalidate(boardId);
     console.log(`[api] POST /api/projects: created project "${label}" (${optionId})`);
     res.status(201).json({ id: optionId, label, color });
@@ -732,10 +730,8 @@ app.delete('/api/projects/:projectId', staffAuth, async (req, res) => {
         message: `У проекта «${option.value}» ещё ${cardCount} ${pluralRu(cardCount, 'карточка', 'карточки', 'карточек')} на борде. Перенесите их в другой проект и попробуйте ещё раз.`,
       });
     }
-    const newCardProperties = (board.cardProperties || []).map((p) =>
-      p.id === projectProp.id ? { ...p, options: (projectProp.options || []).filter((o) => o.id !== projectId) } : p
-    );
-    await mm.updateBoardCardProperties(boardId, newCardProperties);
+    const updatedProjectProp = { ...projectProp, options: (projectProp.options || []).filter((o) => o.id !== projectId) };
+    await mm.patchBoardCardProperty(boardId, updatedProjectProp);
     await projectSettings.deleteProjectSettings(boardId, projectId);
     invalidate(boardId);
     console.log(`[api] DELETE /api/projects: removed project "${option.value}" (${projectId})`);
