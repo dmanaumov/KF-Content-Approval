@@ -52,6 +52,7 @@ const norm = (s) => String(s || '').trim().toLowerCase();
 
 let currentTasks = [];
 let activeStatuses = null;
+let pendingDeepLinkTaskId = null;
 let statusOptions = []; // [{id,label}] — every raw "Статус" option, from GET /api/team/tasks
 let keywordsPropertyFound = false;
 // Id архивных проектов (см. GET /api/team/tasks -> archivedProjectIds) —
@@ -439,6 +440,11 @@ async function loadTasks() {
     renderTasks();
     if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
     if (modalTaskId) renderModal(); // держим открытую карточку в актуальном состоянии после фонового обновления списка
+    if (pendingDeepLinkTaskId) {
+      const id = pendingDeepLinkTaskId;
+      pendingDeepLinkTaskId = null;
+      openDeepLinkedTask(id);
+    }
   } catch (err) {
     teamLoading.hidden = true;
     toast('Не удалось загрузить задачи: ' + err.message);
@@ -896,6 +902,26 @@ function openTaskModal(taskId) {
   renderModal();
 }
 
+// Deep link: отражение ?task=<id> в URL кабинета команды (ссылку на карточку
+// сотрудник видит в шапке модалки — см. copy-card-link). Карточка может не
+// быть в currentTasks (она not "моя"), поэтому при несовпадении дёргаем
+// GET /api/team/tasks/:taskId (тот же список, но одну) и открываем её.
+async function openDeepLinkedTask(taskId) {
+  const existing = currentTasks.find((t) => t.id === taskId);
+  if (existing) { openTaskModal(taskId); return; }
+  try {
+    const res = await fetch(`/api/team/tasks/${encodeURIComponent(taskId)}`);
+    if (res.status === 401) { showLogin(); return; }
+    const data = await res.json();
+    if (!res.ok) { toast(data.message || 'Не удалось открыть карточку'); return; }
+    currentTasks.push(data.task);
+    renderTasks();
+    openTaskModal(taskId);
+  } catch (err) {
+    toast('Не удалось открыть карточку: ' + err.message);
+  }
+}
+
 function closeTaskModal() {
   taskModal.hidden = true;
   modalTaskId = null;
@@ -1143,7 +1169,10 @@ function renderModalHead(t) {
     : `<div class="tm-title">${esc(titleDisplay)}</div>
        <button type="button" class="tm-title-edit-btn" data-action="edit-title" aria-label="Изменить название" title="Изменить название">✎</button>`;
   tmHead.innerHTML = `
-    ${t.projectLabel ? `<div class="tm-project">${esc(t.projectLabel)}</div>` : ''}
+    <div class="tm-head-row">
+      ${t.projectLabel ? `<div class="tm-project">${esc(t.projectLabel)}</div>` : ''}
+      <a class="proj-mmid tm-card-link" data-action="copy-card-link" href="/team?task=${encodeURIComponent(t.id)}" target="_blank" rel="noopener" title="Ссылка на карточку — по клику копируется, можно отправить команде">MM ID: <code>${esc(t.id)}</code></a>
+    </div>
     <div class="tm-title-row">${titleBlock}</div>
     <div class="tm-pills">
       <div class="tm-pill-wrap">
@@ -1544,6 +1573,12 @@ function renderModalBody(t) {
 tmHead.addEventListener('click', async (e) => {
   const t = currentModalTask();
   if (!t) return;
+  const mmEl = e.target.closest('[data-action="copy-card-link"]');
+  if (mmEl) {
+    navigator.clipboard.writeText(`${location.origin}/team?task=${encodeURIComponent(t.id)}`).catch(() => {});
+    toast('Ссылка на карточку скопирована');
+    return;
+  }
   const btn = e.target.closest('button');
   if (!btn) return;
   const action = btn.dataset.action;
@@ -2033,5 +2068,10 @@ fabCreate.addEventListener('click', () => openCreateModal());
 document.querySelector('#createModal .tm-backdrop').addEventListener('click', closeCreateModal);
 document.getElementById('createClose').addEventListener('click', closeCreateModal);
 createForm.addEventListener('submit', submitCreateForm);
+
+// Ссылка на конкретную карточку (?task=<id>, см. openDeepLinkedTask) — из
+// ссылки в шапке модалки (copy-card-link) или любым другим способом.
+const deepLinkTaskId = new URLSearchParams(location.search).get('task');
+if (deepLinkTaskId) pendingDeepLinkTaskId = deepLinkTaskId;
 
 init();

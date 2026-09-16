@@ -1792,6 +1792,52 @@ app.get('/api/team/projects', teamAuth.requireTeamAuth, async (req, res) => {
   }
 });
 
+// GET /api/team/tasks/:taskId — single card lookup for deep links
+// (frontend opens /team?task=<id> and needs THIS card even when it isn't in
+// the logged-in user's own "my tasks" list — e.g. a manager/admin sharing a
+// card link with the team). Same visibility rule as the list above: admin/ceo
+// see everything; everyone else — assignee, creator, or project manager for
+// that card's project. 403 when the card exists but isn't visible to this
+// user (they're not supposed to know that specific production stage even
+// exists — same "not your business" posture as the list), 404 when the card
+// id doesn't exist on the board at all. Returns the same schema item as the
+// list, ready for openTaskModal().
+app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const taskId = String(req.params.taskId || '').trim();
+    const { board, cards, blocks } = await loadBoard(boardId);
+    const feedbackAuthorUserId = await getFeedbackAuthorId();
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) {
+      return res.status(404).json({ error: 'task_not_found', message: 'Карточка не найдена.' });
+    }
+    const role = teamAuth.roleFor(req.teamSession.user);
+    const myId = req.teamSession.user.id;
+    const myUsername = req.teamSession.user.username || '';
+    let visible = role.admin || role.ceo || task.assigneeId === myId;
+    if (!visible) {
+      const creators = await taskCreators.getCreators(boardId, [task.id]);
+      if (creators.get(task.id) === myId) visible = true;
+      else if (task.projectId) {
+        const managers = await projectSettings.listProjectManagers(boardId);
+        visible = managers.get(task.projectId) === myUsername;
+      }
+    }
+    if (!visible) {
+      return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этой карточке.' });
+    }
+    await resolveDiskMediaKinds([task]);
+    await mediaOrder.applyStoredOrder(boardId, [task]);
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] team single task failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
 // POST /api/team/tasks — body: { title, network?, projectId, text?,
 // publishDate?, status?, media?: string[] }. This is the "Запланировать
 // публикацию" button in the team cabinet — creates a brand-new card from
