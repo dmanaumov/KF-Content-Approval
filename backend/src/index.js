@@ -3225,9 +3225,12 @@ async function listExpiringAutomationCredentials(boardId, network, expiringWithi
 
 // GET /api/automation/projects/:projectId/settings — the planning/profile
 // side of a project's settings: isAiProject, projectManager, startDate,
-// postsPerMonth, publishTimeMsk, paidThroughDate, and the four AI generation prompts
+// postsPerMonth, publishTimeMsk, paidThroughDate, the four AI generation prompts
 // (strategyPrompt/planningPrompt/postPrompt/imagePrompt — set by staff in
-// the "ИИ настройки" tab of the /projects edit popup). Deliberately does
+// the "ИИ настройки" tab of the /projects edit popup), imageReferences, and
+// cerberusMarkdown — the «Цербер» MD-файл от ИИ проекта (staff-вкладка
+// "Цербер" в том же попапе), читаемый автоматизацией как системный промт/
+// инструкция для ИИ-ревью. Deliberately does
 // NOT include socialCredentials (its own dedicated, one-project-at-a-time
 // endpoint above — never bundled with anything else) or logoUrl/link token
 // (staff-internal only, no automation ever needs them). Added 2026-08-26 so
@@ -3250,6 +3253,7 @@ async function getAutomationProjectSettings(boardId, projectId) {
     postPrompt: settings.postPrompt,
     imagePrompt: settings.imagePrompt,
     imageReferences: settings.imageReferences,
+    cerberusMarkdown: settings.cerberusMarkdown,
   };
 }
 

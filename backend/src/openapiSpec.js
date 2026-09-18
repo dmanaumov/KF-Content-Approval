@@ -381,10 +381,11 @@ function buildOpenApiSpec() {
         get: {
           summary: 'Настройки и промты ОДНОГО проекта (не креды)',
           description:
-            'isAiProject, projectManager, startDate, postsPerMonth, publishTimeMsk, paidThroughDate и четыре промта ' +
-            'генерации (strategyPrompt/planningPrompt/postPrompt/imagePrompt) — то, что заполнено в попапе ' +
-            '"Редактировать" на /projects. НЕ включает socialCredentials (отдельный эндпоинт /credentials выше) и ' +
-            'logoUrl/токен ссылки (staff-only). Незаполненные текстовые поля приходят пустой строкой, это не ошибка.',
+            'isAiProject, projectManager, startDate, postsPerMonth, publishTimeMsk, paidThroughDate, четыре промта ' +
+            'генерации (strategyPrompt/planningPrompt/postPrompt/imagePrompt), imageReferences и cerberusMarkdown — ' +
+            'MD-файл «Цербер» от ИИ проекта (вкладка "Цербер" в попапе "Редактировать" на /projects, используется как ' +
+            'системный промт/инструкция для ИИ-ревью). НЕ включает socialCredentials (отдельный эндпоинт /credentials ' +
+            'выше) и logoUrl/токен ссылки (staff-only). Незаполненные текстовые поля приходят пустой строкой, это не ошибка.',
           security: [{ automationApiKey: [] }],
           parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' }],
           responses: {
@@ -411,6 +412,11 @@ function buildOpenApiSpec() {
                       planningPrompt: { type: 'string' },
                       postPrompt: { type: 'string' },
                       imagePrompt: { type: 'string' },
+                      imageReferences: { type: 'array', items: { type: 'string' } },
+                      cerberusMarkdown: {
+                        type: 'string',
+                        description: 'MD-файл «Цербер» от ИИ проекта (вкладка «Цербер» в настройках) — системный промт/инструкция для ИИ-ревью; пустая строка = не заполнено.',
+                      },
                     },
                   },
                 },
