@@ -418,6 +418,13 @@ function requireStaffBoardId(res) {
 // route group below (search "/api/automation/") and docs/N8N_AUTOMATION.md.
 // ---------------------------------------------------------------------------
 const AUTOMATION_ACTOR = 'автоматизация';
+// Team-chat author for the internal "Цербер" review bot (see the
+// automation team-comment route): comments written by the automation API on
+// a publish card's замечания must show up to the team under a recognizable
+// "Цербер" author, and MUST never equal a real user id (currentUser.id
+// check in frontend/team.js's mine-flag) nor a Mattermost account id.
+const CERBERUS_AUTHOR_ID = 'cerberus';
+const CERBERUS_AUTHOR_NAME = 'Цербер';
 
 // Last-N-chars-only helper for auth debug logging below — never log a full
 // secret, even to server logs (defense in depth in case logs leak
@@ -3958,6 +3965,52 @@ app.post('/api/automation/tasks/:taskId/client-message', requireAutomationAuth, 
   } catch (err) {
     console.error('[api] automation client-message failed:', err.message);
     res.status(502).json({ error: 'client_message_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/tasks/:taskId/team-comments — internal team discussion
+// (see teamComments.js) INCLUDING any «Цербер» review remarks — read side of
+// the POST .../team-comment above. Same data the /team cabinet's "Команда"
+// tab shows, exposed to the automation so a flow can (a) see what the team
+// replied to a Цербер замечание, and (b) decide whether to write more
+// remarks. Client's approval cabinet never reads this table.
+app.get('/api/automation/tasks/:taskId/team-comments', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const comments = await teamComments.listComments(boardId, req.params.taskId);
+    res.json({ comments });
+  } catch (err) {
+    console.error('[api] automation team-comments list failed:', err.message);
+    res.status(502).json({ error: 'team_comments_unavailable', message: err.message });
+  }
+});
+
+// POST /api/automation/tasks/:taskId/team-comment — body: { text?, imageUrl? }.
+// Internal TEAM-ONLY remark "от лица" Цербер (the AI review bot) on a publish
+// card — deliberately the OPPOSITE of client-message above: this lands in
+// task_team_comments (see teamComments.js), which the client's approval
+// cabinet NEVER reads. The team sees it in /team's "Команда" chat under a
+// "Цербер" author badge; the client sees nothing. Same whitelist-for-text
+// posture as the rest of these automation writes — this is a review/
+// замечание channel, not a chat: no images (keep it a clean text audit
+// trail), and empty text is rejected.
+app.post('/api/automation/tasks/:taskId/team-comment', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text_required', message: 'text обязателен — замечание не может быть пустым.' });
+  try {
+    const comment = await teamComments.addComment(
+      boardId,
+      req.params.taskId,
+      { id: CERBERUS_AUTHOR_ID, name: CERBERUS_AUTHOR_NAME },
+      text
+    );
+    res.json({ comment });
+  } catch (err) {
+    console.error('[api] automation team-comment failed:', err.message);
+    res.status(502).json({ error: 'team_comment_failed', message: err.message });
   }
 });
 

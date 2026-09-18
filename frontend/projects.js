@@ -1110,7 +1110,10 @@ async function openEdit(projectId, label) {
   imageReferences = [];
   document.getElementById('refUrlInput').value = '';
   document.getElementById('refError').hidden = true;
+  document.getElementById('editCerberusMarkdown').value = '';
+  document.getElementById('cerbFileHint').hidden = true;
   renderRefGallery();
+  refreshCerberusTab();
   switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
@@ -1138,6 +1141,8 @@ async function openEdit(projectId, label) {
     document.getElementById('editImagePrompt').value = data.imagePrompt || '';
     imageReferences = Array.isArray(data.imageReferences) ? data.imageReferences.slice(0, MAX_IMAGE_REFERENCES) : [];
     renderRefGallery();
+    document.getElementById('editCerberusMarkdown').value = data.cerberusMarkdown || '';
+    refreshCerberusTab();
     const creds = data.socialCredentials || {};
     credTextareas().forEach((ta) => {
       const net = ta.dataset.netField;
@@ -1157,11 +1162,48 @@ function switchEditTab(name) {
   });
   document.getElementById('editTabSettings').hidden = name !== 'settings';
   document.getElementById('editTabAi').hidden = name !== 'ai';
+  document.getElementById('editTabCerberus').hidden = name !== 'cerberus';
 }
 
 function closeEdit() {
   document.getElementById('editModal').classList.remove('show');
   editingProjectId = null;
+}
+
+// Подсветка вкладки «Цербер»: заполнено MD-текстом → яркая/выделенная,
+// пусто → светло-серая. Вызывается при открытии попапа и на каждый ввод,
+// чтобы неактивная вкладка всегда показывала текущее состояние заполнения.
+function refreshCerberusTab() {
+  const tab = document.querySelector('.edit-tab[data-tab="cerberus"]');
+  if (!tab) return;
+  const text = document.getElementById('editCerberusMarkdown').value.trim();
+  tab.classList.toggle('filled', !!text);
+}
+
+// Читаем загруженный .md/.txt файл как текст и кладём его в textarea —
+// «храним как текст в настройках проекта», файл никуда не грузится (в
+// отличие от reference-upload: там нужны ссылки на диск, а здесь важнее,
+// чтобы содержимое сразу можно было отредактировать).
+function loadCerberusFile(file) {
+  const hint = document.getElementById('cerbFileHint');
+  if (file.size > 500 * 1024) {
+    hint.textContent = 'Файл больше 500 КБ — слишком большой для поля настроек.';
+    hint.hidden = false;
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('editCerberusMarkdown').value = String(reader.result || '');
+    document.getElementById('editCerberusMarkdown').disabled = false;
+    hint.textContent = `Загружен: ${file.name}`;
+    hint.hidden = false;
+    refreshCerberusTab();
+  };
+  reader.onerror = () => {
+    hint.textContent = 'Не удалось прочитать файл.';
+    hint.hidden = false;
+  };
+  reader.readAsText(file);
 }
 
 async function saveEdit() {
@@ -1208,6 +1250,7 @@ async function saveEdit() {
         postPrompt: document.getElementById('editPostPrompt').value,
         imagePrompt: document.getElementById('editImagePrompt').value,
         imageReferences,
+        cerberusMarkdown: document.getElementById('editCerberusMarkdown').value,
       }),
     });
     const data = await res.json();
@@ -1273,6 +1316,12 @@ document.getElementById('refFileInput').addEventListener('change', async (e) => 
     uploadBtn.classList.remove('uploading');
   }
 });
+document.getElementById('cerbFileInput').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (file) loadCerberusFile(file);
+});
+document.getElementById('editCerberusMarkdown').addEventListener('input', refreshCerberusTab);
 document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
 // Клик по фону попапа (облёте самой панели .sheet) закрывает его — тот же
 // паттерн, что в team.js для #taskModal: слушаем НА САМОМ backdrop

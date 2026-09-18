@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=17">
-  <link rel="stylesheet" href="/projects.css?v=15">
+  <link rel="stylesheet" href="/projects.css?v=16">
 </head>
 <body>
 <div class="page">
@@ -72,6 +72,7 @@
     <div class="edit-tabs">
       <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
       <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
+      <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
     </div>
 
     <div class="edit-panel" id="editTabSettings">
@@ -213,6 +214,20 @@
       <div id="refError" class="error-box ref-error" hidden></div>
     </div>
 
+    <div class="edit-panel" id="editTabCerberus" hidden>
+      <div class="cerb-title">Цербер — MD-файл от ИИ проекта</div>
+      <p class="cerb-sub">Загрузите Markdown-файл с инструкцией/дополнением ИИ для этого клиента — содержимое сохраняется как текст в настройках проекта, и его можно сразу отредактировать прямо здесь.</p>
+      <div class="cerb-upload-row">
+        <label class="ref-upload-btn" id="cerbUploadBtn">
+          Загрузить файл .md
+          <input id="cerbFileInput" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+        </label>
+        <span id="cerbFileHint" class="cerb-file-hint" hidden></span>
+      </div>
+      <label class="field-label" for="editCerberusMarkdown">Содержимое MD-файла</label>
+      <textarea id="editCerberusMarkdown" class="field-textarea cerb-textarea" rows="14" placeholder="Вставьте сюда Markdown или загрузите файл — его текст появится здесь и его можно будет поправить…" spellcheck="false"></textarea>
+    </div>
+
     <div id="editError" class="error-box" hidden></div>
 
     <div class="sheet-actions">
@@ -245,7 +260,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=13"></script>
+<script src="/projects.js?v=14"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

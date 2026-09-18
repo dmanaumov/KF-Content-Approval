@@ -654,9 +654,19 @@ function formatChatTime(ms) {
   }
 }
 
+// Сообщения внутреннего «Цербер» (ИИ-ревью) в чате команды — автор пишется
+// automation-API в POST /api/automation/tasks/:taskId/team-comment (backend/
+// src/index.js, CERBERUS_AUTHOR_NAME). Помечаем золотым бейджем, как и «Клиент/
+// Агентство» в чате клиента, чтобы сразу читался источник замечания. Проверка
+// именно по имени (а не authorId) — authorId у Цербера сконстантён на бэкенде,
+// но имя — единый распознаваемый договорной маркер между этим файлом и тем.
+function authorIsCerberus(name) {
+  return String(name || '').toLowerCase().includes('цербер');
+}
+
 function chatMessageHtml(m) {
   return `<div class="tm-chat-msg${m.mine ? ' mine' : ''}">
-    <div class="tm-chat-msg-author">${esc(m.authorName || 'Команда')}</div>
+    <div class="tm-chat-msg-author${authorIsCerberus(m.authorName) ? ' cerberus' : ''}">${esc(m.authorName || 'Команда')}</div>
     <div class="tm-chat-msg-text">${esc(m.text || '')}</div>
     <div class="tm-chat-msg-time">${formatChatTime(m.createAt)}</div>
   </div>`;
@@ -1436,7 +1446,7 @@ function renderTeamPane(t) {
         .map((c) => {
           const mine = currentUser && c.authorId === currentUser.id;
           return `<div class="tm-chat-msg${mine ? ' mine' : ''}">
-            <div class="tm-chat-msg-author">${esc(c.authorName || 'Команда')}</div>
+            <div class="tm-chat-msg-author${authorIsCerberus(c.authorName) ? ' cerberus' : ''}">${esc(c.authorName || 'Команда')}</div>
             ${c.text ? `<div class="tm-chat-msg-text">${esc(c.text)}</div>` : ''}
             ${chatMsgImageHtml(c.imageUrl)}
             <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>

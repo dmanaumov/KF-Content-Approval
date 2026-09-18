@@ -175,6 +175,33 @@ POST /api/automation/tasks/{taskId}/client-message    — НОВОЕ: добав
                                                       клиент в своём кабинете
                                                       согласования. Нужен хотя
                                                       бы один из text/imageUrl
+GET /api/automation/tasks/{taskId}/team-comments     — НОВОЕ: ПОЛУЧИТЬ внутренний
+                                                       ЧАТ КОМАНДЫ по карточке
+                                                       (тот же список, что команда
+                                                       видит во вкладке "Команда"
+                                                       в /team) — включая замечания
+                                                       от лица «Цербер»
+                                                       (authorId "cerberus") и
+                                                       сообщения сотрудников.
+                                                       Клиент ЭТОГО не видит.
+                                                       Отдаёт {comments: [...]}
+POST /api/automation/tasks/{taskId}/team-comment      — НОВОЕ: внутреннее ЗАМЕЧАНИЕ
+                                                       команде "от лица" Цербер
+                                                       (ИИ) по карточке {text:
+                                                       "..."} — пишется в чат
+                                                       КОМАНДЫ (/team, вкладка
+                                                       "Команда") с автором
+                                                       «Цербер»; видит ТОЛЬКО
+                                                       команда, клиент в своём
+                                                       кабинете этого НЕ видит
+                                                       (противоположность
+                                                       client-message, который
+                                                       как раз клиенту и идёт).
+                                                       Только текст (без
+                                                       картинок), text
+                                                       обязателен. Вид карточки
+                                                       в ответе не нужен — метод
+                                                       возвращает {comment}
 POST /api/automation/tasks/{taskId}/media-link      — прикрепить готовую ссылку
                                                       disk.kontentferma {url}
                                                       (ТОЛЬКО уже существующую
@@ -467,6 +494,8 @@ X-Api-Key: <ваш ключ>
 | **Текст поста (тело)** | НЕ свойство карточки, а её содержимое (text-блоки Mattermost, «описание» карточки) | `caption` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `text` в `POST /api/automation/tasks` (при создании) или `POST /api/automation/tasks/{taskId}/text` (у существующей карточки) |
 | **Медиа (фото/видео)** | вложения карточки + ссылки disk.kontentferma, в порядке, который выбрал клиент | `media[]` в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` (каждый объект — `{id, kind, source, shareUrl/imageUrl, name,...}`) | `media` (массив готовых ссылок) в `POST /api/automation/tasks` при создании; либо `POST .../media-link` \| `.../media-upload` \| `.../media-import` для существующей карточки (см. раздел 0 выше), порядок — `.../media-order` |
 | **Чат с клиентом** (НЕ внутренние аудит-комментарии автоматизации) | переписка команда↔клиент, видна клиенту в его кабинете согласования | `clientComments[]` (`kind: 'approved' \| 'feedback' \| 'agency' \| 'correction'`) в ответе `GET /api/automation/tasks` и `GET /api/automation/tasks/{taskId}` | `POST /api/automation/tasks/{taskId}/client-message` — {text?, imageUrl?} |
+| **Замечания команде «от лица» Цербер** (внутренние, клиент НЕ видит) | замечания ИИ-ревью по карточке, видит только команда в /team (вкладка "Команда") | `comments` в ответе `GET /api/team/tasks/{taskId}` (team-comments; НЕ в клиентском кабинете) | `POST /api/automation/tasks/{taskId}/team-comment` — {text} (обязателен, только текст) |
+| **Чтение внутреннего чата команды** (вкл. «Цербер») | вся переписка команды по карточке, клиент НЕ видит | `GET /api/automation/tasks/{taskId}/team-comments` → `{comments:[{id,authorId,authorName,text,imageUrl,createdAt}]}` | — (только чтение) |
 
 **Важно не перепутать `keywords` и `caption` («текст поста»)** — это два разных поля с разным назначением: `keywords` — внутренний бриф/мысли для копирайтера, никогда не попадает к клиенту; `caption` — это и есть готовый текст поста, который в итоге публикуется в соцсеть.
 

@@ -642,6 +642,80 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/tasks/{taskId}/team-comments': {
+        get: {
+          summary: 'Получить внутренние замечания команды по карточке (включая замечания «Цербер»)',
+          description:
+            'Возвращает ЧАТ КОМАНДЫ по карточке (task_team_comments) — тот же список, который команда видит во вкладке ' +
+            '"Команда" в кабинете /team. Включает и замечания, записанные методом POST …/team-comment от лица «Цербер» ' +
+            '(authorId "cerberus", authorName «Цербер»), и сообщения сотрудников. То, что видит команда, — клиент в своём ' +
+            'кабинете согласования ЭТОГО НЕ видит: task_team_comments никогда не отдаётся клиентскому кабинету. Удобно, ' +
+            'чтобы автоматизация видела ответ/обсуждение команды на замечания ИИ.',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      comments: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            authorId: { type: 'string' },
+                            authorName: { type: 'string' },
+                            text: { type: 'string' },
+                            imageUrl: { type: 'string' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Сбой чтения из БД', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/automation/tasks/{taskId}/team-comment': {
+        post: {
+          summary: 'Оставить внутреннее замечание команде "от лица" Цербер (ИИ) по карточке публикации',
+          description:
+            'Пишет замечание в чат КОМАНДЫ (task_team_comments, вкладка "Команда" в кабинете /team) с автором «Цербер» — ' +
+            'видит ТОЛЬКО команда, клиент в своём кабинете согласования этого не видит (task_team_comments никогда ' +
+            'не отдаётся клиентскому кабинету). Противоположность client-message: там сообщение идёт клиенту, здесь — ' +
+            'внутренний audit/review-замечание. text обязателен (только текст, без изображений — чисто текстовая ' +
+            'история замечаний).',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['text'],
+                  properties: { text: { type: 'string', description: 'текст замечания ИИ команде (обязателен)' } },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { comment: { type: 'object' } } } } } },
+            400: { description: 'text пустой', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Сбой записи в БД', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
       '/api/automation/tasks/{taskId}/media-link': {
         post: {
           summary: 'Прикрепить уже готовую ссылку disk.kontentferma к карточке',

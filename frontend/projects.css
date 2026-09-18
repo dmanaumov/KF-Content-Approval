@@ -402,6 +402,19 @@
 .edit-tab-ai-avatar{width:20px;height:20px;border-radius:50%;object-fit:cover;pointer-events:none;box-shadow:0 0 0 1px rgba(155,90,246,.35),0 2px 6px rgba(155,90,246,.45)}
 .edit-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
 .edit-tab.ai.active{background:var(--ai);border-color:var(--ai);color:#fff;box-shadow:0 0 0 1px var(--ai) inset,0 4px 14px rgba(155,90,246,.3)}
+/* Вкладка «Цербер» — MD-файл от ИИ проекта (см. editTabCerberus в
+   projects.html). Пустая — светло-серая (не выделена, см. .edit-tab.base
+   выше только с мягким серым текстом); заполнена (refreshCerberusTab в
+   projects.js) — яркая янтарная рамка/фон, чтобы прямо в попапе было видно,
+   что инструкция для проекта загружена. */
+.edit-tab.cerberus{color:#A6ACB4;background:#F4F5F6;border-color:#E4E7EA}
+.edit-tab.cerberus.filled{color:#7A4D00;background:#FFF1D6;border-color:#F3C76A;font-weight:900}
+.edit-tab.cerberus.active,.edit-tab.cerberus.filled.active{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 0 0 1px var(--accent) inset,0 4px 14px rgba(0,70,67,.2)}
+.cerb-title{font-size:12px;font-weight:800;color:var(--ink)}
+.cerb-sub{font-size:12px;line-height:1.5;color:var(--muted);margin:2px 0 10px}
+.cerb-upload-row{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+.cerb-file-hint{font-size:12px;color:var(--muted)}
+.cerb-textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55}
 .edit-panel{display:grid;gap:2px}
 .edit-panel.ai{border:1px solid var(--ai);box-shadow:0 0 0 1px var(--ai) inset;border-radius:14px;padding:12px;background:linear-gradient(180deg,#FBF9FF,#fff 120px)}
 .edit-panel.ai .field-label{margin-top:10px}
@@ -537,6 +550,9 @@
   .logo-preview img{background:#262222}
   .cred-intro{background:#222626}
   .edit-tab{background:#222626}
+  .edit-tab.cerberus{background:#222626;border-color:#353A3B;color:#7C8287}
+  .edit-tab.cerberus.filled{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
+  .edit-tab.cerberus.filled.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .ref-thumb{background:#222525}
   .ref-add-btn{background:#262222}
   .ref-add-btn:hover{background:#222626}

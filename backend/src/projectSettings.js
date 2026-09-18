@@ -153,7 +153,7 @@ async function getSettings(boardId, projectId) {
   const { rows } = await pool.query(
     `SELECT logo_url, social_credentials, is_ai_project, is_archived, start_date, posts_per_month,
             publish_time_msk, project_manager, strategy_prompt, planning_prompt,
-            post_prompt, image_prompt, image_references, paid_through_date
+            post_prompt, image_prompt, image_references, paid_through_date, cerberus_markdown
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -176,6 +176,7 @@ async function getSettings(boardId, projectId) {
     // блокирует автопостинг. Читается staff-попапом для показа/редактирования
     // и index.js's publishAutomationTask для жёсткого гейта после даты.
     paidThroughDate: row.paid_through_date || '',
+    cerberusMarkdown: row.cerberus_markdown || '',
   };
 }
 
@@ -216,7 +217,7 @@ async function updateSettings(boardId, projectId, {
   logoUrl, socialCredentials, isAiProject, isArchived,
   startDate, postsPerMonth, publishTimeMsk, projectManager,
   strategyPrompt, planningPrompt, postPrompt, imagePrompt,
-  imageReferences, paidThroughDate,
+  imageReferences, paidThroughDate, cerberusMarkdown,
 }) {
   if (typeof logoUrl !== 'string') {
     throw new Error('logoUrl must be a string (may be empty).');
@@ -251,6 +252,7 @@ async function updateSettings(boardId, projectId, {
          is_archived = $14,
          image_references = $15::jsonb,
          paid_through_date = $16,
+         cerberus_markdown = $17,
          updated_at = now()
      WHERE board_id = $1 AND project_id = $2`,
     [
@@ -262,6 +264,7 @@ async function updateSettings(boardId, projectId, {
       !!isArchived,
       JSON.stringify(references),
       textOrEmpty(paidThroughDate),
+      textOrEmpty(cerberusMarkdown),
     ]
   );
 }

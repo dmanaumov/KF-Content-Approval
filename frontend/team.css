@@ -207,6 +207,7 @@
 .tm-chat-msg{background:#F7F8F8;border-radius:14px;padding:9px 12px;max-width:88%}
 .tm-chat-msg.mine{background:#EAF3F1;align-self:flex-end}
 .tm-chat-msg-author{font-size:10.5px;font-weight:800;color:var(--muted);margin-bottom:2px}
+.tm-chat-msg-author.cerberus{color:#7A4D00;background:#FFF1D6;border:1px solid #F3C76A;border-radius:5px;padding:1px 6px;display:inline-block}
 .tm-chat-msg-text{font-size:13px;line-height:1.45;white-space:pre-wrap}
 .tm-chat-msg-time{font-size:9.5px;color:var(--muted);margin-top:3px}
 .tm-chat-msg.system{background:transparent;align-self:center;max-width:100%;text-align:center;color:var(--muted);font-size:11px;padding:2px 0}
@@ -445,6 +446,7 @@
   .tm-mini-btn{background:#262222}
   .tm-chat-msg{background:#222626}
   .tm-chat-msg.mine{background:#1E2927}
+  .tm-chat-msg-author.cerberus{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
   .tm-chat-attach{background:#262222}
   .tm-chat-attach:active{background:#222525}
   .tm-chat-pending-img{background:#222525}

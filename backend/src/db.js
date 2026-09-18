@@ -107,6 +107,16 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS paid_through_date text NOT NULL DEFAULT '';
   `);
+  // «Цербер» — Markdown-файл от ИИ проекта для КАЖДОГО клиента (staff-вкладка
+  // в попапе настроек проекта, см. editTabCerberus в projects.html). Хранится
+  // как обычный текст (не путь к файлу) — чтобы загруженный .md можно было
+  // сразу же поправить прямо в попапе, не связываясь с disk.kontentferma.
+  // Заполненность этой колонки — ground truth для «яркой/серой» закладки
+  // (см. refreshCerberusTabState в frontend/projects.js).
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS cerberus_markdown text NOT NULL DEFAULT '';
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);
