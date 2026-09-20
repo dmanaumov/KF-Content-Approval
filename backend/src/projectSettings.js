@@ -95,10 +95,7 @@ async function getTokenAndLogo(boardId, projectId) {
     isArchived: !!row.is_archived,
     postsPerMonth: row.posts_per_month || '',
     paidThroughDate: row.paid_through_date || '',
-    configuredNetworks: KNOWN_NETWORKS.filter((net) => {
-      const c = credentials[net];
-      return c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length > 0;
-    }),
+    configuredNetworks: configuredNetworksOf(credentials),
   };
 }
 
@@ -201,6 +198,21 @@ function normalizeImageReferences(value) {
 // lives in the browser and one here; see docs/N8N_AUTOMATION.md which spells
 // this rule out for whoever builds the automation.
 const KNOWN_NETWORKS = ['ig', 'tg', 'vk', 'ok', 'max'];
+
+// Which of ig/tg/vk/ok/max actually have real, non-empty publishing
+// credentials saved for a project. Was inlined once inside getTokenAndLogo()
+// (still the only caller until 2026-09-20); pulled out here so
+// index.js's automation API (getAutomationProjects, createAutomationTask —
+// see "НОВОЕ 2026-09-20" in kf-approval-mattermost.md) can reuse the exact
+// same definition of "configured" instead of re-implementing the filter and
+// risking the two drifting apart.
+function configuredNetworksOf(socialCredentials) {
+  const credentials = socialCredentials || {};
+  return KNOWN_NETWORKS.filter((net) => {
+    const c = credentials[net];
+    return c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length > 0;
+  });
+}
 
 function textOrEmpty(value) {
   return value == null ? '' : String(value);
@@ -499,4 +511,5 @@ module.exports = {
   deleteProjectSettings,
   importLegacyFileTokens,
   KNOWN_NETWORKS,
+  configuredNetworksOf,
 };

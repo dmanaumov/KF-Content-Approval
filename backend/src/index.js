@@ -14,6 +14,7 @@ const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
 const taskCreators = require('./taskCreators');
+const projectAccess = require('./projectAccess');
 const teamComments = require('./teamComments');
 const teamAuth = require('./teamAuth');
 const analytics = require('./analytics');
@@ -288,11 +289,18 @@ function currentAccess(req) {
 // и её /api/projects* API. Пропускает:
 //   - admin (CEO + его зам) и ceo (владелец /ceo-дашборда) — видят ВСЕ
 //     проекты;
-//   - любой сотрудник, который указан «Менеджером проекта» (project_manager
-//     в project_settings) хотя бы по одному клиенту — получает доступ, но
-//     только к своим проектам (видимость фильтруется там же, где данные —
-//     см. фильтр в GET /api/projects и пре-гейт по projectId в
+//   - любой сотрудник, у кого роль «администратор» (project_access.role =
+//     'admin', см. projectAccess.js) хотя бы на одном проекте — получает
+//     доступ, но только к своим проектам (видимость фильтруется там же, где
+//     данные — см. фильтр в GET /api/projects и пре-гейт по projectId в
 //     POST /api/projects/:projectId/*).
+// ИЗМЕНЕНО 2026-09-20: раньше этот скоуп давало старое поле «Менеджер
+// проекта» (один человек на проект, project_settings.project_manager) —
+// теперь его полностью заменила новая ролевая система (несколько
+// «администраторов» на проект, назначаются на /ceo/access). Само поле
+// project_manager осталось в БД как замороженное legacy-значение для
+// automation API (никто его больше не пишет), но доступ по нему больше не
+// выдаётся.
 // Никакого Basic Auth — только живая team-сессия. При неудаче — JSON 401
 // (под /api/*) или HTML со ссылкой на /team.
 async function staffAuth(req, res, next) {
@@ -301,18 +309,18 @@ async function staffAuth(req, res, next) {
     req.staffScope = { full: true, user: access.user, username: access.user.username || '' };
     return next();
   }
-  if (access && access.user && access.user.username) {
+  if (access && access.user && access.user.id) {
     try {
       const boardId = config.mattermostBoardId;
       if (boardId) {
-        const managers = await projectSettings.listProjectManagers(boardId);
-        if ([...managers.values()].includes(access.user.username)) {
-          req.staffScope = { full: false, user: access.user, username: access.user.username };
+        const adminProjectIds = await projectAccess.getAdminProjectIds(boardId, access.user.id);
+        if (adminProjectIds.size > 0) {
+          req.staffScope = { full: false, user: access.user, username: access.user.username || '' };
           return next();
         }
       }
     } catch (err) {
-      console.error('[staffAuth] manager-scope check failed:', err.message);
+      console.error('[staffAuth] project-access scope check failed:', err.message);
     }
   }
   if (req.accepts('html')) {
@@ -327,16 +335,17 @@ async function staffAuth(req, res, next) {
 }
 
 // True, если запросу (уже прошедшему staffAuth) разрешён НЕ только доступ
-// к списку, но и к конкретному проекту: админ/ceo — любой; менеджер —
-// только тот, где он указан менеджером.
+// к списку, но и к конкретному проекту: админ/ceo — любой; иначе — только
+// если у этого пользователя роль 'admin' (project_access) именно на ЭТОТ
+// проект.
 async function staffCanAccessProject(req, projectId) {
   const scope = req.staffScope;
   if (!scope) return false;
   if (scope.full) return true;
-  if (!projectId || !scope.username) return false;
+  if (!projectId || !scope.user || !scope.user.id) return false;
   try {
-    const managers = await projectSettings.listProjectManagers(config.mattermostBoardId);
-    return managers.get(projectId) === scope.username;
+    const role = await projectAccess.getRole(config.mattermostBoardId, projectId, scope.user.id);
+    return role === 'admin';
   } catch (err) {
     console.error('[staffAuth] project-scope check failed:', err.message);
     return false;
@@ -634,18 +643,20 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks };
       })
     );
-    // Manager scoping: не-админы видят только те проекты, где они указаны
-    // менеджером (см. staffAuth). admin/ceo (scope.full) — все без фильтра.
+    // Project-access scoping (2026-09-20, заменяет старое «Менеджер
+    // проекта»): не-админы видят только те проекты, где у них роль 'admin'
+    // в project_access (см. staffAuth/projectAccess.js). admin/ceo
+    // (scope.full) — все без фильтра.
     let visible = options;
     if (req.staffScope && !req.staffScope.full) {
-      let managers;
+      let adminProjectIds;
       try {
-        managers = await projectSettings.listProjectManagers(boardId);
+        adminProjectIds = await projectAccess.getAdminProjectIds(boardId, req.staffScope.user.id);
       } catch (err) {
-        console.error('[api] GET projects manager-scope failed:', err.message);
-        managers = new Map();
+        console.error('[api] GET projects project-access scope failed:', err.message);
+        adminProjectIds = new Set();
       }
-      visible = options.filter((o) => managers.get(o.id) === req.staffScope.username);
+      visible = options.filter((o) => adminProjectIds.has(o.id));
     }
     const who = analytics.identify(req);
     analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
@@ -1187,6 +1198,95 @@ app.delete('/api/ceo/bots/:id', teamAuth.requireCeoAuth, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Доступ по проектам (frontend/access.html, "Доступ" — 5-я вкладка CEO-
+// дашборда) — owner-only, requireCeoAuth. Управление матрицей "проект ×
+// сотрудник" из projectAccess.js: у каждой пары ровно одна роль —
+// 'editor'/'admin' (запись есть) или 'нет' (записи нет). Added 2026-09-20.
+// ---------------------------------------------------------------------------
+
+// GET /api/ceo/project-access — всё, что нужно странице разом: список
+// проектов (id+label, тот же порядок, что в свойстве "Проект"), список
+// членов команды (id/username/имя — см. mm.listTeamUsers), и текущие
+// назначения (access: [{projectId, userId, role, grantedBy, grantedAt}]).
+// Страница сама строит матрицу — сервер не решает, кто кого видит на UI,
+// только отдаёт сырые данные.
+app.get('/api/ceo/project-access', teamAuth.requireCeoAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    if (!projectProp) {
+      return res.status(500).json({ error: 'project_property_not_found', message: `Свойство "${config.projectPropertyName}" не найдено на борде.` });
+    }
+    const archivedIds = new Set(await projectSettings.listArchivedProjectIds(boardId));
+    const projects = (projectProp.options || []).map((o) => ({ id: o.id, label: o.value, isArchived: archivedIds.has(o.id) }));
+    const members = await mm.listTeamUsers();
+    const access = await projectAccess.listForBoard(boardId);
+    res.json({ projects, members, access });
+  } catch (err) {
+    console.error('[api] ceo project-access overview failed:', err.message);
+    res.status(502).json({ error: 'project_access_unavailable', message: err.message });
+  }
+});
+
+// PUT /api/ceo/project-access/:projectId/:userId — body: { role: 'none' |
+// 'editor' | 'admin' }. Единственная точка записи для матрицы — 'none'
+// удаляет строку (снова "нет доступа"), иначе upsert. grantedBy — username
+// зовущего CEO, чисто для отображения в истории на странице.
+app.put('/api/ceo/project-access/:projectId/:userId', teamAuth.requireCeoAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const role = String((req.body && req.body.role) || 'none').trim().toLowerCase();
+  try {
+    const applied = await projectAccess.setRole(boardId, req.params.projectId, req.params.userId, role, req.ceoUser.username || '');
+    res.json({ projectId: req.params.projectId, userId: req.params.userId, role: applied });
+  } catch (err) {
+    console.error('[api] ceo project-access set failed:', err.message);
+    res.status(400).json({ error: 'invalid_role', message: err.message });
+  }
+});
+
+// POST /api/ceo/project-access/bootstrap — одноразовый (но безопасно
+// нажимаемый повторно) импорт из данных, накопленных ДО этой системы ролей:
+// на каждый проект — 'editor' всем, кто сейчас назначен исполнителем хотя бы
+// на одной карточке ИЛИ является её реальным создателем (task_creators), и
+// 'admin' человеку из старого поля "Менеджер проекта" (project_settings,
+// сопоставляется по username → user id через listTeamUsers). Реально
+// добавляет только пары, для которых ЕЩЁ нет никакой записи — уже
+// расставленные вручную роли (в т.ч. предыдущим запуском импорта) не
+// трогает. Возвращает { inserted } — сколько новых прав реально появилось.
+app.post('/api/ceo/project-access/bootstrap', teamAuth.requireCeoAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const creators = await taskCreators.getCreators(boardId, tasks.map((t) => t.id));
+    const members = await mm.listTeamUsers();
+    const usernameToId = new Map(members.map((m) => [m.username, m.id]));
+    const pairs = [];
+    for (const t of tasks) {
+      if (!t.projectId) continue;
+      if (t.assigneeId) pairs.push({ projectId: t.projectId, userId: t.assigneeId, role: 'editor' });
+      const creatorId = creators.get(t.id);
+      if (creatorId) pairs.push({ projectId: t.projectId, userId: creatorId, role: 'editor' });
+    }
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    for (const o of (projectProp && projectProp.options) || []) {
+      const settings = await projectSettings.getSettings(boardId, o.id);
+      const managerId = settings.projectManager && usernameToId.get(settings.projectManager);
+      if (managerId) pairs.push({ projectId: o.id, userId: managerId, role: 'admin' });
+    }
+    const inserted = await projectAccess.bootstrapFromCurrentData(boardId, pairs);
+    res.json({ inserted });
+  } catch (err) {
+    console.error('[api] ceo project-access bootstrap failed:', err.message);
+    res.status(500).json({ error: 'bootstrap_failed', message: err.message });
+  }
+});
+
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
 // view: rows are team members (actor username + full name from actor_name),
 // columns are the days of the viewed Moscow month, cells = how many sessions
@@ -1611,10 +1711,10 @@ async function staffAccessFor(user) {
   if (role.admin || role.ceo) {
     return { ...role, staffProjectsPath: config.staffProjectsPath };
   }
-  if (user && user.username && config.mattermostBoardId) {
+  if (user && user.id && config.mattermostBoardId) {
     try {
-      const managers = await projectSettings.listProjectManagers(config.mattermostBoardId);
-      if ([...managers.values()].includes(user.username)) {
+      const adminProjectIds = await projectAccess.getAdminProjectIds(config.mattermostBoardId, user.id);
+      if (adminProjectIds.size > 0) {
         return { ...role, staffProjectsPath: config.staffProjectsPath };
       }
     } catch (err) {
@@ -1679,36 +1779,28 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       });
     }
     const myId = req.teamSession.user.id;
-    const myUsername = req.teamSession.user.username || '';
-    // Visibility rule (per the team's request, 2026-08-25):
+    // Visibility rule — ПЕРЕПИСАНО 2026-09-20 (см. projectAccess.js):
     //   - лидеры / СЕО и его зам (role.admin — see config.js's own comment
     //     on adminEmails: "CEO + his deputy"; role.ceo folded in too for the
     //     /ceo-dashboard owner in case that email is ever only on ceoEmails)
     //     see EVERY card, same as before — the status-chip filter in the
     //     frontend still applies on top of this, unaffected.
-    //   - everyone else sees a card if they're the assignee ("Исполнитель")
-    //     OR if they're the one who created it via "Запланировать
-    //     публикацию" — even when it's since been assigned to someone else.
-    //     Creation is tracked in our own task_creators table, NOT
-    //     Mattermost's block.createdBy (see taskCreators.js for why).
-    //   - И С 2026-09-14 — если человек указан «Менеджером проекта»
-    //     (project_manager в project_settings) хотя бы по одному клиенту —
-    //     он видит ВСЕ посты по такому проекту (не только свои), потому
-    //     что отвечает за проект целиком. Менеджер равен по username —
-    //     тот же формат, что сохраняет dropdown на /projects. Правка в
-    //     настройках применяется к следующему запросу списка, без рестарта.
+    //   - everyone else sees a card ONLY if they have role 'editor' or
+    //     'admin' (project_access, see /ceo/access) on that card's project —
+    //     THE project role is now the sole gate, per Дмитрий's explicit
+    //     decision 2026-09-20: a project set to «нет» hides its cards even
+    //     from someone personally assigned to one of them. This REPLACES the
+    //     old implicit rule (assignee OR card-creator OR the single
+    //     "Менеджер проекта" username) entirely — see git history / the
+    //     project doc for that old logic if it's ever needed for reference.
     const role = teamAuth.roleFor(req.teamSession.user);
     const seesAll = role.admin || role.ceo;
     let mine;
     if (seesAll) {
       mine = tasks;
     } else {
-      const creators = await taskCreators.getCreators(boardId, tasks.map((t) => t.id));
-      const managers = await projectSettings.listProjectManagers(boardId);
-      mine = tasks.filter((t) => {
-        if (t.assigneeId === myId || creators.get(t.id) === myId) return true;
-        return !!t.projectId && myUsername && managers.get(t.projectId) === myUsername;
-      });
+      const myRoles = await projectAccess.getRolesForUser(boardId, myId);
+      mine = tasks.filter((t) => t.projectId && myRoles.get(t.projectId) !== undefined);
     }
     await resolveDiskMediaKinds(mine);
     await mediaOrder.applyStoredOrder(boardId, mine);
@@ -1789,8 +1881,16 @@ app.get('/api/team/projects', teamAuth.requireTeamAuth, async (req, res) => {
     // для НОВОГО поста (см. listArchivedProjectIds выше и запрос
     // пользователя 2026-09-08 про фильтр в /team).
     const archivedIds = new Set(await projectSettings.listArchivedProjectIds(boardId));
+    // Доступ (2026-09-20): не-админ/ceo видит в этом селекте только те
+    // проекты, куда у него есть роль editor/admin — иначе можно было бы
+    // создать пост в проекте, карточки которого потом же и не увидишь.
+    const role = teamAuth.roleFor(req.teamSession.user);
+    let allowedIds = null;
+    if (!role.admin && !role.ceo) {
+      allowedIds = new Set((await projectAccess.getRolesForUser(boardId, req.teamSession.user.id)).keys());
+    }
     const projects = (projectProp.options || [])
-      .filter((o) => !archivedIds.has(o.id))
+      .filter((o) => !archivedIds.has(o.id) && (!allowedIds || allowedIds.has(o.id)))
       .map((o) => ({ id: o.id, label: o.value }));
     res.json({ projects });
   } catch (err) {
@@ -1823,15 +1923,12 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
     }
     const role = teamAuth.roleFor(req.teamSession.user);
     const myId = req.teamSession.user.id;
-    const myUsername = req.teamSession.user.username || '';
-    let visible = role.admin || role.ceo || task.assigneeId === myId;
-    if (!visible) {
-      const creators = await taskCreators.getCreators(boardId, [task.id]);
-      if (creators.get(task.id) === myId) visible = true;
-      else if (task.projectId) {
-        const managers = await projectSettings.listProjectManagers(boardId);
-        visible = managers.get(task.projectId) === myUsername;
-      }
+    // См. projectAccess.js / GET /api/team/tasks выше — тот же 'нет'/'редактор'/
+    // 'администратор' гейт по проекту карточки, больше не по личному назначению.
+    let visible = role.admin || role.ceo;
+    if (!visible && task.projectId) {
+      const projectRole = await projectAccess.getRole(boardId, task.projectId, myId);
+      visible = projectRole === 'editor' || projectRole === 'admin';
     }
     if (!visible) {
       return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этой карточке.' });
@@ -1844,6 +1941,46 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
   }
 });
+
+// Общий пре-гейт для КАЖДОГО /api/team/tasks/:taskId/* — читать/писать
+// существующую карточку разрешено только тем, у кого есть глобальная роль
+// (admin/ceo) ИЛИ роль 'editor'/'admin' (project_access) на ПРОЕКТ этой
+// карточки (см. projectAccess.js). Добавлено 2026-09-20 вместе с новой
+// системой ролей — до этого большинство write-роутов ниже вообще не
+// проверяли, видна ли карточка вызывающему (только GET-роуты выше это
+// делали), так что теоретически можно было редактировать чужую карточку по
+// известному id. Теперь это одна точка входа вместо дублирования проверки в
+// каждом роуте; найденная карточка кладётся в req.teamCard, чтобы сам
+// обработчик не читал её из Mattermost повторно без необходимости.
+async function requireTeamCardAccess(req, res, next) {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const taskId = String(req.params.taskId || '').trim();
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId);
+    const feedbackAuthorUserId = await getFeedbackAuthorId();
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) {
+      return res.status(404).json({ error: 'task_not_found', message: 'Карточка не найдена.' });
+    }
+    const role = teamAuth.roleFor(req.teamSession.user);
+    if (role.admin || role.ceo) {
+      req.teamCard = { task, projectRole: 'admin' };
+      return next();
+    }
+    const myId = req.teamSession.user.id;
+    const projectRole = task.projectId ? await projectAccess.getRole(boardId, task.projectId, myId) : 'none';
+    if (projectRole !== 'editor' && projectRole !== 'admin') {
+      return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этому проекту.' });
+    }
+    req.teamCard = { task, projectRole };
+    next();
+  } catch (err) {
+    console.error('[api] team card access check failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+}
 
 // POST /api/team/tasks — body: { title, network?, projectId, text?,
 // publishDate?, status?, media?: string[] }. This is the "Запланировать
@@ -1863,9 +2000,20 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
 //      AUTOMATION_ACTOR — so the audit comment on the new card reads
 //      "КАРТОЧКА СОЗДАНА (Имя Фамилия)", consistent with every other
 //      audit comment this cabinet leaves (status/media/text changes, etc.).
+// Проверка доступа (2026-09-20): не-админ/ceo может создать пост только в
+// проекте, где у него роль 'editor' или 'admin' — иначе 403 (защита от
+// создания карточек в проекте, который человеку не открыт совсем).
 app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  const role = teamAuth.roleFor(req.teamSession.user);
+  if (!role.admin && !role.ceo) {
+    const projectId = String((req.body && req.body.projectId) || '').trim();
+    const projectRole = projectId ? await projectAccess.getRole(boardId, projectId, req.teamSession.user.id) : 'none';
+    if (projectRole !== 'editor' && projectRole !== 'admin') {
+      return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этому проекту.' });
+    }
+  }
   try {
     const task = await createAutomationTask(boardId, {
       ...(req.body || {}),
@@ -1890,7 +2038,7 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
 // keys), this accepts ANY option on the "Статус" property — a team member
 // moves a card through internal production stages too ("В процессе",
 // "Сдали", ...), not just the client-visible ones.
-app.post('/api/team/tasks/:taskId/status', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/status', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const status = String((req.body && req.body.status) || '').trim();
@@ -1908,7 +2056,7 @@ app.post('/api/team/tasks/:taskId/status', teamAuth.requireTeamAuth, async (req,
 // updateTaskText (client route) edits, but doesn't flip status to "changes"
 // or leave a "ЗАКАЗЧИК СКОРРЕКТИРОВАЛ..." marker — this is the team editing
 // their own draft, not a client-submitted correction.
-app.post('/api/team/tasks/:taskId/text', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/text', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const text = String((req.body && req.body.text) || '').replace(/\r\n/g, '\n');
@@ -1929,7 +2077,7 @@ app.post('/api/team/tasks/:taskId/text', teamAuth.requireTeamAuth, async (req, r
 
 // POST /api/team/tasks/:taskId/keywords — body: { text }. The
 // "Ключевые слова/мысли" brief property — team-only, never shown to clients.
-app.post('/api/team/tasks/:taskId/keywords', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/keywords', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const text = String((req.body && req.body.text) || '');
@@ -1945,7 +2093,7 @@ app.post('/api/team/tasks/:taskId/keywords', teamAuth.requireTeamAuth, async (re
 // POST /api/team/tasks/:taskId/media-order — same permutation contract as
 // the client-facing route below, but doesn't flip status to "changes" (see
 // updateTaskMediaOrderTeam) and logs a distinct marker comment.
-app.post('/api/team/tasks/:taskId/media-order', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/media-order', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const order = Array.isArray(req.body && req.body.order) ? req.body.order.map(String) : null;
@@ -1970,7 +2118,7 @@ app.post('/api/team/tasks/:taskId/media-order', teamAuth.requireTeamAuth, async 
 // instead of hand-editing the Mattermost card. The link is stored as its
 // own text child block (see addTeamMediaLink) — never mixed into the same
 // block as the caption — so a later caption edit can never delete it.
-app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const shareUrl = parseAndValidateShareUrl(String((req.body && req.body.url) || '').trim());
@@ -1994,7 +2142,7 @@ app.post('/api/team/tasks/:taskId/media-link', teamAuth.requireTeamAuth, async (
 // until then diskUpload throws a self-diagnosing error (501, not a generic
 // 502) so the UI can say clearly "not set up yet" instead of "failed", and
 // the manual-link field stays usable as the fallback either way.
-app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req, res) => {
+app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, requireTeamCardAccess, (req, res) => {
   teamMediaUpload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
       const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
@@ -2037,7 +2185,7 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, (req,
 // same way media-upload above does, but does NOT call addTeamMediaLink —
 // it just hands back the share link for the caller to attach to whichever
 // message it's about to send (POST .../comments or .../client-message).
-app.post('/api/team/tasks/:taskId/chat-upload', teamAuth.requireTeamAuth, (req, res) => {
+app.post('/api/team/tasks/:taskId/chat-upload', teamAuth.requireTeamAuth, requireTeamCardAccess, (req, res) => {
   teamMediaUpload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
       const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
@@ -2074,7 +2222,7 @@ app.post('/api/team/tasks/:taskId/chat-upload', teamAuth.requireTeamAuth, (req, 
 
 // POST /api/team/tasks/:taskId/title — body: { title }. The human-readable
 // part only — see updateTaskTitle for how the ig:/tg:/... prefix survives.
-app.post('/api/team/tasks/:taskId/title', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/title', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const title = String((req.body && req.body.title) || '').trim();
@@ -2093,7 +2241,7 @@ app.post('/api/team/tasks/:taskId/title', teamAuth.requireTeamAuth, async (req, 
 // Mattermost's own block delete, not a soft/archive flag). The client is
 // expected to have already confirmed with the person before calling this —
 // see the "небольшая красная" delete button in the card header (team.js).
-app.post('/api/team/tasks/:taskId/delete', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/delete', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
@@ -2109,7 +2257,7 @@ app.post('/api/team/tasks/:taskId/delete', teamAuth.requireTeamAuth, async (req,
 // Which platform this post is going out to — was missing a UI for it
 // entirely before this; see updateTaskNetwork for why this is a title
 // prefix, not a card property. Empty string clears the prefix.
-app.post('/api/team/tasks/:taskId/network', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/network', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const network = String((req.body && req.body.network) || '').trim();
@@ -2126,7 +2274,7 @@ app.post('/api/team/tasks/:taskId/network', teamAuth.requireTeamAuth, async (req
 // the publish date — the month-calendar picker in the /team cabinet's card
 // header (see also GET /api/team/schedule below, which feeds that picker's
 // "this day is already busy" markers).
-app.post('/api/team/tasks/:taskId/date', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/date', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const dateStr = String((req.body && req.body.date) || '').trim();
@@ -2179,7 +2327,7 @@ app.get('/api/team/schedule', teamAuth.requireTeamAuth, async (req, res) => {
 // GET/POST /api/team/tasks/:taskId/comments — internal team discussion, see
 // teamComments.js. Deliberately separate from the client-facing "правки"
 // comments (which live on the Mattermost card itself).
-app.get('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (req, res) => {
+app.get('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
@@ -2191,7 +2339,7 @@ app.get('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (req
   }
 });
 
-app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const text = String((req.body && req.body.text) || '').trim();
@@ -2212,7 +2360,7 @@ app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, async (re
 // message to the CLIENT (see sendClientMessage) — separate from
 // /comments above, which is the internal team-only chat. Available any
 // time, not gated on the client having said anything first.
-app.post('/api/team/tasks/:taskId/client-message', teamAuth.requireTeamAuth, async (req, res) => {
+app.post('/api/team/tasks/:taskId/client-message', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const text = String((req.body && req.body.text) || '').trim();
@@ -3041,6 +3189,18 @@ async function deleteTask(boardId, taskId, actorName) {
 // side, but the actual hard stop is enforced server-side regardless: see the
 // project_payment_expired check in publishAutomationTask below, which
 // refuses the publish call itself once this date has passed.
+//
+// configuredNetworks (added 2026-09-20) — KEY NAMES ONLY (never the
+// credential values — same posture as the "social_credentials is STILL left
+// out" note above) of which of ig/tg/vk/ok/max have real publishing
+// credentials saved for this project. Added because of a real gap: before
+// this, an automation had NO way to learn which network(s) a project even
+// publishes to, so a flow like "Кот Василий" 's post-generation branch had
+// nowhere to read that from and simply never set `network` when creating
+// cards (see createAutomationTask's own network-resolution comment below for
+// the other half of this fix). Reuses projectSettings.configuredNetworksOf —
+// the exact same filter the staff project list already uses via
+// getTokenAndLogo, so "configured" means the same thing in both places.
 async function getAutomationProjects(boardId) {
   const { board } = await loadBoard(boardId);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
@@ -3059,6 +3219,7 @@ async function getAutomationProjects(boardId) {
         projectManager: settings.projectManager,
         startDate: settings.startDate,
         paidThroughDate: settings.paidThroughDate,
+        configuredNetworks: projectSettings.configuredNetworksOf(settings.socialCredentials),
       };
     })
   );
@@ -3473,7 +3634,7 @@ async function createAutomationTask(boardId, opts) {
   const title = String(opts.title || '').trim();
   if (!title) throw badRequest('title_required', 'title обязателен.');
 
-  const network = String(opts.network || '').trim().toLowerCase();
+  let network = String(opts.network || '').trim().toLowerCase();
   if (network && !SOCIAL_LABELS[network]) {
     throw badRequest('invalid_network', `Неизвестная соцсеть "${opts.network}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
   }
@@ -3485,6 +3646,38 @@ async function createAutomationTask(boardId, opts) {
   if (!projectOption) {
     const available = (projectProp.options || []).map((o) => `${o.value} (${o.id})`).join(', ') || '(нет опций)';
     throw badRequest('project_not_found', `projectId "${projectId}" не найден в свойстве "Проект". Доступные: ${available}.`);
+  }
+
+  // РЕАЛЬНЫЙ БАГ (найден 2026-09-20, по жалобе "у Кота Василия генерятся
+  // посты без соцсети"): network — необязательное поле, а сама
+  // автоматизация до сегодняшнего дня физически не могла узнать, в какую
+  // сеть проект вообще публикуется (GET /api/automation/projects этого не
+  // отдавал) — так что n8n-флоу просто никогда его не передавал, и карточки
+  // создавались вовсе без network. Раз явного network в запросе нет —
+  // подстраховываемся сами по факту сохранённых реквизитов проекта
+  // (project_settings.social_credentials, см. projectSettings.configuredNetworksOf):
+  // ровно одна настроенная сеть — однозначность есть, проставляем её молча;
+  // ноль или несколько — угадывать нельзя (непонятно, публиковать вообще
+  // никуда или дублировать на все), поэтому явная ошибка с подсказкой,
+  // вместо тихого создания карточки без сети. Решение Дмитрия, 2026-09-20:
+  // "если только 1 сеть, то ставим её, если несколько — выдавать ошибку, где
+  // явно указать, что в проекте несколько соцсетей и надо выбрать нужную".
+  if (!network) {
+    const projectSocialSettings = await projectSettings.getSettings(boardId, projectId);
+    const configured = projectSettings.configuredNetworksOf(projectSocialSettings.socialCredentials);
+    if (configured.length === 1) {
+      network = configured[0];
+    } else if (configured.length === 0) {
+      throw badRequest(
+        'network_required',
+        `network не указан, а у проекта «${projectOption.value}» не настроено ни одной соцсети (нет сохранённых реквизитов публикации) — укажите network явно в теле запроса. Доступные значения: ${Object.keys(SOCIAL_LABELS).join(', ')}.`
+      );
+    } else {
+      throw badRequest(
+        'network_ambiguous',
+        `network не указан, а у проекта «${projectOption.value}» настроено сразу несколько соцсетей: ${configured.join(', ')} — укажите нужную явно в поле network.`
+      );
+    }
   }
 
   let statusOptionId = null;
@@ -3831,6 +4024,17 @@ app.get('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
 // shown to clients, meant for internal planning notes; `media` is an array
 // of already-existing disk.kontentferma share URLs (use media-upload/
 // media-import below to attach a NEW file instead).
+//
+// `network` (added 2026-09-20: now genuinely optional, not just
+// undocumented-but-required-in-practice) — if omitted, the server resolves
+// it itself from the project's configured publishing networks (GET
+// /api/automation/projects' `configuredNetworks`, same data source): exactly
+// one configured network → used automatically; zero or several → the call
+// fails with `network_required`/`network_ambiguous` (400) instead of
+// silently creating a card with no network. Pass `network` explicitly to
+// skip this resolution (e.g. a project configured for both tg and vk, where
+// the caller — not the server — decides which one this particular post is
+// for).
 app.post('/api/automation/tasks', requireAutomationAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
@@ -4677,6 +4881,10 @@ app.get('/ceo/bot-leads', teamAuth.requireCeoAuth, (req, res) => res.sendFile(pa
 // GET /ceo/api-keys — the 4th owner-only tab, "Управление" (see
 // frontend/api-keys.html + the /api/ceo/api-keys* routes above).
 app.get('/ceo/api-keys', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'api-keys.html')));
+
+// GET /ceo/access — 5-я вкладка, "Доступ" (frontend/access.html + the
+// /api/ceo/project-access* routes above). Same requireCeoAuth as /ceo.
+app.get('/ceo/access', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'access.html')));
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns

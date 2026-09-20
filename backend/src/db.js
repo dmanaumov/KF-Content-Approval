@@ -256,6 +256,35 @@ async function initSchema() {
       PRIMARY KEY (board_id, task_id)
     );
   `);
+  // project_access (added 2026-09-20) — per-project, per-team-member role:
+  // 'editor' (sees + edits every card of this project in /team, regardless
+  // of who's assigned) or 'admin' (editor + can open this project's
+  // settings on /projects — logo, socials, KPI, AI prompts, Цербер). A
+  // MISSING row means "нет" (no access at all) — the default for everyone
+  // on every project, per Дмитрий's explicit request 2026-09-20: this is now
+  // THE authoritative gate for /team visibility, replacing the old implicit
+  // "assignee OR card-creator OR единственный «Менеджер проекта»" rule (see
+  // projectAccess.js — that field is kept in the DB as a frozen legacy value
+  // for anyone still reading it via the automation API, but no longer drives
+  // any access decision or has a staff-UI editor). Managed exclusively from
+  // the new CEO-only "Доступ" page (/ceo/access, GET/PUT
+  // /api/ceo/project-access) — see projectAccess.js for the role-resolution
+  // helpers and the one-time bootstrapFromCurrentData() import.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_access (
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      user_id text NOT NULL,
+      role text NOT NULL CHECK (role IN ('editor', 'admin')),
+      granted_by text NOT NULL DEFAULT '',
+      granted_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (board_id, project_id, user_id)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS project_access_user_idx ON project_access (board_id, user_id);
+  `);
   // Бот «Кот Василий» (Telegram) — куда он добавлен + переписка с ним.
   // Отдельная подсистема от project_settings/publication_log выше: тот же
   // Postgres, но пишет и читает через свой собственный ключ (BOT_API_KEY /
