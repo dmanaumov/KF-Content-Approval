@@ -192,6 +192,15 @@ function render(filterText) {
               : `Оплата истекает через ${paidStatus.daysLeft} ${plural(paidStatus.daysLeft, 'день', 'дня', 'дней')}`
             : '';
         const paidWarnBadge = paidStatus.tier === 'bad' ? `<span class="paid-warn-badge" data-tip="${esc(paidTip)}">!</span>` : '';
+        // Значок «Цербер» — проект защищён (заполнена вкладка «Цербер» в
+        // попапе настроек, см. cerberusProtected/getTokenAndLogo в
+        // projectSettings.js). Глушим на архивных, как и остальные значки
+        // в этом ряду — проект на паузе незачем помечать как охраняемый.
+        const cerberusBadge = o.cerberusProtected && !o.isArchived
+          ? `<span class="cerberus-badge" data-tip="Защищено Цербером">
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor"><path d="M12 3c-1.6 0-2.7 1.3-2.9 2.7C7.6 6.3 6 8 5.6 10c-1.8.4-2.6 1.8-2.6 3 0 1.6 1.3 2.5 2.5 2.5.3 1 1 1.8 1.9 2.2-.1.4-.2.9-.2 1.3 0 1.1.9 2 2 2 .8 0 1.5-.5 1.8-1.2.3.1.6.2 1 .2s.7-.1 1-.2c.3.7 1 1.2 1.8 1.2 1.1 0 2-.9 2-2 0-.4-.1-.9-.2-1.3.9-.4 1.6-1.2 1.9-2.2 1.2 0 2.5-.9 2.5-2.5 0-1.2-.8-2.6-2.6-3-.4-2-2-3.7-3.5-4.3C14.7 4.3 13.6 3 12 3z"/><circle cx="9.3" cy="11.5" r="1" fill="#fff"/><circle cx="14.7" cy="11.5" r="1" fill="#fff"/></svg>
+            </span>`
+          : '';
         // Мини-значки соцсетей, для которых в проекте сохранены креды (по
         // факту куда можем постить) — цвета и подписи как в самом попапе
         // редактирования (см. .cred-networks в projects.html).
@@ -213,6 +222,7 @@ function render(filterText) {
             <div class="proj-info">
               <div class="proj-name-row">
                 <div class="proj-name">${esc(o.label)}</div>
+                ${cerberusBadge}
                 ${paidWarnBadge}
                 ${archivedBadge}
               </div>

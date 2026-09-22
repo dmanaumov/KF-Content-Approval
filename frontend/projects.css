@@ -165,6 +165,32 @@
   z-index:10;
 }
 .paid-warn-badge[data-tip]:hover::after{opacity:1}
+/* Значок «Цербер» — проект защищён (см. cerberusBadge в projects.js).
+   Тот же тёмный тултип-пилюля, что у archived-badge/paid-warn-badge выше
+   (все три живут в .proj-name-row); цвет — тот же тёплый золотой, что у
+   заполненной вкладки «Цербер» в попапе настроек (.edit-tab.cerberus.filled
+   в этом же файле), чтобы бейдж в списке и вкладка в попапе читались как
+   один и тот же визуальный язык «охраняется». */
+.cerberus-badge{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:#F3C76A;color:#7A4D00;cursor:default}
+.cerberus-badge[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+}
+.cerberus-badge[data-tip]:hover::after{opacity:1}
 .proj-card-top{display:flex;gap:12px;align-items:stretch}
 .proj-logo{position:relative;flex:0 0 auto;width:52px;border-radius:14px;background:#044444;border:1px solid #044444;display:flex;align-items:center;justify-content:center}
 /* overflow was hidden here, but the KPI dot (and its tooltip) needs to
@@ -553,6 +579,7 @@
   .edit-tab.cerberus{background:#222626;border-color:#353A3B;color:#7C8287}
   .edit-tab.cerberus.filled{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
   .edit-tab.cerberus.filled.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .cerberus-badge{background:#332A17;color:#F2C45C}
   .ref-thumb{background:#222525}
   .ref-add-btn{background:#262222}
   .ref-add-btn:hover{background:#222626}

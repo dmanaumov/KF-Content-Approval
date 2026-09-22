@@ -77,12 +77,21 @@ async function getToken(boardId, projectId) {
 // a project whose paid period is about to run out (see isPaidThroughExpired
 // in index.js for the actual publish-blocking gate; this is just the
 // read used to warn staff in the list before that gate ever fires).
+//
+// cerberusProtected (added 2026-09-22) — whether the project has a non-empty
+// "Цербер" markdown (see cerberus_markdown/getSettings() below and the
+// editTabCerberus popup tab) — the project list shows a small dog-head badge
+// for these. Deliberately only a boolean here, never the markdown text
+// itself: the list has no use for the content, and pulling a potentially
+// large text blob into every row of the staff list for a feature that only
+// needs "is it non-empty" would be wasteful.
 async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
     `SELECT link_token, logo_url, is_ai_project, is_archived, strategy_prompt, planning_prompt,
-            post_prompt, image_prompt, posts_per_month, paid_through_date, social_credentials
+            post_prompt, image_prompt, posts_per_month, paid_through_date, social_credentials,
+            (cerberus_markdown IS NOT NULL AND cerberus_markdown != '') AS cerberus_protected
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -96,6 +105,7 @@ async function getTokenAndLogo(boardId, projectId) {
     postsPerMonth: row.posts_per_month || '',
     paidThroughDate: row.paid_through_date || '',
     configuredNetworks: configuredNetworksOf(credentials),
+    cerberusProtected: !!row.cerberus_protected,
   };
 }
 

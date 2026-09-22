@@ -627,7 +627,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // created lazily on first read, so every project already has a
         // working link (and, once set, a logo) the first time this list
         // loads.
-        const { token, logoUrl, aiStatus, postsPerMonth, isArchived, paidThroughDate, configuredNetworks } =
+        const { token, logoUrl, aiStatus, postsPerMonth, isArchived, paidThroughDate, configuredNetworks, cerberusProtected } =
           await projectSettings.getTokenAndLogo(boardId, o.id);
         // buildTasks() is pure computation over the board/cards/blocks
         // already fetched above — re-filtering per project here costs no
@@ -640,7 +640,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
         const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
         const posts = postsForMonth(allTasks);
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks };
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected };
       })
     );
     // Project-access scoping (2026-09-20, заменяет старое «Менеджер

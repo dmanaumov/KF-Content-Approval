@@ -413,87 +413,105 @@ async function fetchCardsPage(boardId, page, perPage) {
       `[mattermost] listCards(${boardId},page=${page}) failed even after retry (${err.message}) — ` +
         `falling back to fetching this page one card at a time to isolate the bad record`
     );
-    const offsets = [];
-    for (let offset = page * perPage; offset < (page + 1) * perPage; offset++) offsets.push(offset);
-    // BUGFIX 2026-09-22: live incident — a single poisoned card (Mattermost
-    // itself 500s on it) was forcing this per-card fallback on EVERY cold
-    // loadBoard(), including every write action (all write routes reload
-    // with {fresh:true}, bypassing the cache entirely). At CONCURRENCY=4,
-    // walking all 200 offsets of the affected page took ~6 SECONDS on every
-    // single page open *and* every single edit (status/comment/etc) — team
-    // reported /team taking 10+s to open and 5+s per edit. Raised 4→16: the
-    // 2026-09-03 fix already raised the shared keep-alive socket pool to 64
-    // specifically to give headroom above what the fallback needs, and this
-    // is the genuinely-one-bad-record case the fallback was designed for
-    // (not the widespread-outage case below, which is still capped by
-    // PAGE_BAILOUT_SKIPS regardless of concurrency). Cuts the fallback's
-    // wall-clock time roughly 4x (~6s → ~1.5s) without touching the socket
-    // pool's safety margin. This does NOT fix the root cause — Mattermost
-    // is still failing on that one card — it only makes living with it
-    // tolerable while the card itself gets found and fixed/removed.
-    const CONCURRENCY = 16;
-    // BUGFIX 2026-09-03: during a genuine widespread outage (see the big
-    // comment above), EVERY offset on the page would fail — without a cap,
-    // this loop would plow through all `perPage` (200) of them one by one
-    // at up to config.requestTimeoutMs each, i.e. potentially many MINUTES
-    // per page before finally giving up. listCards() below already throws
-    // once the aggregate skip count crosses SKIP_THRESHOLD, so once a
-    // single page alone has clearly blown past that, there's nothing to
-    // gain from grinding through the rest of it — bail out of THIS page
-    // early and let listCards() fail fast instead.
+    // BUGFIX 2026-09-22 (live incident, follow-up): a single poisoned card
+    // (Mattermost itself 500s on it) was forcing this per-card fallback on
+    // EVERY cold loadBoard(), including every write action (all write
+    // routes reload with {fresh:true}, bypassing the cache entirely). The
+    // old walk issued ~perPage (200) per_page=1 requests for the ONE
+    // affected page every single time — team reported /team taking 10+s to
+    // open and 5+s per edit while Mattermost's own logs just showed the
+    // same poisoned card failing over and over. Mattermost 500s ANY /cards
+    // window that contains the bad record and serves clean windows
+    // normally, so instead of walking every offset we probe the failed page
+    // in power-of-two-aligned windows (each page = offset / size is exact by
+    // construction) and only descend into windows that still fail. One
+    // poisoned card now costs ~2*log2(perPage) requests instead of perPage;
+    // PAGE_BAILOUT_SKIPS still caps broad outages, and the SKIP/end-of-board
+    // accounting is unchanged from the walk it replaces.
     const PAGE_BAILOUT_SKIPS = 8;
-    const found = []; // { offset, card }
-    let reachedEnd = false;
-    let bailedOut = false;
-    let endOffset = Infinity; // lowest offset any worker found empty (real end of board)
-    let skipped = 0;
-    let i = 0;
-    const runNext = async () => {
-      while (i < offsets.length) {
-        if (reachedEnd || bailedOut) return; // another worker already found the real end — or this page is clearly a lost cause
-        const offset = offsets[i++];
+    const state = { reachedEnd: false, endOffset: Infinity, skipped: 0, bailedOut: false };
+    // One /cards request for an aligned window [start, start+size). Empty
+    // response = ran past the real end of the board. Resolves to the
+    // window's cards (offset-tagged) or rejects — a rejection means a
+    // poisoned record lives inside this window.
+    const probeWindow = async (start, size) => {
+      const res = await mmFetch(
+        boardsUrl(`/boards/${boardId}/cards?page=${start / size}&per_page=${size}`),
+        {},
+        `listCards(${boardId},page=${start / size},per_page=${size})`
+      );
+      const data = await asJsonOrThrow(res, `listCards(${boardId},page=${start / size},per_page=${size})`);
+      const cards = Array.isArray(data) ? data : (data && data.cards) || [];
+      if (!cards.length) {
+        state.reachedEnd = true;
+        if (start < state.endOffset) state.endOffset = start;
+      }
+      return cards.map((card, i) => ({ offset: start + i, card }));
+    };
+    // Probe a known-failing [start, end) window: try each aligned half, and
+    // only dig into the half that still fails. Halves of a power-of-two
+    // aligned window are themselves aligned, so page stays integral all the
+    // way down; a size-1 window is where the poisoned record actually
+    // surfaces (skipped, everything else on the board still loads).
+    const scanWindow = async (start, end) => {
+      if (state.bailedOut || state.reachedEnd) return [];
+      if (end - start === 1) {
         try {
-          const res1 = await mmFetch(
-            boardsUrl(`/boards/${boardId}/cards?page=${offset}&per_page=1`),
-            {},
-            `listCards(${boardId},page=${offset},per_page=1)`
-          );
-          const data1 = await asJsonOrThrow(res1, `listCards(${boardId},page=${offset},per_page=1)`);
-          const one = Array.isArray(data1) ? data1 : (data1 && data1.cards) || [];
-          if (!one.length) {
-            reachedEnd = true; // ran past the real end of the board
-            if (offset < endOffset) endOffset = offset;
-          } else {
-            found.push({ offset, card: one[0] });
-          }
-        } catch (err1) {
-          skipped++;
-          console.error(`[mattermost] listCards(${boardId}): SKIPPING card at offset ${offset} — Mattermost itself keeps failing on it: ${err1.message}`);
+          return await probeWindow(start, 1);
+        } catch (err) {
+          state.skipped++;
+          console.error(`[mattermost] listCards(${boardId}): SKIPPING card at offset ${start} — Mattermost itself keeps failing on it: ${err.message}`);
           // Deliberately swallowed — this one card is missing from the
           // result, everything else on the board still loads. listCards()
           // below decides whether the AGGREGATE skip count across the whole
           // board is small enough to just live with (one genuinely corrupt
           // card) or high enough to treat the whole load as failed instead
           // of quietly serving/caching an incomplete list.
-          if (skipped >= PAGE_BAILOUT_SKIPS) bailedOut = true;
+          if (state.skipped >= PAGE_BAILOUT_SKIPS) state.bailedOut = true;
+          return [];
         }
       }
+      const mid = start + Math.floor((end - start) / 2);
+      const out = [];
+      for (const [a, b] of [[start, mid], [mid, end]]) {
+        try {
+          out.push(...(await probeWindow(a, b - a)));
+        } catch (err) {
+          out.push(...(await scanWindow(a, b)));
+        }
+      }
+      return out;
     };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, offsets.length) }, runNext));
-    // Workers finish out of offset order — restore it, and drop anything at
-    // or past whichever offset a worker found empty (defensive: a higher
-    // offset that happened to briefly "succeed" before the real end was
-    // discovered by another worker would just be noise past the board).
+    // Split the failing page into aligned power-of-two blocks and scan each:
+    // a block that comes back clean is done in one request, only failing
+    // blocks go through scanWindow. Blocks are walked in offset order so the
+    // first empty one (real end of board) stops the loop early.
+    const found = []; // { offset, card }
+    const pageEnd = (page + 1) * perPage;
+    for (let offset = page * perPage; offset < pageEnd && !state.bailedOut && !state.reachedEnd; ) {
+      let size = 1 << Math.floor(Math.log2(pageEnd - offset));
+      while ((offset & (size - 1)) !== 0) size >>= 1;
+      try {
+        found.push(...(await probeWindow(offset, size)));
+      } catch (err) {
+        found.push(...(await scanWindow(offset, offset + size)));
+      }
+      offset += size;
+    }
+    // Probe results arrive in order (blocks and halves are traversed in
+    // order), but keep the defensive sort + end-of-board trim from before:
+    // a higher offset that briefly "succeeded" past the real end discovered
+    // by an earlier empty window would just be noise past the board.
     found.sort((a, b) => a.offset - b.offset);
-    const batch = found.filter((x) => x.offset < endOffset).map((x) => x.card);
-    if (skipped > 0) {
+    const batch = found.filter((x) => x.offset < state.endOffset).map((x) => x.card);
+    if (state.skipped > 0) {
       console.error(
-        `[mattermost] listCards(${boardId},page=${page}): SUMMARY — skipped ${skipped}/${offsets.length} cards on this page` +
-          (bailedOut ? ` (bailed out early past ${PAGE_BAILOUT_SKIPS} skips — this page looks broadly unavailable, not one bad record)` : '') +
+        `[mattermost] listCards(${boardId},page=${page}): SUMMARY — skipped ${state.skipped}/${perPage} cards on this page` +
+          (state.bailedOut ? ` (bailed out early past ${PAGE_BAILOUT_SKIPS} skips — this page looks broadly unavailable, not one bad record)` : '') +
           ' (see SKIPPING lines above for exact offsets)'
       );
     }
-    return { batch, reachedEnd, skipped };
+    return { batch, reachedEnd: state.reachedEnd, skipped: state.skipped };
   }
 }
 
