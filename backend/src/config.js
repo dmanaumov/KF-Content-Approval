@@ -109,7 +109,16 @@ module.exports = {
   // How long a board's card list is cached in memory before re-fetching from
   // Mattermost. Not a database — just avoids hammering the API on every
   // client poll/re-render. Set to 0 to disable caching entirely.
-  cacheTtlMs: parseInt(process.env.CACHE_TTL_MS || '10000', 10),
+  // Raised 10s→60s on 2026-09-22: with 862+ cards/3090+ blocks, a cold
+  // loadBoard() costs several seconds even when Mattermost itself is
+  // healthy (see [perf] logging in index.js) — at 10s, ordinary team
+  // browsing (opening /team, switching projects) almost never hit a warm
+  // cache, so nearly every page open paid that cost. 60s trades a bit of
+  // staleness (someone else's edit can take up to a minute to show up on a
+  // page you already have open) for far fewer cold loads. Write actions are
+  // unaffected — they always pass {fresh:true} and bypass this TTL, so a
+  // save is never delayed by, or shows stale data because of, this cache.
+  cacheTtlMs: parseInt(process.env.CACHE_TTL_MS || '60000', 10),
 
   // Max ms to wait for headers of any single upstream request (Mattermost or
   // the disk server) before aborting it. node-fetch has no default timeout,

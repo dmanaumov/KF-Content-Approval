@@ -415,7 +415,23 @@ async function fetchCardsPage(boardId, page, perPage) {
     );
     const offsets = [];
     for (let offset = page * perPage; offset < (page + 1) * perPage; offset++) offsets.push(offset);
-    const CONCURRENCY = 4;
+    // BUGFIX 2026-09-22: live incident — a single poisoned card (Mattermost
+    // itself 500s on it) was forcing this per-card fallback on EVERY cold
+    // loadBoard(), including every write action (all write routes reload
+    // with {fresh:true}, bypassing the cache entirely). At CONCURRENCY=4,
+    // walking all 200 offsets of the affected page took ~6 SECONDS on every
+    // single page open *and* every single edit (status/comment/etc) — team
+    // reported /team taking 10+s to open and 5+s per edit. Raised 4→16: the
+    // 2026-09-03 fix already raised the shared keep-alive socket pool to 64
+    // specifically to give headroom above what the fallback needs, and this
+    // is the genuinely-one-bad-record case the fallback was designed for
+    // (not the widespread-outage case below, which is still capped by
+    // PAGE_BAILOUT_SKIPS regardless of concurrency). Cuts the fallback's
+    // wall-clock time roughly 4x (~6s → ~1.5s) without touching the socket
+    // pool's safety margin. This does NOT fix the root cause — Mattermost
+    // is still failing on that one card — it only makes living with it
+    // tolerable while the card itself gets found and fixed/removed.
+    const CONCURRENCY = 16;
     // BUGFIX 2026-09-03: during a genuine widespread outage (see the big
     // comment above), EVERY offset on the page would fail — without a cap,
     // this loop would plow through all `perPage` (200) of them one by one
