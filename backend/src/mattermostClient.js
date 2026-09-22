@@ -618,7 +618,19 @@ async function getCardWithChildren(boardId, cardId) {
   const childrenData = await asJsonOrThrow(childrenRes, `getCardWithChildren(${boardId},${cardId}):children`);
   const cardArr = Array.isArray(cardData) ? cardData : (cardData && cardData.blocks) || [];
   const childArr = Array.isArray(childrenData) ? childrenData : (childrenData && childrenData.blocks) || [];
-  return { card: cardArr[0] || null, children: childArr };
+  const card = cardArr[0] || null;
+  // The generic /blocks endpoint (used here) nests card properties under
+  // `fields.properties`, NOT at `card.properties` like the dedicated /cards
+  // endpoint (see listCards() comment above). Every downstream consumer
+  // (buildTasks(), setStatusByRawLabel()'s property merge, etc.) assumes the
+  // flattened `card.properties` shape, so normalize it here — otherwise
+  // `card.properties` is undefined and a property-merge-then-PATCH wipes
+  // every other property on the card (Mattermost's PATCH replaces
+  // `fields.properties` wholesale, it does not deep-merge).
+  if (card) {
+    card.properties = (card.fields && card.fields.properties) || card.properties || {};
+  }
+  return { card, children: childArr };
 }
 
 // PATCH /boards/{boardId}/blocks/{blockId}
