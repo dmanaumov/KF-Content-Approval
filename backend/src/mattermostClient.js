@@ -584,6 +584,43 @@ async function listBlocks(boardId) {
   return Array.isArray(data) ? data : (data && data.blocks) || [];
 }
 
+// Fetches ONE card block plus its own children (description text, media
+// attachments, comments) WITHOUT pulling the rest of the board — added
+// 2026-09-22 after a live incident where every team write (status/text/etc.)
+// was paying for a full listBlocks() (unpaginated, ALL ~3000+ blocks on the
+// board in one response) TWICE per action: once before the patch (to safely
+// merge properties — see patchCardProperty's comment on why a stale/partial
+// read there is dangerous) and once after (to verify the write took and
+// build the response — see refetchTeamTask() in index.js). listBlocks()
+// itself costs 3-6s at this board's size regardless of Mattermost's health,
+// which made every single edit feel like it was hanging.
+//
+// Verified live against this server (2026-09-22, via curl) that the same
+// /boards/{boardId}/blocks endpoint listBlocks() uses also accepts
+// block_id= (returns just that one block) and parent_id= (returns just its
+// direct children) query params — both confirmed to actually filter
+// server-side, not just get ignored. Fired in parallel since they're
+// independent reads.
+async function getCardWithChildren(boardId, cardId) {
+  const [cardRes, childrenRes] = await Promise.all([
+    mmFetch(
+      boardsUrl(`/boards/${boardId}/blocks?block_id=${encodeURIComponent(cardId)}`),
+      {},
+      `getCardWithChildren(${boardId},${cardId}):card`
+    ),
+    mmFetch(
+      boardsUrl(`/boards/${boardId}/blocks?parent_id=${encodeURIComponent(cardId)}`),
+      {},
+      `getCardWithChildren(${boardId},${cardId}):children`
+    ),
+  ]);
+  const cardData = await asJsonOrThrow(cardRes, `getCardWithChildren(${boardId},${cardId}):card`);
+  const childrenData = await asJsonOrThrow(childrenRes, `getCardWithChildren(${boardId},${cardId}):children`);
+  const cardArr = Array.isArray(cardData) ? cardData : (cardData && cardData.blocks) || [];
+  const childArr = Array.isArray(childrenData) ? childrenData : (childrenData && childrenData.blocks) || [];
+  return { card: cardArr[0] || null, children: childArr };
+}
+
 // PATCH /boards/{boardId}/blocks/{blockId}
 //
 // ROOT CAUSE of "PATCH returns 200 but nothing changes in Mattermost" (real
@@ -919,6 +956,7 @@ module.exports = {
   getBoard,
   listCards,
   listBlocks,
+  getCardWithChildren,
   patchCardProperty,
   patchBlock,
   patchBoardCardProperty,

@@ -1842,10 +1842,29 @@ function normLabelLoose(s) {
 // Re-reads one task the way the /team cabinet needs it (every status, not
 // just the 5 client-facing ones) — shared by every /api/team/tasks/:id/*
 // write route below, right after it changes something.
+// BUGFIX 2026-09-22 (live incident): this used to call loadBoard(fresh:true)
+// — a FULL board reload (all cards + all ~3000+ blocks via listBlocks,
+// unpaginated) just to look up the ONE card this function was told to
+// re-fetch. Every write handler already pays for one full reload before its
+// patch (to safely merge properties — see patchCardProperty's comment); this
+// function is called right after, so most writes were paying that ~4-6s
+// listBlocks cost TWICE per action. Switched to mm.getCardWithChildren()
+// (verified live against this server to actually filter server-side, not
+// just get ignored — see its comment in mattermostClient.js) + a standalone
+// mm.getBoard() (cheap — ~100-300ms per [perf] logs — it's a small
+// list-of-this-team's-boards call, not proportional to card count). Same
+// buildTasks() call as before, just fed a single-card cards/blocks slice
+// instead of the whole board's — buildTasks already anticipated exactly this
+// (see its skipProjectFilter comment: "for internal single-card lookups
+// right after a write, where the caller already knows the exact card id").
 async function refetchTeamTask(boardId, taskId) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+  const [board, { card, children }, feedbackAuthorUserId] = await Promise.all([
+    mm.getBoard(boardId, config.teamId),
+    mm.getCardWithChildren(boardId, taskId),
+    getFeedbackAuthorId(),
+  ]);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
+  const { tasks } = buildTasks(board, [card], children, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
   const updated = tasks.find((t) => t.id === taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   await resolveDiskMediaKinds([updated]);
@@ -2883,8 +2902,20 @@ async function updateTaskMediaOrderTeam(boardId, taskId, newOrderIds, actorName)
 // internal production stages too. Verifies the write actually took by
 // re-reading the card (same "PATCH can 200 without changing anything"
 // caution as setApprovalStatus).
+//
+// BUGFIX 2026-09-22 (live incident, same one as refetchTeamTask() above):
+// this used to pull the current card via a full loadBoard(fresh:true) — same
+// unpaginated ~4-6s listBlocks cost as the one refetchTeamTask() ALSO paid
+// right after, so a status change was two full board reloads back to back.
+// The property-def lookup only needs `board` (cheap standalone mm.getBoard,
+// not the board+cards+blocks bundle), and the "current properties to merge
+// into" lookup only needs THIS one card, not all 862 — mm.getCardWithChildren
+// gives both cheaply (verified live against this server, see its comment).
 async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
-  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const [board, { card }] = await Promise.all([
+    mm.getBoard(boardId, config.teamId),
+    mm.getCardWithChildren(boardId, taskId),
+  ]);
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   if (!approvalProp) {
     throw new Error(`Card property "${config.approvalPropertyName}" not found on board ${boardId}.`);
@@ -2894,7 +2925,6 @@ async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
     const available = (approvalProp.options || []).map((o) => `«${o.value}»`).join(', ') || '(нет опций)';
     throw new Error(`Опция "${rawLabel}" не найдена в свойстве "${config.approvalPropertyName}". Доступные опции: ${available}.`);
   }
-  const card = cards.find((c) => c.id === taskId);
   if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before status update.`);
   const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: optionId };
   await mm.patchCardProperty(boardId, taskId, mergedProperties);
