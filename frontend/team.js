@@ -187,6 +187,14 @@ const cfStatus = document.getElementById('cfStatus');
 const cfText = document.getElementById('cfText');
 const createError = document.getElementById('createError');
 const cfSubmit = document.getElementById('cfSubmit');
+const fabBulkImport = document.getElementById('fabBulkImport');
+const bulkImportModal = document.getElementById('bulkImportModal');
+const biForm = document.getElementById('biForm');
+const biProject = document.getElementById('biProject');
+const biFile = document.getElementById('biFile');
+const biError = document.getElementById('biError');
+const biResults = document.getElementById('biResults');
+const biSubmit = document.getElementById('biSubmit');
 const teamCalendarToggle = document.getElementById('teamCalendarToggle');
 const teamListView = document.getElementById('teamListView');
 const teamCalendarView = document.getElementById('teamCalendarView');
@@ -564,6 +572,7 @@ function updateTeamCalendarToggleIcon(calendarOpen) {
 function openTeamCalendarView() {
   teamListView.hidden = true;
   fabCreate.hidden = true;
+  fabBulkImport.hidden = true;
   teamCalendarView.hidden = false;
   updateTeamCalendarToggleIcon(true);
   renderTeamCalendarGrid();
@@ -572,6 +581,7 @@ function openTeamCalendarView() {
 function closeTeamCalendarView() {
   teamListView.hidden = false;
   fabCreate.hidden = false;
+  fabBulkImport.hidden = false;
   teamCalendarView.hidden = true;
   updateTeamCalendarToggleIcon(false);
 }
@@ -598,12 +608,14 @@ function openTeamCommentsView() {
   teamListView.hidden = true;
   teamCalendarView.hidden = true;
   fabCreate.hidden = true;
+  fabBulkImport.hidden = true;
   teamCommentsView.hidden = false;
 }
 
 function closeTeamCommentsView() {
   teamCommentsView.hidden = true;
   fabCreate.hidden = false;
+  fabBulkImport.hidden = false;
   if (preCommentsView === 'calendar') {
     teamCalendarView.hidden = false;
     renderTeamCalendarGrid();
@@ -987,23 +999,12 @@ function populateStatusSelect() {
   cfStatus.value = preferred ? preferred.label : statusOptions[0].label;
 }
 
+// Общая реализация — см. populateProjectSelectInto() ниже (введена вместе
+// с импортом контент-плана, чтобы оба select'а, cfProject и biProject,
+// читали один и тот же кэш teamProjects вместо двух независимых походов за
+// GET /api/team/projects).
 async function populateProjectSelect() {
-  if (!teamProjects) {
-    try {
-      const data = await teamApi('/projects');
-      teamProjects = data.projects || [];
-    } catch (err) {
-      cfProject.innerHTML = '<option value="" disabled selected>Не удалось загрузить проекты</option>';
-      toast('Не удалось загрузить список проектов: ' + err.message);
-      return;
-    }
-  }
-  if (!teamProjects.length) {
-    cfProject.innerHTML = '<option value="" disabled selected>Нет ни одного проекта на борде</option>';
-    return;
-  }
-  cfProject.innerHTML = '<option value="" disabled selected>Выберите проект…</option>' +
-    teamProjects.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+  return populateProjectSelectInto(cfProject);
 }
 
 function todayIsoDate() {
@@ -1072,6 +1073,119 @@ async function submitCreateForm(e) {
   } finally {
     cfSubmit.disabled = false;
     cfSubmit.innerHTML = originalLabel;
+  }
+}
+
+// --- «Импорт контент-плана» — пакетное создание карточек из JSON-файла
+// (POST /api/team/tasks/bulk-import, см. его комментарий в index.js). Одна
+// запись файла = { date?, network?, text?, keywords? } — без отдельного
+// заголовка: бэкенд сам собирает его из keywords (если есть) или первых 60
+// символов text. Проект выбирается один раз на весь файл, в самих записях
+// его нет (см. GET /content-plan-example.json — статическая заготовка,
+// открывается прямо по ссылке «Скачать пример файла» под полем выбора
+// файла, ничего дополнительно готовить не нужно).
+function populateBulkImportProjectSelect() {
+  return populateProjectSelectInto(biProject);
+}
+
+// populateProjectSelect() уже кэширует teamProjects — вынесено в общую
+// функцию, чтобы оба select'а (cfProject и biProject) читали один и тот же
+// кэш вместо двух независимых походов за GET /api/team/projects.
+async function populateProjectSelectInto(selectEl) {
+  if (!teamProjects) {
+    try {
+      const data = await teamApi('/projects');
+      teamProjects = data.projects || [];
+    } catch (err) {
+      selectEl.innerHTML = '<option value="" disabled selected>Не удалось загрузить проекты</option>';
+      toast('Не удалось загрузить список проектов: ' + err.message);
+      return;
+    }
+  }
+  if (!teamProjects.length) {
+    selectEl.innerHTML = '<option value="" disabled selected>Нет ни одного проекта на борде</option>';
+    return;
+  }
+  selectEl.innerHTML = '<option value="" disabled selected>Выберите проект…</option>' +
+    teamProjects.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+}
+
+function openBulkImportModal() {
+  biForm.reset();
+  biError.hidden = true;
+  biResults.hidden = true;
+  biResults.innerHTML = '';
+  populateBulkImportProjectSelect();
+  bulkImportModal.hidden = false;
+}
+
+function closeBulkImportModal() {
+  bulkImportModal.hidden = true;
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Не удалось прочитать файл.'));
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+function renderBulkImportResults(data) {
+  const rows = (data.results || []).map((r) => {
+    const cls = r.ok ? 'bi-row-ok' : 'bi-row-fail';
+    const mark = r.ok ? '✓' : '✗';
+    const label = r.ok ? esc(r.title) : esc(r.error);
+    return `<div class="${cls}">${mark} Строка ${r.row}: ${label}</div>`;
+  });
+  biResults.innerHTML =
+    `<div><strong>Создано: ${data.created}, ошибок: ${data.failed}</strong></div>` + rows.join('');
+  biResults.hidden = false;
+}
+
+async function submitBulkImportForm(e) {
+  e.preventDefault();
+  biError.hidden = true;
+  biResults.hidden = true;
+  const projectId = biProject.value;
+  const file = biFile.files[0];
+  if (!projectId || !file) {
+    biError.textContent = 'Выберите проект и файл.';
+    biError.hidden = false;
+    return;
+  }
+
+  let items;
+  try {
+    const text = await readFileAsText(file);
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed) || !parsed.length) {
+      throw new Error('Файл должен содержать непустой JSON-массив постов — см. пример файла.');
+    }
+    items = parsed;
+  } catch (err) {
+    biError.textContent = 'Не удалось прочитать файл: ' + err.message;
+    biError.hidden = false;
+    return;
+  }
+
+  biSubmit.disabled = true;
+  const originalLabel = biSubmit.innerHTML;
+  biSubmit.innerHTML = 'Импортируем…';
+  try {
+    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, items } });
+    renderBulkImportResults(data);
+    if (data.created) {
+      toast(`Импортировано постов: ${data.created}${data.failed ? `, ошибок: ${data.failed}` : ''}`);
+      await loadTasks();
+    }
+  } catch (err) {
+    biError.textContent = err.message;
+    biError.hidden = false;
+  } finally {
+    biSubmit.disabled = false;
+    biSubmit.innerHTML = originalLabel;
   }
 }
 
@@ -2025,6 +2139,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (lightboxEl && !lightboxEl.hidden) { closeLightbox(); return; }
   if (!createModal.hidden) { closeCreateModal(); return; }
+  if (!bulkImportModal.hidden) { closeBulkImportModal(); return; }
   if (!taskModal.hidden) closeTaskModal();
 });
 
@@ -2081,6 +2196,11 @@ fabCreate.addEventListener('click', () => openCreateModal());
 document.querySelector('#createModal .tm-backdrop').addEventListener('click', closeCreateModal);
 document.getElementById('createClose').addEventListener('click', closeCreateModal);
 createForm.addEventListener('submit', submitCreateForm);
+
+fabBulkImport.addEventListener('click', () => openBulkImportModal());
+document.querySelector('#bulkImportModal .tm-backdrop').addEventListener('click', closeBulkImportModal);
+document.getElementById('biClose').addEventListener('click', closeBulkImportModal);
+biForm.addEventListener('submit', submitBulkImportForm);
 
 // Ссылка на конкретную карточку (?task=<id>, см. openDeepLinkedTask) — из
 // ссылки в шапке модалки (copy-card-link) или любым другим способом.

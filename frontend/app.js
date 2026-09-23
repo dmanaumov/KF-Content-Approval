@@ -766,6 +766,7 @@ function render() {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   updateAttention();
+  updateCalendarSubBanner();
 }
 
 async function loadTasks() {
@@ -958,6 +959,52 @@ document.getElementById('moList').addEventListener('click', (e) => {
 });
 document.querySelector('[data-action="close-media-order"]').addEventListener('click', closeMediaOrder);
 document.querySelector('[data-action="save-media-order"]').addEventListener('click', saveMediaOrder);
+
+// "Напоминания в календаре" — client subscribes their own calendar app to
+// GET /api/links/:token/calendar.ics (see backend calendarFeed.js). The
+// banner only makes sense on a real /l/{token} link (linkToken set at top of
+// this file) — a raw /p/{boardId} link (internal/admin use) has no rotatable
+// token to build the feed URL from, so the banner and modal just stay
+// hidden there. Dismissal is per-device (localStorage) — subscribing itself
+// is the real "opt-in", this only suppresses the nagging banner once seen.
+function calSubDismissKey() {
+  return `kfCalSubDismissed:${linkToken}`;
+}
+function updateCalendarSubBanner() {
+  const el = document.getElementById('calSubBanner');
+  if (!el) return;
+  if (!linkToken) { el.hidden = true; return; }
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(calSubDismissKey()) === '1'; } catch (_) { /* private mode etc — just show it */ }
+  const waitingCount = clientFacingTasks().filter((t) => t.status === 'waiting').length;
+  el.hidden = dismissed || !waitingCount;
+}
+function calendarFeedUrls() {
+  const httpsUrl = `${location.origin}/api/links/${encodeURIComponent(linkToken)}/calendar.ics`;
+  const webcalUrl = httpsUrl.replace(/^https?:/, 'webcal:');
+  return { httpsUrl, webcalUrl };
+}
+document.querySelector('[data-action="cal-sub-subscribe"]').addEventListener('click', () => {
+  const { webcalUrl } = calendarFeedUrls();
+  document.getElementById('calSubWebcalLink').href = webcalUrl;
+  document.getElementById('calSubModal').classList.add('show');
+});
+document.querySelector('[data-action="close-cal-sub-modal"]').addEventListener('click', () => {
+  document.getElementById('calSubModal').classList.remove('show');
+});
+document.querySelector('[data-action="cal-sub-copy-link"]').addEventListener('click', async () => {
+  const { httpsUrl } = calendarFeedUrls();
+  try {
+    await navigator.clipboard.writeText(httpsUrl);
+    toast('Ссылка скопирована');
+  } catch (_) {
+    toast(httpsUrl);
+  }
+});
+document.querySelector('[data-action="cal-sub-dismiss"]').addEventListener('click', () => {
+  try { localStorage.setItem(calSubDismissKey(), '1'); } catch (_) { /* private mode etc — banner just won't stay dismissed */ }
+  document.getElementById('calSubBanner').hidden = true;
+});
 
 document.getElementById('weeks').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-week]');

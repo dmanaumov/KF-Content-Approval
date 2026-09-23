@@ -377,6 +377,25 @@
 }
 .fab-chat.fab-chat-unread:hover{box-shadow:0 16px 34px rgba(223,97,98,.44), 0 4px 12px rgba(223,97,98,.3)}
 
+/* --- «Импорт контент-плана» — третья плавающая кнопка, стоит НАД «Открыть
+   чат» (см. .fab-chat выше) — тот же спокойный серый стиль (это
+   вспомогательное/пакетное действие, не тот единственный яркий CTA, каким
+   остаётся «Запланировать публикацию»). */
+.fab-import{
+  bottom:calc(148px + env(safe-area-inset-bottom, 0px));
+  background:linear-gradient(120deg, #6B7674 0%, #4B5654 60%, #33403D 140%);
+  box-shadow:0 10px 22px rgba(20,30,28,.28), 0 3px 8px rgba(20,30,28,.18);
+  animation:none;
+}
+.fab-import:hover{box-shadow:0 14px 28px rgba(20,30,28,.32), 0 4px 10px rgba(20,30,28,.2)}
+
+.bi-example-link{display:inline-block;margin:8px 0 2px;font-size:12.5px;color:var(--kf-coral);font-weight:750;text-decoration:none}
+.bi-example-link:hover{text-decoration:underline}
+.bi-hint{margin-top:2px}
+.bi-results{margin-top:14px;padding:11px 14px;border-radius:12px;background:#F6F7F7;font-size:12.5px;line-height:1.7;max-height:220px;overflow:auto}
+.bi-row-ok{color:#2E7D4F}
+.bi-row-fail{color:#E0484A}
+
 /* --- Панель чата команды — выезжает СБОКУ (справа), а не снизу как
    .tm-modal/.tm-card — по прямому запросу ("при нажатии на кнопку сбоку
    должна открыться панель"). Переиспользует .tm-chat-* словарь классов

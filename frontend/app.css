@@ -67,6 +67,18 @@ button{cursor:pointer}
 .attention-link{display:block;text-align:left;width:100%;border:0;background:transparent;padding:0;font:inherit;line-height:1.45;cursor:pointer}
 .attention-row1 .attention-link{font-size:14px;font-weight:800}
 .attention-row2{font-size:12px;color:var(--muted);font-weight:650}
+
+.cal-sub-banner{background:#E8F4EA;border:1px solid #BFDFC5;border-radius:18px;padding:13px 16px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cal-sub-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cal-sub-text strong{font-size:14px;color:#2E7D4F}
+.cal-sub-text span{font-size:12px;color:var(--muted);font-weight:600}
+.cal-sub-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.cal-sub-btn{padding:10px 16px;font-size:13px;white-space:nowrap}
+.cal-sub-dismiss{border:0;background:transparent;color:var(--muted);font-size:16px;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;padding:0}
+.cal-sub-dismiss:hover{background:rgba(0,0,0,.06)}
+.cal-sub-modal-actions{display:grid;gap:10px;margin:14px 0}
+.cal-sub-modal-actions .btn{text-align:center;text-decoration:none;display:block}
+.cal-sub-hint{font-size:12px;color:var(--muted);margin:0 0 6px}
 .stack{display:grid;gap:16px;position:relative}
 /* "Всё согласовано" banner with the КРАСАВА mascot — shown at the top of
    the stack whenever no task anywhere on the board is still awaiting
@@ -437,6 +449,9 @@ button{cursor:pointer}
   .attention.urgent{background:#2E1B19}
   .attention.waiting{background:#1D2B1F}
   .attention.clear{background:#222626}
+  .cal-sub-banner{background:#1D2B1F;border-color:#2E4A34}
+  .cal-sub-text strong{color:#6FCF97}
+  .cal-sub-dismiss:hover{background:rgba(255,255,255,.08)}
   .all-done{background:#262222}
   .team-coming{background:#262222}
   .not-found{background:#262222}

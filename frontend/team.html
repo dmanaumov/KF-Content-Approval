@@ -7,9 +7,9 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=17">
+  <link rel="stylesheet" href="/app.css?v=18">
   <link rel="stylesheet" href="/projects.css?v=14">
-  <link rel="stylesheet" href="/team.css?v=23">
+  <link rel="stylesheet" href="/team.css?v=24">
 </head>
 <body>
 <div class="page">
@@ -120,6 +120,11 @@
       <span class="fab-create-label">Открыть чат</span>
     </button>
 
+    <button id="fabBulkImport" class="fab-create fab-import" type="button" aria-label="Импорт контент-плана">
+      <span class="fab-create-icon" aria-hidden="true">📥</span>
+      <span class="fab-create-label">Импорт контент-плана</span>
+    </button>
+
     <button id="fabCreate" class="fab-create" type="button" aria-label="Запланировать публикацию">
       <span class="fab-create-icon" aria-hidden="true">+</span>
       <span class="fab-create-label">Запланировать публикацию</span>
@@ -182,6 +187,38 @@
   </div>
 </div>
 
+<div id="bulkImportModal" class="tm-modal" hidden>
+  <div class="tm-backdrop"></div>
+  <div class="tm-card create-card">
+    <button id="biClose" class="tm-close" type="button" aria-label="Закрыть">✕</button>
+    <div class="create-body">
+      <div class="create-head">
+        <div class="create-head-icon" aria-hidden="true">📥</div>
+        <h2 class="create-title">Импорт контент-плана</h2>
+        <p class="create-subtitle">Выберите проект и JSON-файл с постами — каждая запись в файле станет отдельной карточкой.</p>
+      </div>
+      <form id="biForm" class="create-form" novalidate>
+        <label class="field-label" for="biProject">Проект</label>
+        <select id="biProject" class="field-input" required>
+          <option value="" disabled selected>Загружаем…</option>
+        </select>
+
+        <label class="field-label" for="biFile">Файл контент-плана (JSON)</label>
+        <input id="biFile" class="field-input" type="file" accept=".json,application/json" required>
+        <a id="biExampleLink" class="bi-example-link" href="/content-plan-example.json" download>⬇ Скачать пример файла</a>
+        <p class="create-subtitle bi-hint">Такой же формат удобно попросить у ИИ при генерации плана — просто приложите этот файл как образец в промт.</p>
+
+        <div id="biError" class="error-box" hidden></div>
+        <div id="biResults" class="bi-results" hidden></div>
+
+        <button id="biSubmit" type="submit" class="fab-create-submit">
+          <span aria-hidden="true">📥</span> Импортировать
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div id="taskModal" class="tm-modal" hidden>
   <div class="tm-backdrop"></div>
   <div class="tm-card">
@@ -222,7 +259,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=28"></script>
+<script src="/team.js?v=29"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

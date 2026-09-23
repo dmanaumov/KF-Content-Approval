@@ -7,7 +7,7 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=17">
+  <link rel="stylesheet" href="/app.css?v=18">
 </head>
 <body>
 <div class="page">
@@ -36,6 +36,16 @@
 
     <div id="listView">
       <div id="attention" class="attention" hidden></div>
+      <div id="calSubBanner" class="cal-sub-banner" hidden>
+        <div class="cal-sub-text">
+          <strong>📅 Напоминания в календаре</strong>
+          <span>Подключите свой календарь — он сам будет напоминать, пока есть контент на проверку.</span>
+        </div>
+        <div class="cal-sub-actions">
+          <button type="button" class="btn approve cal-sub-btn" data-action="cal-sub-subscribe">Подключить</button>
+          <button type="button" class="cal-sub-dismiss" data-action="cal-sub-dismiss" aria-label="Скрыть">✕</button>
+        </div>
+      </div>
       <div class="filters">
         <button class="filter active" data-filter="waiting">Ожидают</button>
         <button class="filter" data-filter="changes">Правки</button>
@@ -93,6 +103,21 @@
   </div>
 </div>
 
+<div id="calSubModal" class="modal-wrap">
+  <div class="sheet">
+    <h3>Подключить календарь</h3>
+    <p>Календарь сам будет присылать напоминания, пока есть контент на проверку — ничего дополнительно проверять не нужно.</p>
+    <div class="cal-sub-modal-actions">
+      <a id="calSubWebcalLink" class="btn approve" href="#">Открыть в приложении календаря</a>
+      <button type="button" class="btn changes" data-action="cal-sub-copy-link">Скопировать ссылку (для Google Calendar)</button>
+    </div>
+    <p class="cal-sub-hint">Google Calendar: «Другие календари» → «+» → «По URL» — и вставить скопированную ссылку.</p>
+    <div class="sheet-actions">
+      <button class="btn changes" data-action="close-cal-sub-modal">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <div id="mediaOrderModal" class="modal-wrap">
   <div class="sheet">
     <h3>Порядок фото/видео</h3>
@@ -113,7 +138,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/app.js?v=16"></script>
+<script src="/app.js?v=17"></script>
 <script src="/welcome.js?v=1" defer data-audience="client"></script>
 </body>
 </html>

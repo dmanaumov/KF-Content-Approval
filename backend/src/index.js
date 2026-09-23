@@ -13,6 +13,7 @@ const diskUpload = require('./diskUpload');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
+const calendarFeed = require('./calendarFeed');
 const taskCreators = require('./taskCreators');
 const projectAccess = require('./projectAccess');
 const teamComments = require('./teamComments');
@@ -2052,6 +2053,100 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
   }
 });
 
+// POST /api/team/tasks/bulk-import — body: { projectId, items: [{ date?,
+// network?, text?, keywords? }, ...] }. "Пакетный импорт контент-плана" —
+// the team member picks a project they have access to and uploads a JSON
+// file (parsed client-side; this route gets the already-parsed array, not a
+// file upload) instead of clicking "Запланировать публикацию" once per
+// post. Same access check as POST /api/team/tasks just above (editor/admin
+// on this exact project, or global admin/ceo) — checked ONCE for the whole
+// batch since every row shares one projectId.
+//
+// No card `title` field in the import schema (by design, see project docs —
+// the team already has enough fields without one) — derived per row from
+// `keywords` if present, else the first 60 characters of `text`. A row with
+// neither is rejected with a clear per-row error rather than creating an
+// untitled card; the rest of the batch still proceeds (one bad row doesn't
+// sink the whole import).
+//
+// Board loaded ONCE for the whole batch via mm.getBoard() (cheap, ~100-300ms
+// per [perf] logs — see refetchTeamTask's comment) and passed into every
+// createAutomationTask() call via its preloadedBoard argument — see that
+// function's own comment for why looping its normal loadBoard(fresh:true)
+// per row would make an N-row import pay a ~4-6s full board reload N times
+// over for property definitions that don't change mid-batch.
+app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const projectId = String((req.body && req.body.projectId) || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ error: 'project_id_required', message: 'projectId обязателен.' });
+  }
+  const role = teamAuth.roleFor(req.teamSession.user);
+  if (!role.admin && !role.ceo) {
+    const projectRole = await projectAccess.getRole(boardId, projectId, req.teamSession.user.id);
+    if (projectRole !== 'editor' && projectRole !== 'admin') {
+      return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этому проекту.' });
+    }
+  }
+
+  const items = Array.isArray(req.body && req.body.items) ? req.body.items : null;
+  if (!items || !items.length) {
+    return res.status(400).json({ error: 'items_required', message: 'items обязателен и должен быть непустым массивом.' });
+  }
+  const MAX_ITEMS = 200;
+  if (items.length > MAX_ITEMS) {
+    return res.status(400).json({
+      error: 'too_many_items',
+      message: `Слишком много строк за раз (${items.length}) — максимум ${MAX_ITEMS}. Разбейте файл на несколько частей.`,
+    });
+  }
+
+  let board;
+  try {
+    board = await mm.getBoard(boardId, config.teamId);
+  } catch (err) {
+    return res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+
+  const actorLabel = teamActorName(req);
+  const results = [];
+  for (let i = 0; i < items.length; i++) {
+    const raw = items[i] || {};
+    const rowNum = i + 1;
+    const text = raw.text != null ? String(raw.text).trim() : '';
+    const keywords = raw.keywords != null ? String(raw.keywords).trim() : '';
+    const title = keywords || text.slice(0, 60);
+    if (!title) {
+      results.push({ row: rowNum, ok: false, error: 'Нужен текст или ключевые слова — не из чего собрать заголовок карточки.' });
+      continue;
+    }
+    try {
+      const task = await createAutomationTask(
+        boardId,
+        {
+          title,
+          projectId,
+          network: raw.network,
+          text,
+          keywords: keywords || undefined,
+          publishDate: raw.date,
+          assigneeUserId: req.teamSession.user.id,
+          actorLabel,
+        },
+        board
+      );
+      await taskCreators.setCreator(boardId, task.id, req.teamSession.user.id);
+      results.push({ row: rowNum, ok: true, id: task.id, title: task.title });
+    } catch (err) {
+      results.push({ row: rowNum, ok: false, error: err.message });
+    }
+  }
+  invalidate(boardId); // batch just added cards — next /api/team/tasks read should see them
+  const okCount = results.filter((r) => r.ok).length;
+  res.status(okCount ? 201 : 400).json({ created: okCount, failed: results.length - okCount, results });
+});
+
 // POST /api/team/tasks/:taskId/status — body: { status: <raw label> }.
 // Unlike setApprovalStatus (client-facing, only the 5 statusOptionLabels
 // keys), this accepts ANY option on the "Статус" property — a team member
@@ -3653,8 +3748,18 @@ async function publishAutomationTask(boardId, taskId, url) {
 // opts.actorLabel (optional, defaults to AUTOMATION_ACTOR): whose name goes
 // in the "КАРТОЧКА СОЗДАНА (...)" audit comment — the real team member's
 // name for team-created cards, AUTOMATION_ACTOR for everything else.
-async function createAutomationTask(boardId, opts) {
-  const { board } = await loadBoard(boardId, { fresh: true });
+// preloadedBoard (optional, 3rd arg) — skips this function's own
+// loadBoard(fresh:true) call (board+ALL cards+ALL blocks, ~4-6s on this
+// board's current size, see loadBoard()'s own [perf] logging comment) when
+// the caller already has a fresh `board` object and only wants the cheap
+// property-lookup + create-card path. Added for POST /api/team/tasks/
+// bulk-import below — creating N cards in one batch would otherwise pay
+// that full reload N times over for property definitions that don't change
+// mid-batch. Every other existing caller (POST /api/automation/tasks,
+// POST /api/team/tasks) passes nothing here and keeps its original
+// always-fresh-board behavior unchanged.
+async function createAutomationTask(boardId, opts, preloadedBoard) {
+  const board = preloadedBoard || (await loadBoard(boardId, { fresh: true })).board;
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
@@ -4939,6 +5044,41 @@ app.get('/api/links/:token', async (req, res) => {
   } catch (err) {
     console.error('[api] /api/links/:token failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
+// GET /api/links/:token/calendar.ics — the "напоминания в календаре" feature
+// (see calendarFeed.js for the full design rationale). Same token as the
+// client's own cabinet link — no separate auth to invent, and it stays
+// meaningful if the link is ever rotated (an old .ics subscription just
+// starts 404ing like the cabinet itself would). Deliberately does NOT
+// require the "Проект"-property-found/matched dance that /api/boards/:id/
+// tasks does — resolveToken() already pins this to exactly one project, so
+// there's nothing to disambiguate.
+app.get('/api/links/:token/calendar.ics', async (req, res) => {
+  const resolved = await projectSettings.resolveToken(req.params.token);
+  if (!resolved) {
+    return res.status(404).type('text/plain').send('Ссылка недействительна или была отозвана.');
+  }
+  try {
+    const { board, cards, blocks } = await loadBoard(resolved.boardId);
+    const { tasks } = buildTasks(board, cards, blocks, { projectFilter: resolved.projectId });
+    const waitingTasks = tasks.filter((t) => t.status === 'waiting');
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    const projectLabel = optionLabelById(projectProp, resolved.projectId) || 'КонтентФерма';
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const ics = calendarFeed.buildIcsFeed(waitingTasks, {
+      projectLabel,
+      linkToken: req.params.token,
+      host: req.get('host'),
+      proto,
+    });
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', `inline; filename="kf-${resolved.projectId}.ics"`);
+    res.send(ics);
+  } catch (err) {
+    console.error('[api] /api/links/:token/calendar.ics failed:', err.message);
+    res.status(502).type('text/plain').send('Не удалось получить данные из производственной системы.');
   }
 });
 
