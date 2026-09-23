@@ -187,8 +187,13 @@ const cfStatus = document.getElementById('cfStatus');
 const cfText = document.getElementById('cfText');
 const createError = document.getElementById('createError');
 const cfSubmit = document.getElementById('cfSubmit');
-const fabBulkImport = document.getElementById('fabBulkImport');
-const bulkImportModal = document.getElementById('bulkImportModal');
+// «Один пост» / «Импорт из файла» — вкладки внутри той же модалки
+// #createModal (по прямому запросу: импорт должен жить внутри кнопки
+// «Запланировать публикацию», а не отдельной FAB-кнопкой/модалкой).
+const createTabBtnSingle = document.getElementById('createTabBtnSingle');
+const createTabBtnImport = document.getElementById('createTabBtnImport');
+const createTabSingle = document.getElementById('createTabSingle');
+const createTabImport = document.getElementById('createTabImport');
 const biForm = document.getElementById('biForm');
 const biProject = document.getElementById('biProject');
 const biFile = document.getElementById('biFile');
@@ -572,7 +577,6 @@ function updateTeamCalendarToggleIcon(calendarOpen) {
 function openTeamCalendarView() {
   teamListView.hidden = true;
   fabCreate.hidden = true;
-  fabBulkImport.hidden = true;
   teamCalendarView.hidden = false;
   updateTeamCalendarToggleIcon(true);
   renderTeamCalendarGrid();
@@ -581,7 +585,6 @@ function openTeamCalendarView() {
 function closeTeamCalendarView() {
   teamListView.hidden = false;
   fabCreate.hidden = false;
-  fabBulkImport.hidden = false;
   teamCalendarView.hidden = true;
   updateTeamCalendarToggleIcon(false);
 }
@@ -608,14 +611,12 @@ function openTeamCommentsView() {
   teamListView.hidden = true;
   teamCalendarView.hidden = true;
   fabCreate.hidden = true;
-  fabBulkImport.hidden = true;
   teamCommentsView.hidden = false;
 }
 
 function closeTeamCommentsView() {
   teamCommentsView.hidden = true;
   fabCreate.hidden = false;
-  fabBulkImport.hidden = false;
   if (preCommentsView === 'calendar') {
     teamCalendarView.hidden = false;
     renderTeamCalendarGrid();
@@ -1012,6 +1013,21 @@ function todayIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+// Вкладки внутри #createModal — «Один пост» (createForm) / «Импорт из
+// файла» (biForm), см. .create-tabs/.create-tab в team.css. Переключение не
+// сбрасывает формы — только показывает/прячет нужную панель и не мешает
+// уже введённым данным на другой вкладке, пока модалка открыта.
+function setCreateTab(tab) {
+  const isImport = tab === 'import';
+  createTabBtnSingle.classList.toggle('active', !isImport);
+  createTabBtnSingle.setAttribute('aria-selected', String(!isImport));
+  createTabBtnImport.classList.toggle('active', isImport);
+  createTabBtnImport.setAttribute('aria-selected', String(isImport));
+  createTabSingle.hidden = isImport;
+  createTabImport.hidden = !isImport;
+  if (!isImport) setTimeout(() => cfTitle.focus(), 60);
+}
+
 // prefill — опционально {date, title}: используется при переходе сюда из
 // quickCreatePost (клик "+" в пустой ячейке календаря, когда проект
 // неоднозначен) — дата и заголовок уже известны, остаётся только выбрать
@@ -1025,6 +1041,12 @@ function openCreateModal(prefill = {}) {
   populateNetworkSelect();
   populateStatusSelect();
   populateProjectSelect(); // async — fine, form is usable the moment it resolves
+  biForm.reset();
+  biError.hidden = true;
+  biResults.hidden = true;
+  biResults.innerHTML = '';
+  populateBulkImportProjectSelect();
+  setCreateTab('single');
   createModal.hidden = false;
   // Чуть отложенный фокус — модалка ещё доигрывает открытие (см. tm-modal),
   // мгновенный focus() на некоторых мобильных браузерах дёргает раскладку.
@@ -1108,19 +1130,6 @@ async function populateProjectSelectInto(selectEl) {
   }
   selectEl.innerHTML = '<option value="" disabled selected>Выберите проект…</option>' +
     teamProjects.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
-}
-
-function openBulkImportModal() {
-  biForm.reset();
-  biError.hidden = true;
-  biResults.hidden = true;
-  biResults.innerHTML = '';
-  populateBulkImportProjectSelect();
-  bulkImportModal.hidden = false;
-}
-
-function closeBulkImportModal() {
-  bulkImportModal.hidden = true;
 }
 
 function readFileAsText(file) {
@@ -2139,7 +2148,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (lightboxEl && !lightboxEl.hidden) { closeLightbox(); return; }
   if (!createModal.hidden) { closeCreateModal(); return; }
-  if (!bulkImportModal.hidden) { closeBulkImportModal(); return; }
   if (!taskModal.hidden) closeTaskModal();
 });
 
@@ -2196,10 +2204,9 @@ fabCreate.addEventListener('click', () => openCreateModal());
 document.querySelector('#createModal .tm-backdrop').addEventListener('click', closeCreateModal);
 document.getElementById('createClose').addEventListener('click', closeCreateModal);
 createForm.addEventListener('submit', submitCreateForm);
+createTabBtnSingle.addEventListener('click', () => setCreateTab('single'));
+createTabBtnImport.addEventListener('click', () => setCreateTab('import'));
 
-fabBulkImport.addEventListener('click', () => openBulkImportModal());
-document.querySelector('#bulkImportModal .tm-backdrop').addEventListener('click', closeBulkImportModal);
-document.getElementById('biClose').addEventListener('click', closeBulkImportModal);
 biForm.addEventListener('submit', submitBulkImportForm);
 
 // Ссылка на конкретную карточку (?task=<id>, см. openDeepLinkedTask) — из

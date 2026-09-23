@@ -377,17 +377,14 @@
 }
 .fab-chat.fab-chat-unread:hover{box-shadow:0 16px 34px rgba(223,97,98,.44), 0 4px 12px rgba(223,97,98,.3)}
 
-/* --- «Импорт контент-плана» — третья плавающая кнопка, стоит НАД «Открыть
-   чат» (см. .fab-chat выше) — тот же спокойный серый стиль (это
-   вспомогательное/пакетное действие, не тот единственный яркий CTA, каким
-   остаётся «Запланировать публикацию»). */
-.fab-import{
-  bottom:calc(148px + env(safe-area-inset-bottom, 0px));
-  background:linear-gradient(120deg, #6B7674 0%, #4B5654 60%, #33403D 140%);
-  box-shadow:0 10px 22px rgba(20,30,28,.28), 0 3px 8px rgba(20,30,28,.18);
-  animation:none;
-}
-.fab-import:hover{box-shadow:0 14px 28px rgba(20,30,28,.32), 0 4px 10px rgba(20,30,28,.2)}
+/* --- Вкладки внутри модалки «Запланировать публикацию» — «Один пост» /
+   «Импорт из файла» (по прямому запросу: импорт контент-плана должен жить
+   внутри этой же кнопки/попапа, не отдельной FAB-кнопкой). Тот же
+   pill-toggle приём, что и .chip выше, но крупнее — под заголовком модалки. */
+.create-tabs{display:flex;gap:6px;margin-bottom:16px;background:#F2F4F4;border-radius:14px;padding:4px}
+.create-tab{flex:1;border:0;background:transparent;border-radius:11px;padding:9px 10px;font-size:12.5px;font-weight:800;color:var(--muted);cursor:pointer}
+.create-tab.active{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(15,25,24,.1)}
+.create-tab-panel[hidden]{display:none}
 
 .bi-example-link{display:inline-block;margin:8px 0 2px;font-size:12.5px;color:var(--kf-coral);font-weight:750;text-decoration:none}
 .bi-example-link:hover{text-decoration:underline}
@@ -486,4 +483,7 @@
   .tm-delete-btn{background:#2E1919;border-color:#4E302C;color:#E58A8A}
   .tm-delete-btn:hover{background:#3A211F}
   .tm-delete-btn:active{background:#452824}
+  .create-tabs{background:#222626}
+  .create-tab{color:#93A19C}
+  .create-tab.active{background:#262222;color:#ECEFED}
 }
