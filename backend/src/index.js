@@ -2080,12 +2080,14 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
 // a clear per-row error rather than creating an untitled card; the rest of
 // the batch still proceeds (one bad row doesn't sink the whole import).
 //
-// `status` is also optional (added 2026-09-24, same day, after "статус
-// поста — НЕ НАЧАТО!" — batch-imported cards were landing with no status
-// property set at all, showing the board's default "Не начато" instead of
-// a real status) — defaults to "ЗАПЛАНИРОВАНО" per row, matching the
-// single-post form's own default (see DEFAULT_CREATE_STATUS_LABEL in
-// team.js), unless a row explicitly sets its own.
+// `status` — every batch-imported card is force-set to "Не начато",
+// unconditionally (see the fix comment right above where it's assigned,
+// inside the loop) — there is no `status` field in `items` at all; if one
+// is present it's ignored. Decided 2026-09-24, same day as two earlier
+// attempts (no status set at all → board's implicit "Не начато"; then a
+// guessed default that didn't match a real board option and failed the
+// whole batch) — the user's call: always explicit "Не начато", regardless
+// of what any row might say.
 //
 // Board loaded ONCE for the whole batch via mm.getBoard() (cheap, ~100-300ms
 // per [perf] logs — see refetchTeamTask's comment) and passed into every
@@ -2141,15 +2143,20 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
       results.push({ row: rowNum, ok: false, error: 'Нужен заголовок, текст или ключевые слова — не из чего собрать заголовок карточки.' });
       continue;
     }
-    // БАГ (найден 2026-09-24, жалоба «статус поста — НЕ НАЧАТО!»): в отличие
-    // от одиночной формы создания (createTabSingle → POST /api/team/tasks),
-    // которая всегда шлёт status явно (по умолчанию «ЗАПЛАНИРОВАНО» — см.
-    // DEFAULT_CREATE_STATUS_LABEL в team.js), оба пакетных импорта (JSON-файл
-    // и вставка из буфера обмена) вообще не передавали status — опция
-    // свойства "Статус" оставалась непроставленной, и карточка отображалась
-    // с дефолтным для борда статусом «Не начато». Фикс: тот же дефолт, что и
-    // у одиночной формы, если строка явно не задаёт свой status.
-    const status = raw.status != null && String(raw.status).trim() ? String(raw.status).trim() : 'ЗАПЛАНИРОВАНО';
+    // Статус пакетно импортированной карточки — ВСЕГДА «Не начато», жёстко,
+    // независимо от того, что (если вообще что-то) написано в самой строке
+    // импорта (raw.status игнорируется намеренно — решение пользователя
+    // 2026-09-24: «все время пишем статус НЕ НАЧАТО! Не важно что они там
+    // себе пишут»). История вопроса в тот же день: сперва status вообще не
+    // передавался — опция свойства "Статус" оставалась непроставленной, и
+    // карточка отображалась с дефолтным для борда статусом «Не начато» —
+    // молча, «как получилось», а не потому что кто-то это выбрал явно
+    // (жалоба «статус поста — НЕ НАЧАТО!»). Промежуточная версия пыталась
+    // проставлять «ЗАПЛАНИРОВАНО»/«Сдали/Запланировано» — но пользователь
+    // решил не гадать с дефолтом или доверять полю status из файла, а
+    // всегда явно ставить «Не начато» — тот же результат, что и раньше, но
+    // теперь ЯВНО, а не по умолчанию борда.
+    const status = 'Не начато';
     try {
       const task = await createAutomationTask(
         boardId,
