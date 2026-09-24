@@ -1239,8 +1239,15 @@ async function submitBulkImportForm(e) {
 // карточку с перепутанными полями, если в реальной ячейке (например "О чём
 // контент") оказалось на пару строк больше/меньше, чем в обычной раскладке
 // — частый случай, если в самой ячейке Google Sheets есть перенос строки.
-function populateClipboardImportProjectSelect() {
-  return populateProjectSelectInto(cpProject);
+async function populateClipboardImportProjectSelect() {
+  await populateProjectSelectInto(cpProject);
+  // По запросу: в области копи-паст импорта сразу подставляем тот же
+  // проект, что выбран в основном фильтре списка/календаря — чтобы не
+  // выбирать его второй раз вручную при каждой вставке. Ставим только если
+  // такой проект реально есть среди загруженных (борд мог измениться).
+  if (projectFilterId && teamProjects && teamProjects.some((p) => p.id === projectFilterId)) {
+    cpProject.value = projectFilterId;
+  }
 }
 
 const CP_DATE_RE = /^(\d{2})\.(\d{2})\.(\d{4})$/;

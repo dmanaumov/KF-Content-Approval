@@ -329,7 +329,7 @@
 }
 
 .create-card{max-width:520px}
-.create-body{padding:22px 22px calc(22px + env(safe-area-inset-bottom, 0px))}
+.create-body{padding:22px 22px calc(22px + env(safe-area-inset-bottom, 0px));flex:1;min-height:0;overflow-y:auto}
 .create-head{text-align:center;margin-bottom:18px}
 .create-head-icon{width:52px;height:52px;margin:0 auto 10px;border-radius:16px;background:linear-gradient(135deg, #FBEAE6, #FBF3D9);display:grid;place-items:center;font-size:24px}
 .create-title{margin:0 0 6px;font-size:19px;font-weight:850;letter-spacing:-.01em}
@@ -402,7 +402,9 @@
 .cp-example-img{display:block;max-width:100%;width:260px;margin:0 auto 14px;border-radius:12px;border:1px solid var(--line);box-shadow:0 6px 18px rgba(15,25,24,.12)}
 .cp-paste-area{min-height:130px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;white-space:pre}
 .cp-paste-area:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
-.cp-parse-btn{margin-top:12px;width:100%;padding:11px 12px;border-radius:12px;font-size:13px}
+.cp-parse-btn{margin-top:12px;width:100%;padding:11px 12px;border-radius:12px;font-size:13px;color:#fff;cursor:pointer;background:linear-gradient(120deg, #EE8145 0%, var(--kf-coral, #DF6162) 55%, #C8473F 140%);box-shadow:0 8px 18px rgba(223,97,98,.3);transition:transform .15s ease, box-shadow .15s ease}
+.cp-parse-btn:hover{transform:translateY(-1px);box-shadow:0 11px 22px rgba(223,97,98,.36)}
+.cp-parse-btn:active{transform:translateY(0)}
 
 /* --- Подтверждение разметки (по решению пользователя 2026-09-24: копируем
    ВСЕГДА только один столбец одного дня, без подписей строк — структура
