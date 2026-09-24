@@ -377,12 +377,14 @@
 }
 .fab-chat.fab-chat-unread:hover{box-shadow:0 16px 34px rgba(223,97,98,.44), 0 4px 12px rgba(223,97,98,.3)}
 
-/* --- Вкладки внутри модалки «Запланировать публикацию» — «Один пост» /
-   «Импорт из файла» (по прямому запросу: импорт контент-плана должен жить
-   внутри этой же кнопки/попапа, не отдельной FAB-кнопкой). Тот же
-   pill-toggle приём, что и .chip выше, но крупнее — под заголовком модалки. */
-.create-tabs{display:flex;gap:6px;margin-bottom:16px;background:#F2F4F4;border-radius:14px;padding:4px}
-.create-tab{flex:1;border:0;background:transparent;border-radius:11px;padding:9px 10px;font-size:12.5px;font-weight:800;color:var(--muted);cursor:pointer}
+/* --- Вкладки внутри модалки «Запланировать публикацию» — «Одиночный» /
+   «Пакетный» (JSON-файл) / «Буфер обмена» (вставка из Google Таблиц) — по
+   прямому запросу: импорт контент-плана должен жить внутри этой же кнопки/
+   попапа, не отдельной FAB-кнопкой. Тот же pill-toggle приём, что и .chip
+   выше, но крупнее — под заголовком модалки. Три вкладки вместо двух —
+   чуть уже padding/шрифт, чтобы «Буфер обмена» не переносился на телефоне. */
+.create-tabs{display:flex;gap:4px;margin-bottom:16px;background:#F2F4F4;border-radius:14px;padding:4px}
+.create-tab{flex:1;border:0;background:transparent;border-radius:11px;padding:9px 6px;font-size:11.5px;font-weight:800;color:var(--muted);cursor:pointer;white-space:nowrap}
 .create-tab.active{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(15,25,24,.1)}
 .create-tab-panel[hidden]{display:none}
 
@@ -392,6 +394,14 @@
 .bi-results{margin-top:14px;padding:11px 14px;border-radius:12px;background:#F6F7F7;font-size:12.5px;line-height:1.7;max-height:220px;overflow:auto}
 .bi-row-ok{color:#2E7D4F}
 .bi-row-fail{color:#E0484A}
+
+/* --- Импорт «Буфер обмена» (вкладка createTabClipboard) — пошаговая
+   инструкция + скриншот примера диапазона + область вставки. */
+.cp-steps{margin:0 0 10px;padding-left:20px;font-size:12.5px;line-height:1.55;color:var(--ink)}
+.cp-steps li{margin-bottom:4px}
+.cp-example-img{display:block;max-width:100%;width:260px;margin:0 auto 14px;border-radius:12px;border:1px solid var(--line);box-shadow:0 6px 18px rgba(15,25,24,.12)}
+.cp-paste-area{min-height:130px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;white-space:pre}
+.cp-paste-area:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
 
 /* --- Панель чата команды — выезжает СБОКУ (справа), а не снизу как
    .tm-modal/.tm-card — по прямому запросу ("при нажатии на кнопку сбоку

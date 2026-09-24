@@ -141,6 +141,7 @@
       <div class="create-tabs" role="tablist">
         <button type="button" id="createTabBtnSingle" class="create-tab active" data-tab="single" role="tab" aria-selected="true">Одиночный</button>
         <button type="button" id="createTabBtnImport" class="create-tab" data-tab="import" role="tab" aria-selected="false">Пакетный</button>
+        <button type="button" id="createTabBtnClipboard" class="create-tab" data-tab="clipboard" role="tab" aria-selected="false">Буфер обмена</button>
       </div>
 
       <div id="createTabSingle" class="create-tab-panel">
@@ -179,6 +180,9 @@
           <label class="field-label" for="cfText">Текст поста <span class="create-optional">(необязательно, можно дописать позже)</span></label>
           <textarea id="cfText" class="tm-textarea" placeholder="Можно оставить пустым и дописать позже прямо в карточке"></textarea>
 
+          <label class="field-label" for="cfReference">Референс <span class="create-optional">(необязательно)</span></label>
+          <input id="cfReference" class="field-input" type="text" placeholder="Ссылка на пример поста/визуала">
+
           <div id="createError" class="error-box" hidden></div>
 
           <button id="cfSubmit" type="submit" class="fab-create-submit">
@@ -204,6 +208,45 @@
 
           <button id="biSubmit" type="submit" class="fab-create-submit">
             <span aria-hidden="true">📥</span> Импортировать
+          </button>
+        </form>
+      </div>
+
+      <div id="createTabClipboard" class="create-tab-panel" hidden>
+        <form id="cpForm" class="create-form" novalidate>
+          <ol class="cp-steps">
+            <li>Откройте таблицу с контент-планом в Google Sheets.</li>
+            <li>Выделите ячейки нужных дней (можно сразу несколько столбцов) вместе с колонкой подписей слева и скопируйте (Ctrl+C / ⌘+C) — как на скриншоте:</li>
+          </ol>
+          <img class="cp-example-img" src="/clipboard-import-example.png" alt="Пример: какой диапазон ячеек копировать из таблицы" loading="lazy">
+          <ol class="cp-steps" start="3">
+            <li>Вернитесь сюда, выберите проект и соцсеть, кликните в поле ниже и вставьте (Ctrl+V / ⌘+V).</li>
+            <li>Нажмите «Импортировать» — по посту на каждый непустой день.</li>
+          </ol>
+
+          <div class="create-row">
+            <div>
+              <label class="field-label" for="cpProject">Проект</label>
+              <select id="cpProject" class="field-input" required>
+                <option value="" disabled selected>Загружаем…</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="cpNetwork">Соцсеть</label>
+              <select id="cpNetwork" class="field-input">
+                <option value="">Не выбрана</option>
+              </select>
+            </div>
+          </div>
+
+          <label class="field-label" for="cpPasteArea">Область вставки</label>
+          <textarea id="cpPasteArea" class="tm-textarea cp-paste-area" placeholder="Кликните сюда и вставьте скопированные ячейки (Ctrl+V)"></textarea>
+
+          <div id="cpError" class="error-box" hidden></div>
+          <div id="cpResults" class="bi-results" hidden></div>
+
+          <button id="cpSubmit" type="submit" class="fab-create-submit">
+            <span aria-hidden="true">📋</span> Импортировать
           </button>
         </form>
       </div>

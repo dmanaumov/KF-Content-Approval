@@ -171,6 +171,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   const urlProp = findPropertyDef(board, config.urlPropertyName);
   const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
   const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
+  const referenceProp = findPropertyDef(board, config.referencePropertyName);
 
   const projectOptionId = projectProp ? resolveProjectOptionId(projectProp, opts.projectFilter) : null;
   const projectFilterMatched = !projectProp || !!projectOptionId;
@@ -397,6 +398,9 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
     // Text-type property, so the raw value is already the plain string —
     // no option-id lookup like the select properties above.
     const keywords = keywordsProp ? String(properties[keywordsProp.id] || '') : '';
+    // "Референс" — ссылка-пример поста/визуала, тот же принцип, что и
+    // keywords выше (текстовое свойство, best-effort если отсутствует).
+    const reference = referenceProp ? String(properties[referenceProp.id] || '') : '';
 
     return {
       id: card.id,
@@ -409,6 +413,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       weekLabel: weekLabel(weekStart),
       caption,
       keywords,
+      reference,
       media,
       feedback,
       clientComments,
@@ -451,6 +456,7 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
       projectPropertyFound: !!projectProp,
       assigneePropertyFound: !!assigneeProp,
       keywordsPropertyFound: !!keywordsProp,
+      referencePropertyFound: !!referenceProp,
       projectFilterMatched,
       // Every raw option on the "Статус" property, for the /team cabinet's
       // status picker — team members can move a card into ANY production

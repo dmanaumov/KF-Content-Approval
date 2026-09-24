@@ -55,6 +55,7 @@ let activeStatuses = null;
 let pendingDeepLinkTaskId = null;
 let statusOptions = []; // [{id,label}] — every raw "Статус" option, from GET /api/team/tasks
 let keywordsPropertyFound = false;
+let referencePropertyFound = false;
 // Id архивных проектов (см. GET /api/team/tasks -> archivedProjectIds) —
 // прячем их из фильтра по проекту (renderProjectFilterOptions), чтобы не
 // мешали, но НЕ трогаем уже существующие карточки под таким проектом — они
@@ -185,6 +186,7 @@ const cfNetwork = document.getElementById('cfNetwork');
 const cfDate = document.getElementById('cfDate');
 const cfStatus = document.getElementById('cfStatus');
 const cfText = document.getElementById('cfText');
+const cfReference = document.getElementById('cfReference');
 const createError = document.getElementById('createError');
 const cfSubmit = document.getElementById('cfSubmit');
 // «Один пост» / «Импорт из файла» — вкладки внутри той же модалки
@@ -192,14 +194,23 @@ const cfSubmit = document.getElementById('cfSubmit');
 // «Запланировать публикацию», а не отдельной FAB-кнопкой/модалкой).
 const createTabBtnSingle = document.getElementById('createTabBtnSingle');
 const createTabBtnImport = document.getElementById('createTabBtnImport');
+const createTabBtnClipboard = document.getElementById('createTabBtnClipboard');
 const createTabSingle = document.getElementById('createTabSingle');
 const createTabImport = document.getElementById('createTabImport');
+const createTabClipboard = document.getElementById('createTabClipboard');
 const biForm = document.getElementById('biForm');
 const biProject = document.getElementById('biProject');
 const biFile = document.getElementById('biFile');
 const biError = document.getElementById('biError');
 const biResults = document.getElementById('biResults');
 const biSubmit = document.getElementById('biSubmit');
+const cpForm = document.getElementById('cpForm');
+const cpProject = document.getElementById('cpProject');
+const cpNetwork = document.getElementById('cpNetwork');
+const cpPasteArea = document.getElementById('cpPasteArea');
+const cpError = document.getElementById('cpError');
+const cpResults = document.getElementById('cpResults');
+const cpSubmit = document.getElementById('cpSubmit');
 const teamCalendarToggle = document.getElementById('teamCalendarToggle');
 const teamListView = document.getElementById('teamListView');
 const teamCalendarView = document.getElementById('teamCalendarView');
@@ -445,6 +456,7 @@ async function loadTasks() {
     teamLoading.hidden = true;
     statusOptions = data.statusOptions || [];
     keywordsPropertyFound = !!data.keywordsPropertyFound;
+    referencePropertyFound = !!data.referencePropertyFound;
     archivedProjectIds = new Set(data.archivedProjectIds || []);
     if (data.boardId) boardId = data.boardId;
     currentTasks = (data.tasks || []).slice().sort(byDeadline);
@@ -985,9 +997,13 @@ function resolveStatusLabel(preferredLabel) {
   return statusOptions.length ? statusOptions[0].label : preferredLabel;
 }
 
-function populateNetworkSelect() {
-  cfNetwork.innerHTML = '<option value="">Не выбрана</option>' +
+function populateNetworkSelectInto(selectEl) {
+  selectEl.innerHTML = '<option value="">Не выбрана</option>' +
     Object.entries(SOCIAL_MAP).map(([key, s]) => `<option value="${esc(key)}">${esc(s.label)}</option>`).join('');
+}
+
+function populateNetworkSelect() {
+  populateNetworkSelectInto(cfNetwork);
 }
 
 function populateStatusSelect() {
@@ -1013,19 +1029,21 @@ function todayIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-// Вкладки внутри #createModal — «Один пост» (createForm) / «Импорт из
-// файла» (biForm), см. .create-tabs/.create-tab в team.css. Переключение не
-// сбрасывает формы — только показывает/прячет нужную панель и не мешает
-// уже введённым данным на другой вкладке, пока модалка открыта.
+// Вкладки внутри #createModal — «Одиночный» (createForm) / «Пакетный» (biForm,
+// JSON-файл) / «Буфер обмена» (cpForm, вставка из Google Таблиц), см.
+// .create-tabs/.create-tab в team.css. Переключение не сбрасывает формы —
+// только показывает/прячет нужную панель и не мешает уже введённым данным
+// на другой вкладке, пока модалка открыта.
 function setCreateTab(tab) {
-  const isImport = tab === 'import';
-  createTabBtnSingle.classList.toggle('active', !isImport);
-  createTabBtnSingle.setAttribute('aria-selected', String(!isImport));
-  createTabBtnImport.classList.toggle('active', isImport);
-  createTabBtnImport.setAttribute('aria-selected', String(isImport));
-  createTabSingle.hidden = isImport;
-  createTabImport.hidden = !isImport;
-  if (!isImport) setTimeout(() => cfTitle.focus(), 60);
+  const btns = { single: createTabBtnSingle, import: createTabBtnImport, clipboard: createTabBtnClipboard };
+  const panels = { single: createTabSingle, import: createTabImport, clipboard: createTabClipboard };
+  Object.keys(btns).forEach((key) => {
+    const active = key === tab;
+    btns[key].classList.toggle('active', active);
+    btns[key].setAttribute('aria-selected', String(active));
+    panels[key].hidden = !active;
+  });
+  if (tab === 'single') setTimeout(() => cfTitle.focus(), 60);
 }
 
 // prefill — опционально {date, title}: используется при переходе сюда из
@@ -1046,6 +1064,12 @@ function openCreateModal(prefill = {}) {
   biResults.hidden = true;
   biResults.innerHTML = '';
   populateBulkImportProjectSelect();
+  cpForm.reset();
+  cpError.hidden = true;
+  cpResults.hidden = true;
+  cpResults.innerHTML = '';
+  populateNetworkSelectInto(cpNetwork);
+  populateClipboardImportProjectSelect();
   setCreateTab('single');
   createModal.hidden = false;
   // Чуть отложенный фокус — модалка ещё доигрывает открытие (см. tm-modal),
@@ -1081,6 +1105,7 @@ async function submitCreateForm(e) {
         publishDate: date,
         status: cfStatus.value || undefined,
         text: cfText.value.trim() || undefined,
+        reference: cfReference.value.trim() || undefined,
       },
     });
     applyUpdatedTask(data.task);
@@ -1195,6 +1220,162 @@ async function submitBulkImportForm(e) {
   } finally {
     biSubmit.disabled = false;
     biSubmit.innerHTML = originalLabel;
+  }
+}
+
+// --- «Буфер обмена» — импорт вставкой из Google Таблиц (по прямому запросу
+// 2026-09-24). Пользователь копирует диапазон ячеек из своей таблицы
+// контент-плана (дни — колонки, поля — строки, см. cp-example-img/
+// скриншот в team.html) и вставляет как есть (TSV — так браузер вставляет
+// скопированное из Google Sheets) в #cpPasteArea. Парсится ЦЕЛИКОМ на
+// фронтенде в тот же items-массив, что принимает POST /api/team/tasks/
+// bulk-import — бэкенд для этого способа ничем не отличается от «Пакетный»
+// (JSON-файл), меняется только источник items.
+function populateClipboardImportProjectSelect() {
+  return populateProjectSelectInto(cpProject);
+}
+
+// Строки таблицы, которые парсер понимает по подписи в первом столбце
+// (регистр/пробелы не важны). "Раскадровка" сюда намеренно не входит — по
+// решению пользователя эта строка при импорте не переносится никуда.
+const CP_ROW_LABELS = {
+  'формат': 'format',
+  'stories': 'stories',
+  'о чем контент': 'about',
+  'о чём контент': 'about',
+  'заголовок': 'title',
+  'text': 'text',
+  'референс': 'reference',
+};
+const CP_DATE_RE = /^(\d{2})\.(\d{2})\.(\d{4})$/;
+
+function cpParseDate(raw) {
+  const m = CP_DATE_RE.exec(String(raw || '').trim());
+  if (!m) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+// Возвращает { items, dayLabels, skipped } — items/dayLabels индексно
+// совпадают (dayLabels[i] — дата/подпись дня для items[i], для читаемых
+// результатов импорта, см. renderClipboardImportResults). skipped — сколько
+// колонок дней пропущено молча (день целиком пуст — например, взяли диапазон
+// на пару дней вперёд про запас).
+function parseClipboardTable(raw) {
+  const lines = String(raw || '').replace(/\r\n/g, '\n').split('\n');
+  const rows = lines.map((line) => line.split('\t'));
+  // Первая непустая строка — строка с датами (первая ячейка обычно пустая,
+  // это подпись-заглушка под колонку меток; дальше — dd.mm.yyyy по дням).
+  const dateRowIdx = rows.findIndex((r) => r.slice(1).some((c) => cpParseDate(c)));
+  if (dateRowIdx === -1) {
+    throw new Error('Не нашли строку с датами (формат ДД.ММ.ГГГГ) — проверьте, что скопирован весь диапазон, как на скриншоте.');
+  }
+  const dateRow = rows[dateRowIdx];
+  const dayCols = [];
+  for (let c = 1; c < dateRow.length; c++) {
+    const date = cpParseDate(dateRow[c]);
+    if (date) dayCols.push({ col: c, date });
+  }
+  if (!dayCols.length) throw new Error('Не нашли ни одной колонки с датой.');
+
+  // Остальные строки (кроме строки дат и строки дня недели сразу под ней,
+  // если она есть) — по подписи в первом столбце, см. CP_ROW_LABELS.
+  const fieldsByCol = new Map(dayCols.map((d) => [d.col, {}]));
+  for (let r = 0; r < rows.length; r++) {
+    if (r === dateRowIdx) continue;
+    const label = String(rows[r][0] || '').trim().toLowerCase();
+    const field = CP_ROW_LABELS[label];
+    if (!field) continue; // неизвестная/пустая подпись (включая строку дня недели) — пропускаем
+    for (const { col } of dayCols) {
+      const val = String(rows[r][col] || '').trim();
+      if (val) fieldsByCol.get(col)[field] = val;
+    }
+  }
+
+  const items = [];
+  const dayLabels = [];
+  let skipped = 0;
+  for (const { col, date } of dayCols) {
+    const f = fieldsByCol.get(col) || {};
+    if (!f.format && !f.stories && !f.about && !f.title && !f.text && !f.reference) {
+      skipped++;
+      continue; // день целиком пуст — не создаём карточку
+    }
+    // «формат — добавляем к названию большими буквами» (решение пользователя).
+    const title = f.title ? (f.format ? `${f.format.toUpperCase()}: ${f.title}` : f.title) : (f.format ? f.format.toUpperCase() : '');
+    // «о чём контент — ключевые слова»; stories (если заполнено) добавляем
+    // отдельной строкой к тем же ключевым словам, отдельного поля под него нет.
+    const keywordsParts = [];
+    if (f.about) keywordsParts.push(f.about);
+    if (f.stories) keywordsParts.push(`Stories: ${f.stories}`);
+    items.push({
+      date,
+      network: cpNetwork.value || undefined,
+      title: title || undefined,
+      text: f.text || undefined,
+      keywords: keywordsParts.length ? keywordsParts.join('\n') : undefined,
+      reference: f.reference || undefined,
+    });
+    dayLabels.push(date.split('-').reverse().join('.'));
+  }
+  return { items, dayLabels, skipped };
+}
+
+function renderClipboardImportResults(data, dayLabels) {
+  const rows = (data.results || []).map((r) => {
+    const cls = r.ok ? 'bi-row-ok' : 'bi-row-fail';
+    const mark = r.ok ? '✓' : '✗';
+    const dayLabel = dayLabels[r.row - 1] || `день ${r.row}`;
+    const label = r.ok ? esc(r.title) : esc(r.error);
+    return `<div class="${cls}">${mark} ${esc(dayLabel)}: ${label}</div>`;
+  });
+  cpResults.innerHTML =
+    `<div><strong>Создано: ${data.created}, ошибок: ${data.failed}</strong></div>` + rows.join('');
+  cpResults.hidden = false;
+}
+
+async function submitClipboardImportForm(e) {
+  e.preventDefault();
+  cpError.hidden = true;
+  cpResults.hidden = true;
+  const projectId = cpProject.value;
+  const pasted = cpPasteArea.value;
+  if (!projectId || !pasted.trim()) {
+    cpError.textContent = 'Выберите проект и вставьте скопированные ячейки.';
+    cpError.hidden = false;
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = parseClipboardTable(pasted);
+  } catch (err) {
+    cpError.textContent = err.message;
+    cpError.hidden = false;
+    return;
+  }
+  if (!parsed.items.length) {
+    cpError.textContent = 'Не нашли ни одного непустого дня в диапазоне.';
+    cpError.hidden = false;
+    return;
+  }
+
+  cpSubmit.disabled = true;
+  const originalLabel = cpSubmit.innerHTML;
+  cpSubmit.innerHTML = 'Импортируем…';
+  try {
+    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, items: parsed.items } });
+    renderClipboardImportResults(data, parsed.dayLabels);
+    if (data.created) {
+      const skippedNote = parsed.skipped ? `, пустых дней пропущено: ${parsed.skipped}` : '';
+      toast(`Импортировано постов: ${data.created}${data.failed ? `, ошибок: ${data.failed}` : ''}${skippedNote}`);
+      await loadTasks();
+    }
+  } catch (err) {
+    cpError.textContent = err.message;
+    cpError.hidden = false;
+  } finally {
+    cpSubmit.disabled = false;
+    cpSubmit.innerHTML = originalLabel;
   }
 }
 
@@ -1532,6 +1713,15 @@ function renderTextPane(t) {
       <textarea class="tm-textarea tm-keywords-textarea" id="tmKeywordsInput" spellcheck="true" placeholder="Вводные для копирайтера и для ИИ-генератора">${esc(t.keywords || '')}</textarea>
       <div class="tm-save-row" style="margin-top:8px">
         <button type="button" class="btn changes" data-action="save-keywords">Сохранить</button>
+      </div>
+    </div>`;
+  }
+  if (referencePropertyFound) {
+    html += `<div>
+      <div class="tm-field-label">Референс</div>
+      <textarea class="tm-textarea tm-keywords-textarea" id="tmReferenceInput" spellcheck="true" placeholder="Ссылка на пример поста/визуала">${esc(t.reference || '')}</textarea>
+      <div class="tm-save-row" style="margin-top:8px">
+        <button type="button" class="btn changes" data-action="save-reference">Сохранить</button>
       </div>
     </div>`;
   }
@@ -1906,6 +2096,17 @@ tmBody.addEventListener('click', async (e) => {
     }
     return;
   }
+  if (action === 'save-reference') {
+    const val = document.getElementById('tmReferenceInput').value;
+    try {
+      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/reference`, { method: 'POST', body: { text: val } });
+      applyUpdatedTask(data.task);
+      flashSaved(document.getElementById('tmReferenceInput'));
+    } catch (err) {
+      toast('Не удалось сохранить: ' + err.message);
+    }
+    return;
+  }
   if (action === 'pick-chat-image') {
     const inputId = btn.dataset.scope === 'client' ? 'tmClientChatFileInput' : 'tmTeamChatFileInput';
     const input = document.getElementById(inputId);
@@ -2206,8 +2407,10 @@ document.getElementById('createClose').addEventListener('click', closeCreateModa
 createForm.addEventListener('submit', submitCreateForm);
 createTabBtnSingle.addEventListener('click', () => setCreateTab('single'));
 createTabBtnImport.addEventListener('click', () => setCreateTab('import'));
+createTabBtnClipboard.addEventListener('click', () => setCreateTab('clipboard'));
 
 biForm.addEventListener('submit', submitBulkImportForm);
+cpForm.addEventListener('submit', submitClipboardImportForm);
 
 // Ссылка на конкретную карточку (?task=<id>, см. openDeepLinkedTask) — из
 // ссылки в шапке модалки (copy-card-link) или любым другим способом.

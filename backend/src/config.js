@@ -70,6 +70,19 @@ module.exports = {
   // AI text/image generator there once it's wired to a real provider.
   keywordsPropertyName: process.env.MM_KEYWORDS_PROPERTY_NAME || 'Ключевые слова/мысли',
 
+  // Name of the free-text property that holds a reference link for a post
+  // (пример поста/визуала, на который ориентируемся) — same "text-type
+  // property, best-effort if missing" treatment as keywordsPropertyName
+  // above. Added 2026-09-24 по прямому запросу: поле "Референс" нужно во
+  // ВСЕХ способах создания/редактирования поста (одиночная форма, оба
+  // пакетных импорта, карточка). ВАЖНО: свойство "Референс" должно
+  // СУЩЕСТВОВАТЬ на самом борде в Mattermost Boards (Настройки борда →
+  // свойства карточки → добавить текстовое свойство с этим именем) — этот
+  // код только читает/пишет уже существующее свойство по имени, создать
+  // его на борде программно нельзя (то же ограничение, что и у
+  // keywordsPropertyName выше).
+  referencePropertyName: process.env.MM_REFERENCE_PROPERTY_NAME || 'Референс',
+
   // Only comments authored by this Mattermost username are shown to the
   // client as "правки"/feedback (resolved to a user id once via the core
   // API and cached — see mattermostClient.getUserIdByUsername). This is the

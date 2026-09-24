@@ -1826,7 +1826,7 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     // project as an option (see listArchivedProjectIds in projectSettings.js
     // and the user's request 2026-09-08).
     const archivedProjectIds = await projectSettings.listArchivedProjectIds(boardId);
-    res.json({ tasks: mine, statusOptions: meta.statusOptions, keywordsPropertyFound: meta.keywordsPropertyFound, boardId, archivedProjectIds });
+    res.json({ tasks: mine, statusOptions: meta.statusOptions, keywordsPropertyFound: meta.keywordsPropertyFound, referencePropertyFound: meta.referencePropertyFound, boardId, archivedProjectIds });
   } catch (err) {
     console.error('[api] team tasks failed:', err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
@@ -2054,20 +2054,23 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
 });
 
 // POST /api/team/tasks/bulk-import — body: { projectId, items: [{ date?,
-// network?, text?, keywords? }, ...] }. "Пакетный импорт контент-плана" —
-// the team member picks a project they have access to and uploads a JSON
-// file (parsed client-side; this route gets the already-parsed array, not a
-// file upload) instead of clicking "Запланировать публикацию" once per
-// post. Same access check as POST /api/team/tasks just above (editor/admin
-// on this exact project, or global admin/ceo) — checked ONCE for the whole
-// batch since every row shares one projectId.
+// network?, text?, keywords?, reference?, title? }, ...] }. "Пакетный
+// импорт контент-плана" — the team member picks a project they have access
+// to and uploads a JSON file (parsed client-side; this route gets the
+// already-parsed array, not a file upload), or the frontend builds `items`
+// itself from a clipboard paste (see "Буфер обмена" tab in team.js — same
+// endpoint, just a different client-side source for `items`). Same access
+// check as POST /api/team/tasks just above (editor/admin on this exact
+// project, or global admin/ceo) — checked ONCE for the whole batch since
+// every row shares one projectId.
 //
-// No card `title` field in the import schema (by design, see project docs —
-// the team already has enough fields without one) — derived per row from
-// `keywords` if present, else the first 60 characters of `text`. A row with
-// neither is rejected with a clear per-row error rather than creating an
-// untitled card; the rest of the batch still proceeds (one bad row doesn't
-// sink the whole import).
+// `title` is optional (added 2026-09-24 for the clipboard-paste import,
+// which has its own explicit "Заголовок" column) — if given, used as-is. If
+// omitted (the original JSON-file import has no title column, by design —
+// see project docs), it's derived from `keywords` if present, else the
+// first 60 characters of `text`. A row with none of those is rejected with
+// a clear per-row error rather than creating an untitled card; the rest of
+// the batch still proceeds (one bad row doesn't sink the whole import).
 //
 // Board loaded ONCE for the whole batch via mm.getBoard() (cheap, ~100-300ms
 // per [perf] logs — see refetchTeamTask's comment) and passed into every
@@ -2116,9 +2119,11 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
     const rowNum = i + 1;
     const text = raw.text != null ? String(raw.text).trim() : '';
     const keywords = raw.keywords != null ? String(raw.keywords).trim() : '';
-    const title = keywords || text.slice(0, 60);
+    const reference = raw.reference != null ? String(raw.reference).trim() : '';
+    const explicitTitle = raw.title != null ? String(raw.title).trim() : '';
+    const title = explicitTitle || keywords || text.slice(0, 60);
     if (!title) {
-      results.push({ row: rowNum, ok: false, error: 'Нужен текст или ключевые слова — не из чего собрать заголовок карточки.' });
+      results.push({ row: rowNum, ok: false, error: 'Нужен заголовок, текст или ключевые слова — не из чего собрать заголовок карточки.' });
       continue;
     }
     try {
@@ -2130,6 +2135,7 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
           network: raw.network,
           text,
           keywords: keywords || undefined,
+          reference: reference || undefined,
           publishDate: raw.date,
           assigneeUserId: req.teamSession.user.id,
           actorLabel,
@@ -2201,6 +2207,22 @@ app.post('/api/team/tasks/:taskId/keywords', teamAuth.requireTeamAuth, requireTe
   } catch (err) {
     console.error('[api] team keywords update failed:', err.message);
     res.status(502).json({ error: 'keywords_update_failed', message: err.message });
+  }
+});
+
+// POST /api/team/tasks/:taskId/reference — body: { text }. The "Референс"
+// property (ссылка-пример поста/визуала) — mirrors the keywords route just
+// above exactly, see updateTaskReference below.
+app.post('/api/team/tasks/:taskId/reference', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const text = String((req.body && req.body.text) || '');
+  try {
+    const updated = await updateTaskReference(boardId, req.params.taskId, text);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team reference update failed:', err.message);
+    res.status(502).json({ error: 'reference_update_failed', message: err.message });
   }
 });
 
@@ -3052,6 +3074,23 @@ async function updateTaskKeywords(boardId, taskId, text) {
   return refetchTeamTask(boardId, taskId);
 }
 
+// Sets the "Референс" free-text property — mirrors updateTaskKeywords above
+// exactly (own property, same board, same patch/reread flow).
+async function updateTaskReference(boardId, taskId, text) {
+  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const referenceProp = findPropertyDef(board, config.referencePropertyName);
+  if (!referenceProp) {
+    const available = (board.cardProperties || []).map((p) => `«${p.name}»`).join(', ') || '(не удалось получить список свойств)';
+    throw new Error(`Свойство "${config.referencePropertyName}" не найдено на борде. Реальные свойства борда: ${available}.`);
+  }
+  const card = cards.find((c) => c.id === taskId);
+  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before reference update.`);
+  const mergedProperties = { ...(card.properties || {}), [referenceProp.id]: text };
+  await mm.patchCardProperty(boardId, taskId, mergedProperties);
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
 // Which social network a post is for is NOT a Mattermost property at all —
 // it's a title-prefix convention frontend/app.js already reads for real
 // (SOCIAL_MAP/SOCIAL_PREFIX_RE/detectSocial there) to render the colored
@@ -3765,6 +3804,7 @@ async function createAutomationTask(boardId, opts, preloadedBoard) {
   const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
   const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
   const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
+  const referenceProp = findPropertyDef(board, config.referencePropertyName);
 
   const title = String(opts.title || '').trim();
   if (!title) throw badRequest('title_required', 'title обязателен.');
@@ -3867,6 +3907,12 @@ async function createAutomationTask(boardId, opts, preloadedBoard) {
   // renamed property shouldn't block card creation, just skip setting it.
   if (opts.keywords != null && keywordsProp) {
     properties[keywordsProp.id] = String(opts.keywords);
+  }
+  // opts.reference (optional, free text): "Референс" — ссылка-пример поста/
+  // визуала, свой отдельный от keywords/text property. Same best-effort
+  // treatment.
+  if (opts.reference != null && referenceProp) {
+    properties[referenceProp.id] = String(opts.reference);
   }
 
   const fullTitle = network ? `${network}: ${title}` : title;
