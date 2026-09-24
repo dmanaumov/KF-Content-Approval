@@ -975,7 +975,15 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
     let activity = null;
     try {
       const { board, cards, blocks } = await loadBoard(config.mattermostBoardId);
-      const { tasks } = buildTasks(board, cards, blocks, { includeAllStatuses: true });
+      // БАГ (найден 2026-09-24, жалоба «в "Активность по неделям" всё по
+      // нулям» — за все 12 недель, включая текущую): в отличие от ВСЕХ
+      // остальных «дай мне все карточки борда» вызовов buildTasks() в этом
+      // файле, здесь не было skipProjectFilter: true. Без него и без
+      // явного opts.projectFilter taskMapper.buildTasks() трактует это как
+      // «фильтр по проекту не резолвится» и показывает НОЛЬ карточек (см.
+      // комментарий над projectFilterMatched в taskMapper.js) — то есть
+      // weeklyActivity() считала недели по пустому массиву.
+      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
       activity = weeklyActivity(tasks, 12);
     } catch (err) {
       console.warn('[api] ceo weekly activity unavailable:', err.message);
