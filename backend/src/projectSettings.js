@@ -187,6 +187,39 @@ async function getSettings(boardId, projectId) {
   };
 }
 
+// «Секретики» — свободный текст с критичными кредами/заметками (логины,
+// почты, пароли) по проекту. ДЕЛИБЕРАТИВНО не часть getSettings()/
+// updateSettings() выше — те читаются/пишутся из полутора десятков мест по
+// index.js, включая клиент-facing /api/links/:token; сегодня каждый
+// вызывающий явно выбирает нужные поля из результата, так что утечки нет,
+// но заводить секреты в тот же объект — постоянный риск на будущее (один
+// неосторожный "...settings"-спред где-нибудь и пароли клиента улетают
+// туда, где им быть не должно). Поэтому свой отдельный столбец и свои
+// отдельные функции — секреты физически никогда не проходят через
+// getSettings()/updateSettings(). Гейт на уровне роутов (index.js) тот же,
+// что и у остального попапа «Редактировать» — staffAuth + staffCanAccessProject.
+async function getSecrets(boardId, projectId) {
+  await ensureRow(boardId, projectId);
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT secrets FROM project_settings WHERE board_id = $1 AND project_id = $2',
+    [boardId, projectId]
+  );
+  return (rows[0] && rows[0].secrets) || '';
+}
+
+async function updateSecrets(boardId, projectId, secrets) {
+  if (typeof secrets !== 'string') {
+    throw new Error('secrets must be a string (may be empty).');
+  }
+  await ensureRow(boardId, projectId);
+  const pool = db.requirePool();
+  await pool.query(
+    'UPDATE project_settings SET secrets = $3, updated_at = now() WHERE board_id = $1 AND project_id = $2',
+    [boardId, projectId, secrets]
+  );
+}
+
 // Referenced images for AI generation — up to 10 URLs (pasted or uploaded to
 // disk.kontentferma via POST /api/projects/:id/reference-upload, see
 // index.js/diskUpload.js). Deliberately permissive validation (just "is it a
@@ -513,6 +546,8 @@ module.exports = {
   resolveToken,
   getSettings,
   updateSettings,
+  getSecrets,
+  updateSecrets,
   updatePlanningDates,
   upsertNetworkCredentials,
   listExpiringCredentials,

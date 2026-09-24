@@ -441,6 +441,18 @@
 .cerb-upload-row{display:flex;align-items:center;gap:10px;margin-bottom:2px}
 .cerb-file-hint{font-size:12px;color:var(--muted)}
 .cerb-textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55}
+/* Вкладка «Секретики» — критичные креды/заметки проекта (см. editTabSecrets
+   в projects.html). Тот же приём "пустая — серая / заполнена — яркая", что
+   у «Цербер» выше, но на --urgent (тот же красно-коралловый, что уже
+   используется в приложении для "🔥 горит") — сознательно тревожный цвет,
+   а не нейтральный, чтобы визуально отличать "здесь пароли" от обычных
+   заполненных вкладок. */
+.edit-tab.secrets{color:#A6ACB4;background:#F4F5F6;border-color:#E4E7EA}
+.edit-tab.secrets.filled{color:#A32E2F;background:#FDE7E7;border-color:var(--urgent);font-weight:900}
+.edit-tab.secrets.active,.edit-tab.secrets.filled.active{background:var(--urgent);border-color:var(--urgent);color:#fff;box-shadow:0 0 0 1px var(--urgent) inset,0 4px 14px rgba(255,95,96,.3)}
+.secrets-title{font-size:12px;font-weight:800;color:var(--ink)}
+.secrets-sub{font-size:12px;line-height:1.5;color:var(--muted);margin:2px 0 10px}
+.secrets-textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55}
 .edit-panel{display:grid;gap:2px}
 .edit-panel.ai{border:1px solid var(--ai);box-shadow:0 0 0 1px var(--ai) inset;border-radius:14px;padding:12px;background:linear-gradient(180deg,#FBF9FF,#fff 120px)}
 .edit-panel.ai .field-label{margin-top:10px}

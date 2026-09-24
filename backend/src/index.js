@@ -1527,6 +1527,50 @@ app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   }
 });
 
+// GET/PUT /api/projects/:projectId/secrets — вкладка «Секретики» в попапе
+// «Редактировать» (frontend/projects.js) — свободный текст с критичными
+// кредами/заметками проекта (логины, почты, пароли), по прямому запросу
+// пользователя (2026-09-24): «не хватает места где бы хранились креденшалс
+// соцсетей и др критичная информация... читать/писать будут только админы».
+//
+// НАМЕРЕННО отдельные роуты, а не поле внутри GET/PUT .../settings выше —
+// см. комментарий над projectSettings.getSecrets()/updateSecrets() для
+// причины (тот большой settings-объект расходится по доброму десятку мест
+// в этом файле, включая клиент-facing код; секреты через него никогда не
+// проходят). Тот же admin-гейт, что и у остального попапа — staffAuth
+// (глобальный admin/ceo, либо project_access.role='admin') +
+// staffCanAccessProject (именно на ЭТОТ проект).
+app.get('/api/projects/:projectId/secrets', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
+  try {
+    const secrets = await projectSettings.getSecrets(boardId, req.params.projectId);
+    res.json({ secrets });
+  } catch (err) {
+    console.error('[api] GET project secrets failed:', err.message);
+    res.status(500).json({ error: 'secrets_unavailable', message: err.message });
+  }
+});
+
+app.put('/api/projects/:projectId/secrets', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
+  try {
+    const secrets = String((req.body && req.body.secrets) || '');
+    await projectSettings.updateSecrets(boardId, req.params.projectId, secrets);
+    res.json({ secrets });
+  } catch (err) {
+    console.error('[api] PUT project secrets failed:', err.message);
+    res.status(400).json({ error: 'secrets_update_failed', message: err.message });
+  }
+});
+
 // POST /api/projects/:projectId/validate-instagram — staff clicks
 // "Проверить" next to the IG accessToken/igUserId fields in the
 // "Редактировать" popup (frontend/projects.js) to confirm a just-typed pair

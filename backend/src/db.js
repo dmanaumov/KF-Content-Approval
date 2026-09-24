@@ -117,6 +117,25 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS cerberus_markdown text NOT NULL DEFAULT '';
   `);
+  // «Секретики» — свободный текст с критичными кредами/заметками по проекту
+  // (логины, почты, пароли), чтобы не пересылать их туда-сюда в чатах и не
+  // терять. Добавлено 2026-09-24 по прямому запросу пользователя. НАМЕРЕННО
+  // отдельная колонка, а не ещё одно поле в уже существующем "богатом"
+  // наборе настроек (start_date/social_credentials/cerberus_markdown/...):
+  // projectSettings.getSettings()/updateSettings() читаются и пишутся из
+  // добрых полутора десятков мест по всему index.js (клиентский
+  // /api/links/:token, automation API, кэш карточек и т.д.) — заведение
+  // секретов в тот же объект рискует однажды утечь через будущий
+  // "...settings"-спред, даже если сегодня каждый вызывающий явно выбирает
+  // нужные поля. Секреты читаются/пишутся ТОЛЬКО через отдельные
+  // projectSettings.getSecrets()/updateSecrets() и отдельные роуты
+  // GET/PUT /api/projects/:projectId/secrets — тот же admin-гейт
+  // (staffAuth + staffCanAccessProject), что и у остального попапа
+  // «Редактировать», но физически другой путь данных от начала до конца.
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS secrets text NOT NULL DEFAULT '';
+  `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);

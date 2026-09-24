@@ -73,6 +73,7 @@
       <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
       <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
       <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
+      <button class="edit-tab secrets" type="button" data-tab="secrets">🔒 Секретики</button>
     </div>
 
     <div class="edit-panel" id="editTabSettings">
@@ -224,6 +225,13 @@
       <textarea id="editCerberusMarkdown" class="field-textarea cerb-textarea" rows="14" placeholder="Вставьте сюда Markdown или загрузите файл — его текст появится здесь и его можно будет поправить…" spellcheck="false"></textarea>
     </div>
 
+    <div class="edit-panel" id="editTabSecrets" hidden>
+      <div class="secrets-title">🔒 Секретики — критичная информация проекта</div>
+      <p class="secrets-sub">Логины, почты, пароли, доступы — всё, что раньше пересылали туда-сюда в чатах и рисковали потерять. Видят и правят только админы (те же, у кого вообще есть доступ к этому попапу) — хранится отдельно от остальных настроек проекта.</p>
+      <label class="field-label" for="editSecrets">Секреты и заметки</label>
+      <textarea id="editSecrets" class="field-textarea secrets-textarea" rows="14" placeholder="Например:&#10;&#10;Hosting — login@example.com / пароль&#10;Domain registrar — ...&#10;Instagram Business — ..." spellcheck="false"></textarea>
+    </div>
+
     <div id="editError" class="error-box" hidden></div>
 
     <div class="sheet-actions">
@@ -256,7 +264,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=16"></script>
+<script src="/projects.js?v=17"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

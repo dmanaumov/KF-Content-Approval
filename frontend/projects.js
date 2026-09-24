@@ -1085,18 +1085,32 @@ async function openEdit(projectId, label) {
   document.getElementById('refError').hidden = true;
   document.getElementById('editCerberusMarkdown').value = '';
   document.getElementById('cerbFileHint').hidden = true;
+  document.getElementById('editSecrets').value = '';
+  refreshSecretsTab();
   renderRefGallery();
   refreshCerberusTab();
   switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
   try {
-    const [res] = await Promise.all([
+    const [res, secretsRes] = await Promise.all([
       fetch(`/api/projects/${encodeURIComponent(projectId)}/settings`),
+      fetch(`/api/projects/${encodeURIComponent(projectId)}/secrets`),
       loadTgPickerData(),
     ]);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
+    // Секретики — намеренно отдельный запрос (см. комментарий у роута в
+    // index.js), поэтому не блокируем показ остальных настроек, если ИМЕННО
+    // этот запрос не удался — просто оставляем поле пустым и предупреждаем.
+    try {
+      const secretsData = await secretsRes.json();
+      if (!secretsRes.ok) throw new Error(secretsData.message || secretsData.error);
+      document.getElementById('editSecrets').value = secretsData.secrets || '';
+      refreshSecretsTab();
+    } catch (secretsErr) {
+      toast('Не удалось загрузить «Секретики»: ' + secretsErr.message);
+    }
     document.getElementById('editLogoUrl').value = data.logoUrl || '';
     updateLogoPreview();
     document.getElementById('editIsAiProject').checked = !!data.isAiProject;
@@ -1135,6 +1149,7 @@ function switchEditTab(name) {
   document.getElementById('editTabSettings').hidden = name !== 'settings';
   document.getElementById('editTabAi').hidden = name !== 'ai';
   document.getElementById('editTabCerberus').hidden = name !== 'cerberus';
+  document.getElementById('editTabSecrets').hidden = name !== 'secrets';
 }
 
 function closeEdit() {
@@ -1149,6 +1164,16 @@ function refreshCerberusTab() {
   const tab = document.querySelector('.edit-tab[data-tab="cerberus"]');
   if (!tab) return;
   const text = document.getElementById('editCerberusMarkdown').value.trim();
+  tab.classList.toggle('filled', !!text);
+}
+
+// Та же подсветка «заполнено → выделена», что и у «Цербер» выше, только
+// для вкладки «Секретики» — чтобы было видно с одного взгляда на попап, что
+// в проекте вообще что-то сохранено, не открывая саму вкладку.
+function refreshSecretsTab() {
+  const tab = document.querySelector('.edit-tab[data-tab="secrets"]');
+  if (!tab) return;
+  const text = document.getElementById('editSecrets').value.trim();
   tab.classList.toggle('filled', !!text);
 }
 
@@ -1227,6 +1252,28 @@ async function saveEdit() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
+
+    // Секретики — намеренно отдельный PUT (см. комментарий у роута в
+    // index.js: свой столбец, свой путь данных, никогда не смешивается с
+    // остальными настройками). Шлём его вторым шагом, ПОСЛЕ успешного
+    // сохранения остальных настроек, а не параллельно — если что-то пойдёт
+    // не так именно здесь, важно сказать об этом отдельно и явно, а не
+    // потерять это в общей ошибке или тихо считать сохранённым то, что не
+    // сохранилось.
+    try {
+      const secretsRes = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/secrets`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secrets: document.getElementById('editSecrets').value }),
+      });
+      const secretsData = await secretsRes.json();
+      if (!secretsRes.ok) throw new Error(secretsData.message || secretsData.error);
+    } catch (secretsErr) {
+      errBox.textContent = 'Настройки сохранены, но «Секретики» — нет: ' + secretsErr.message;
+      errBox.hidden = false;
+      return;
+    }
+
     toast('Настройки сохранены');
     closeEdit();
     // Full reload rather than a local patch: postsPerMonth just changed,
@@ -1294,6 +1341,7 @@ document.getElementById('cerbFileInput').addEventListener('change', (e) => {
   if (file) loadCerberusFile(file);
 });
 document.getElementById('editCerberusMarkdown').addEventListener('input', refreshCerberusTab);
+document.getElementById('editSecrets').addEventListener('input', refreshSecretsTab);
 document.querySelector('[data-action="close-edit"]').addEventListener('click', closeEdit);
 // Клик по фону попапа (облёте самой панели .sheet) закрывает его — тот же
 // паттерн, что в team.js для #taskModal: слушаем НА САМОМ backdrop
