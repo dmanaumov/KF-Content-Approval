@@ -133,16 +133,49 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 3200);
 }
 
+// БАГ (найден 2026-09-24, жалоба «при импорте вышла ошибка», без деталей):
+// раньше эта функция на !res.ok просто бросала `data.message || data.error
+// || 'Ошибка запроса'` — и если сервер ответил телом БЕЗ этих двух полей
+// (например /tasks/bulk-import: он при полном провале батча отвечает
+// 400 с {created, failed, results} — там есть подробности по каждой
+// строке, но нет верхнеуровневых message/error), вызывающий код получал
+// голый "Ошибка запроса" и терял всю диагностику. Плюс если тело ответа
+// вообще не JSON (например прокси/сервер вернул HTML/пустой ответ на 500),
+// сообщение было тем же неинформативным "Ошибка запроса" без статуса и
+// текста ответа. Теперь: (1) сетевая ошибка (fetch не достучался до
+// сервера) отделена от ответа с ошибкой и явно помечена как таковая;
+// (2) на не-JSON тело в сообщение попадает код ответа и кусок сырого
+// текста; (3) на любой !res.ok — распарсенное тело кладётся в err.body,
+// чтобы вызывающий код (см. submitBulkImportForm/submitClipboardImportForm)
+// мог показать details (например results) вместо общей фразы.
 async function teamApi(path, opts) {
   opts = opts || {};
-  const res = await fetch(`/api/team${path}`, {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`/api/team${path}`, {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+  } catch (err) {
+    throw new Error('Не удалось связаться с сервером: ' + err.message);
+  }
+  const raw = await res.text();
   let data = {};
-  try { data = await res.json(); } catch (e) {}
-  if (!res.ok) throw new Error(data.message || data.error || 'Ошибка запроса');
+  let parseFailed = false;
+  if (raw) {
+    try { data = JSON.parse(raw); } catch (e) { parseFailed = true; }
+  }
+  if (!res.ok) {
+    const message = data.message || data.error
+      || (parseFailed
+        ? `Сервер ответил ошибкой ${res.status}, ответ не в ожидаемом формате: ${raw.slice(0, 200) || '(пусто)'}`
+        : `Сервер ответил ошибкой ${res.status}.`);
+    const err = new Error(message);
+    err.status = res.status;
+    err.body = data;
+    throw err;
+  }
   return data;
 }
 
@@ -1230,8 +1263,18 @@ async function submitBulkImportForm(e) {
       await loadTasks();
     }
   } catch (err) {
-    biError.textContent = err.message;
-    biError.hidden = false;
+    // Раньше при ПОЛНОМ провале батча (сервер отвечает 400, created:0) сюда
+    // прилетал голый "Ошибка запроса" без единой подробности — см. коммент
+    // над teamApi(). Теперь err.body — это как раз то самое {created,
+    // failed, results}, просто пришедшее через catch вместо try; показываем
+    // его тем же способом, что и частичный успех, а не общей фразой.
+    if (err.body && Array.isArray(err.body.results) && err.body.results.length) {
+      renderBulkImportResults(err.body);
+      toast(`Импортировано постов: ${err.body.created || 0}, ошибок: ${err.body.failed || err.body.results.length}`);
+    } else {
+      biError.textContent = err.message;
+      biError.hidden = false;
+    }
   } finally {
     biSubmit.disabled = false;
     biSubmit.innerHTML = originalLabel;
@@ -1411,8 +1454,16 @@ async function submitClipboardImportForm(e) {
       await loadTasks();
     }
   } catch (err) {
-    cpError.textContent = err.message;
-    cpError.hidden = false;
+    // Тот же случай, что и в submitBulkImportForm выше: на 400 (строка не
+    // создалась) err.body уже содержит results[0].error с конкретной
+    // причиной — показываем его вместо общего "Ошибка запроса".
+    const result = err.body && Array.isArray(err.body.results) ? err.body.results[0] : null;
+    if (result) {
+      renderClipboardResult(result);
+    } else {
+      cpError.textContent = err.message;
+      cpError.hidden = false;
+    }
   } finally {
     cpSubmit.disabled = false;
     cpSubmit.innerHTML = originalLabel;
