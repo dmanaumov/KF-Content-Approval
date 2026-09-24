@@ -402,6 +402,20 @@
 .cp-example-img{display:block;max-width:100%;width:260px;margin:0 auto 14px;border-radius:12px;border:1px solid var(--line);box-shadow:0 6px 18px rgba(15,25,24,.12)}
 .cp-paste-area{min-height:130px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;white-space:pre}
 .cp-paste-area:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,70,67,.08)}
+.cp-parse-btn{margin-top:12px;width:100%;padding:11px 12px;border-radius:12px;font-size:13px}
+
+/* --- Подтверждение разметки (по решению пользователя 2026-09-24: копируем
+   ВСЕГДА только один столбец одного дня, без подписей строк — структура
+   каждый раз одна и та же, но чтобы не создать карточку с перепутанными
+   полями "на автомате", каждая вставленная строка размечается явно,
+   пользователь может поправить в выпадающем списке перед созданием поста). */
+.cp-confirm-section{margin-top:14px}
+.cp-confirm-hint{font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.4}
+.cp-confirm-rows{display:flex;flex-direction:column;gap:6px}
+.cp-confirm-row{display:grid;grid-template-columns:132px 1fr;gap:8px;align-items:start;background:#F7F8F8;border-radius:10px;padding:7px 9px}
+.cp-confirm-select{font:inherit;font-size:11.5px;font-weight:750;border:1px solid var(--line);border-radius:8px;padding:6px 7px;background:#fff;color:var(--ink)}
+.cp-confirm-value{font-size:12px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-word;padding-top:6px;max-height:90px;overflow:auto}
+.cp-confirm-value.empty{color:var(--muted);font-style:italic}
 
 /* --- Панель чата команды — выезжает СБОКУ (справа), а не снизу как
    .tm-modal/.tm-card — по прямому запросу ("при нажатии на кнопку сбоку
@@ -496,4 +510,6 @@
   .create-tabs{background:#222626}
   .create-tab{color:#93A19C}
   .create-tab.active{background:#262222;color:#ECEFED}
+  .cp-confirm-row{background:#222626}
+  .cp-confirm-select{background:#262222;border-color:#3A4040;color:#ECEEEE}
 }

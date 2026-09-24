@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=18">
   <link rel="stylesheet" href="/projects.css?v=14">
-  <link rel="stylesheet" href="/team.css?v=25">
+  <link rel="stylesheet" href="/team.css?v=26">
 </head>
 <body>
 <div class="page">
@@ -216,12 +216,13 @@
         <form id="cpForm" class="create-form" novalidate>
           <ol class="cp-steps">
             <li>Откройте таблицу с контент-планом в Google Sheets.</li>
-            <li>Выделите ячейки нужных дней (можно сразу несколько столбцов) вместе с колонкой подписей слева и скопируйте (Ctrl+C / ⌘+C) — как на скриншоте:</li>
+            <li>Выделите столбец ОДНОГО дня — только сам столбец со значениями, без колонки подписей слева — и скопируйте (Ctrl+C / ⌘+C) — как на скриншоте:</li>
           </ol>
-          <img class="cp-example-img" src="/clipboard-import-example.png" alt="Пример: какой диапазон ячеек копировать из таблицы" loading="lazy">
+          <img class="cp-example-img" src="/clipboard-import-example.png" alt="Пример: какой диапазон ячеек копировать из таблицы — один столбец одного дня" loading="lazy">
           <ol class="cp-steps" start="3">
             <li>Вернитесь сюда, выберите проект и соцсеть, кликните в поле ниже и вставьте (Ctrl+V / ⌘+V).</li>
-            <li>Нажмите «Импортировать» — по посту на каждый непустой день.</li>
+            <li>Нажмите «Разобрать» и проверьте разметку по полям ниже — если что-то не так, поправьте в выпадающих списках.</li>
+            <li>Нажмите «Создать пост».</li>
           </ol>
 
           <div class="create-row">
@@ -239,14 +240,21 @@
             </div>
           </div>
 
-          <label class="field-label" for="cpPasteArea">Область вставки</label>
-          <textarea id="cpPasteArea" class="tm-textarea cp-paste-area" placeholder="Кликните сюда и вставьте скопированные ячейки (Ctrl+V)"></textarea>
+          <label class="field-label" for="cpPasteArea">Область вставки — только один день</label>
+          <textarea id="cpPasteArea" class="tm-textarea cp-paste-area" placeholder="Кликните сюда и вставьте скопированный столбец одного дня (Ctrl+V)"></textarea>
+
+          <button id="cpParseBtn" type="button" class="btn changes cp-parse-btn">Разобрать</button>
+
+          <div id="cpConfirmSection" class="cp-confirm-section" hidden>
+            <div class="cp-confirm-hint">Проверьте, что каждая строка привязана к нужному полю карточки, и поправьте при необходимости:</div>
+            <div id="cpConfirmRows" class="cp-confirm-rows"></div>
+          </div>
 
           <div id="cpError" class="error-box" hidden></div>
           <div id="cpResults" class="bi-results" hidden></div>
 
-          <button id="cpSubmit" type="submit" class="fab-create-submit">
-            <span aria-hidden="true">📋</span> Импортировать
+          <button id="cpSubmit" type="submit" class="fab-create-submit" hidden>
+            <span aria-hidden="true">📋</span> Создать пост
           </button>
         </form>
       </div>
@@ -294,7 +302,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=30"></script>
+<script src="/team.js?v=32"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

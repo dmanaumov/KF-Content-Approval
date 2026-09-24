@@ -208,6 +208,9 @@ const cpForm = document.getElementById('cpForm');
 const cpProject = document.getElementById('cpProject');
 const cpNetwork = document.getElementById('cpNetwork');
 const cpPasteArea = document.getElementById('cpPasteArea');
+const cpParseBtn = document.getElementById('cpParseBtn');
+const cpConfirmSection = document.getElementById('cpConfirmSection');
+const cpConfirmRows = document.getElementById('cpConfirmRows');
 const cpError = document.getElementById('cpError');
 const cpResults = document.getElementById('cpResults');
 const cpSubmit = document.getElementById('cpSubmit');
@@ -1068,6 +1071,7 @@ function openCreateModal(prefill = {}) {
   cpError.hidden = true;
   cpResults.hidden = true;
   cpResults.innerHTML = '';
+  resetCpConfirm();
   populateNetworkSelectInto(cpNetwork);
   populateClipboardImportProjectSelect();
   setCreateTab('single');
@@ -1224,112 +1228,97 @@ async function submitBulkImportForm(e) {
 }
 
 // --- «Буфер обмена» — импорт вставкой из Google Таблиц (по прямому запросу
-// 2026-09-24). Пользователь копирует диапазон ячеек из своей таблицы
-// контент-плана (дни — колонки, поля — строки, см. cp-example-img/
-// скриншот в team.html) и вставляет как есть (TSV — так браузер вставляет
-// скопированное из Google Sheets) в #cpPasteArea. Парсится ЦЕЛИКОМ на
-// фронтенде в тот же items-массив, что принимает POST /api/team/tasks/
-// bulk-import — бэкенд для этого способа ничем не отличается от «Пакетный»
-// (JSON-файл), меняется только источник items.
+// 2026-09-24, переработано в тот же день по прямой правке пользователя:
+// "копируем ВСЕГДА только день поста — один столбец, без подписей строк
+// слева, структура одна и та же" — вместо парсинга по подписям в отдельной
+// колонке, теперь позиционная разметка по фиксированному порядку строк
+// таблицы + ОБЯЗАТЕЛЬНОЕ подтверждение пользователем перед созданием
+// карточки: показываем каждую вставленную строку с выпадающим списком поля
+// (по умолчанию — позиционная догадка), пользователь может поправить любую
+// строку, прежде чем нажать «Создать пост». Так не рискуем молча создать
+// карточку с перепутанными полями, если в реальной ячейке (например "О чём
+// контент") оказалось на пару строк больше/меньше, чем в обычной раскладке
+// — частый случай, если в самой ячейке Google Sheets есть перенос строки.
 function populateClipboardImportProjectSelect() {
   return populateProjectSelectInto(cpProject);
 }
 
-// Строки таблицы, которые парсер понимает по подписи в первом столбце
-// (регистр/пробелы не важны). "Раскадровка" сюда намеренно не входит — по
-// решению пользователя эта строка при импорте не переносится никуда.
-const CP_ROW_LABELS = {
-  'формат': 'format',
-  'stories': 'stories',
-  'о чем контент': 'about',
-  'о чём контент': 'about',
-  'заголовок': 'title',
-  'text': 'text',
-  'референс': 'reference',
-};
 const CP_DATE_RE = /^(\d{2})\.(\d{2})\.(\d{4})$/;
-
 function cpParseDate(raw) {
   const m = CP_DATE_RE.exec(String(raw || '').trim());
   if (!m) return null;
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
-// Возвращает { items, dayLabels, skipped } — items/dayLabels индексно
-// совпадают (dayLabels[i] — дата/подпись дня для items[i], для читаемых
-// результатов импорта, см. renderClipboardImportResults). skipped — сколько
-// колонок дней пропущено молча (день целиком пуст — например, взяли диапазон
-// на пару дней вперёд про запас).
-function parseClipboardTable(raw) {
-  const lines = String(raw || '').replace(/\r\n/g, '\n').split('\n');
-  const rows = lines.map((line) => line.split('\t'));
-  // Первая непустая строка — строка с датами (первая ячейка обычно пустая,
-  // это подпись-заглушка под колонку меток; дальше — dd.mm.yyyy по дням).
-  const dateRowIdx = rows.findIndex((r) => r.slice(1).some((c) => cpParseDate(c)));
-  if (dateRowIdx === -1) {
-    throw new Error('Не нашли строку с датами (формат ДД.ММ.ГГГГ) — проверьте, что скопирован весь диапазон, как на скриншоте.');
-  }
-  const dateRow = rows[dateRowIdx];
-  const dayCols = [];
-  for (let c = 1; c < dateRow.length; c++) {
-    const date = cpParseDate(dateRow[c]);
-    if (date) dayCols.push({ col: c, date });
-  }
-  if (!dayCols.length) throw new Error('Не нашли ни одной колонки с датой.');
-
-  // Остальные строки (кроме строки дат и строки дня недели сразу под ней,
-  // если она есть) — по подписи в первом столбце, см. CP_ROW_LABELS.
-  const fieldsByCol = new Map(dayCols.map((d) => [d.col, {}]));
-  for (let r = 0; r < rows.length; r++) {
-    if (r === dateRowIdx) continue;
-    const label = String(rows[r][0] || '').trim().toLowerCase();
-    const field = CP_ROW_LABELS[label];
-    if (!field) continue; // неизвестная/пустая подпись (включая строку дня недели) — пропускаем
-    for (const { col } of dayCols) {
-      const val = String(rows[r][col] || '').trim();
-      if (val) fieldsByCol.get(col)[field] = val;
-    }
-  }
-
-  const items = [];
-  const dayLabels = [];
-  let skipped = 0;
-  for (const { col, date } of dayCols) {
-    const f = fieldsByCol.get(col) || {};
-    if (!f.format && !f.stories && !f.about && !f.title && !f.text && !f.reference) {
-      skipped++;
-      continue; // день целиком пуст — не создаём карточку
-    }
-    // «формат — добавляем к названию большими буквами» (решение пользователя).
-    const title = f.title ? (f.format ? `${f.format.toUpperCase()}: ${f.title}` : f.title) : (f.format ? f.format.toUpperCase() : '');
-    // «о чём контент — ключевые слова»; stories (если заполнено) добавляем
-    // отдельной строкой к тем же ключевым словам, отдельного поля под него нет.
-    const keywordsParts = [];
-    if (f.about) keywordsParts.push(f.about);
-    if (f.stories) keywordsParts.push(`Stories: ${f.stories}`);
-    items.push({
-      date,
-      network: cpNetwork.value || undefined,
-      title: title || undefined,
-      text: f.text || undefined,
-      keywords: keywordsParts.length ? keywordsParts.join('\n') : undefined,
-      reference: f.reference || undefined,
-    });
-    dayLabels.push(date.split('-').reverse().join('.'));
-  }
-  return { items, dayLabels, skipped };
+// Поля карточки, которые можно назначить строке, и позиционный порядок по
+// умолчанию — ровно та же структура таблицы пользователя (дата/день недели/
+// формат/stories/о чём контент/заголовок/text/раскадровка/референс), но
+// теперь это только НАЧАЛЬНАЯ догадка, а не жёсткая привязка — подтверждает
+// пользователь. 'skip' — строка не идёт ни в одно поле карточки (день
+// недели, раскадровка, и всё, что осталось после этих 9 строк).
+const CP_FIELD_LABELS = {
+  skip: 'Пропустить',
+  date: 'Дата',
+  format: 'Формат',
+  stories: 'Stories',
+  about: 'О чём контент',
+  title: 'Заголовок',
+  text: 'Text',
+  reference: 'Референс',
+};
+const CP_DEFAULT_ORDER = ['date', 'skip', 'format', 'stories', 'about', 'title', 'text', 'skip', 'reference'];
+function cpDefaultFieldForIndex(i) {
+  return CP_DEFAULT_ORDER[i] || 'skip';
 }
 
-function renderClipboardImportResults(data, dayLabels) {
-  const rows = (data.results || []).map((r) => {
-    const cls = r.ok ? 'bi-row-ok' : 'bi-row-fail';
-    const mark = r.ok ? '✓' : '✗';
-    const dayLabel = dayLabels[r.row - 1] || `день ${r.row}`;
-    const label = r.ok ? esc(r.title) : esc(r.error);
-    return `<div class="${cls}">${mark} ${esc(dayLabel)}: ${label}</div>`;
-  });
-  cpResults.innerHTML =
-    `<div><strong>Создано: ${data.created}, ошибок: ${data.failed}</strong></div>` + rows.join('');
+let cpParsedLines = []; // текущие строки вставки — по ним submitClipboardImportForm читает актуальные значения выпадающих списков
+
+function cpConfirmRowHtml(line, i) {
+  const field = cpDefaultFieldForIndex(i);
+  const options = Object.entries(CP_FIELD_LABELS)
+    .map(([key, label]) => `<option value="${esc(key)}"${key === field ? ' selected' : ''}>${esc(label)}</option>`)
+    .join('');
+  const trimmed = line.trim();
+  const valueHtml = trimmed ? esc(line) : '(пусто)';
+  return `<div class="cp-confirm-row" data-line-index="${i}">
+    <select class="cp-confirm-select">${options}</select>
+    <div class="cp-confirm-value${trimmed ? '' : ' empty'}" title="${esc(line)}">${valueHtml}</div>
+  </div>`;
+}
+
+function renderCpConfirmRows() {
+  cpConfirmRows.innerHTML = cpParsedLines.map((line, i) => cpConfirmRowHtml(line, i)).join('');
+}
+
+function resetCpConfirm() {
+  cpParsedLines = [];
+  cpConfirmRows.innerHTML = '';
+  cpConfirmSection.hidden = true;
+  cpSubmit.hidden = true;
+}
+
+// Клик «Разобрать» — только разбивает вставленный текст на строки и
+// показывает разметку для проверки, карточку ещё не создаёт.
+function handleCpParseClick() {
+  cpError.hidden = true;
+  cpResults.hidden = true;
+  const pasted = cpPasteArea.value.replace(/\r\n/g, '\n');
+  if (!pasted.trim()) {
+    cpError.textContent = 'Сначала вставьте скопированный столбец одного дня.';
+    cpError.hidden = false;
+    return;
+  }
+  cpParsedLines = pasted.split('\n');
+  renderCpConfirmRows();
+  cpConfirmSection.hidden = false;
+  cpSubmit.hidden = false;
+}
+
+function renderClipboardResult(result) {
+  const cls = result.ok ? 'bi-row-ok' : 'bi-row-fail';
+  const mark = result.ok ? '✓' : '✗';
+  const label = result.ok ? esc(result.title) : esc(result.error);
+  cpResults.innerHTML = `<div class="${cls}">${mark} ${label}</div>`;
   cpResults.hidden = false;
 }
 
@@ -1338,36 +1327,69 @@ async function submitClipboardImportForm(e) {
   cpError.hidden = true;
   cpResults.hidden = true;
   const projectId = cpProject.value;
-  const pasted = cpPasteArea.value;
-  if (!projectId || !pasted.trim()) {
-    cpError.textContent = 'Выберите проект и вставьте скопированные ячейки.';
+  if (!projectId) {
+    cpError.textContent = 'Выберите проект.';
+    cpError.hidden = false;
+    return;
+  }
+  if (!cpParsedLines.length) {
+    cpError.textContent = 'Сначала нажмите «Разобрать».';
     cpError.hidden = false;
     return;
   }
 
-  let parsed;
-  try {
-    parsed = parseClipboardTable(pasted);
-  } catch (err) {
-    cpError.textContent = err.message;
+  // Читаем ТЕКУЩИЕ значения выпадающих списков (не то, что было при разборе
+  // — пользователь мог поправить), группируем по полю; несколько строк на
+  // одно и то же поле склеиваются переносом строки (например, если абзац из
+  // ячейки Google Sheets разъехался на несколько вставленных строк).
+  const buckets = { date: [], format: [], stories: [], about: [], title: [], text: [], reference: [] };
+  cpConfirmRows.querySelectorAll('.cp-confirm-row').forEach((row) => {
+    const idx = Number(row.dataset.lineIndex);
+    const field = row.querySelector('.cp-confirm-select').value;
+    if (field === 'skip' || !buckets[field]) return;
+    const val = (cpParsedLines[idx] || '').trim();
+    if (val) buckets[field].push(val);
+  });
+
+  const dateRaw = buckets.date[0] || '';
+  const date = cpParseDate(dateRaw);
+  if (!date) {
+    cpError.textContent = dateRaw
+      ? `Не разобрал дату «${dateRaw}» — ожидается формат ДД.ММ.ГГГГ.`
+      : 'Ни одна строка не отмечена как «Дата» — выберите её в выпадающем списке.';
     cpError.hidden = false;
     return;
   }
-  if (!parsed.items.length) {
-    cpError.textContent = 'Не нашли ни одного непустого дня в диапазоне.';
-    cpError.hidden = false;
-    return;
-  }
+  const formatRaw = buckets.format.join(' ');
+  const titleRaw = buckets.title.join('\n');
+  // «формат — добавляем к названию большими буквами» (решение пользователя).
+  const title = titleRaw ? (formatRaw ? `${formatRaw.toUpperCase()}: ${titleRaw}` : titleRaw) : (formatRaw ? formatRaw.toUpperCase() : '');
+  // «о чём контент — ключевые слова»; stories добавляется отдельной строкой
+  // туда же — отдельного поля карточки под него нет.
+  const keywordsParts = [];
+  if (buckets.about.length) keywordsParts.push(buckets.about.join('\n'));
+  if (buckets.stories.length) keywordsParts.push(`Stories: ${buckets.stories.join('\n')}`);
+
+  const item = {
+    date,
+    network: cpNetwork.value || undefined,
+    title: title || undefined,
+    text: buckets.text.join('\n') || undefined,
+    keywords: keywordsParts.length ? keywordsParts.join('\n') : undefined,
+    reference: buckets.reference.join('\n') || undefined,
+  };
 
   cpSubmit.disabled = true;
   const originalLabel = cpSubmit.innerHTML;
-  cpSubmit.innerHTML = 'Импортируем…';
+  cpSubmit.innerHTML = 'Создаём…';
   try {
-    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, items: parsed.items } });
-    renderClipboardImportResults(data, parsed.dayLabels);
-    if (data.created) {
-      const skippedNote = parsed.skipped ? `, пустых дней пропущено: ${parsed.skipped}` : '';
-      toast(`Импортировано постов: ${data.created}${data.failed ? `, ошибок: ${data.failed}` : ''}${skippedNote}`);
+    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, items: [item] } });
+    const result = (data.results || [])[0] || { ok: false, error: 'Пустой ответ сервера.' };
+    renderClipboardResult(result);
+    if (result.ok) {
+      toast(`Пост создан: ${result.title}`);
+      cpPasteArea.value = '';
+      resetCpConfirm();
       await loadTasks();
     }
   } catch (err) {
@@ -2410,6 +2432,7 @@ createTabBtnImport.addEventListener('click', () => setCreateTab('import'));
 createTabBtnClipboard.addEventListener('click', () => setCreateTab('clipboard'));
 
 biForm.addEventListener('submit', submitBulkImportForm);
+cpParseBtn.addEventListener('click', handleCpParseClick);
 cpForm.addEventListener('submit', submitClipboardImportForm);
 
 // Ссылка на конкретную карточку (?task=<id>, см. openDeepLinkedTask) — из
