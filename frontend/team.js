@@ -1023,8 +1023,16 @@ function populateStatusSelect() {
 // с импортом контент-плана, чтобы оба select'а, cfProject и biProject,
 // читали один и тот же кэш teamProjects вместо двух независимых походов за
 // GET /api/team/projects).
+// По тому же запросу, что и автоподстановка проекта в буфере обмена (см.
+// populateClipboardImportProjectSelect) — раз уже завели этот приём для
+// одной вкладки модалки, логично не оставлять его несогласованным с
+// остальными двумя: подставляем текущий проект из общего фильтра списка/
+// календаря и здесь.
 async function populateProjectSelect() {
-  return populateProjectSelectInto(cfProject);
+  await populateProjectSelectInto(cfProject);
+  if (projectFilterId && teamProjects && teamProjects.some((p) => p.id === projectFilterId)) {
+    cfProject.value = projectFilterId;
+  }
 }
 
 function todayIsoDate() {
@@ -1135,8 +1143,11 @@ async function submitCreateForm(e) {
 // его нет (см. GET /content-plan-example.json — статическая заготовка,
 // открывается прямо по ссылке «Скачать пример файла» под полем выбора
 // файла, ничего дополнительно готовить не нужно).
-function populateBulkImportProjectSelect() {
-  return populateProjectSelectInto(biProject);
+async function populateBulkImportProjectSelect() {
+  await populateProjectSelectInto(biProject);
+  if (projectFilterId && teamProjects && teamProjects.some((p) => p.id === projectFilterId)) {
+    biProject.value = projectFilterId;
+  }
 }
 
 // populateProjectSelect() уже кэширует teamProjects — вынесено в общую
