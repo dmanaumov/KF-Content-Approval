@@ -297,6 +297,39 @@
    that has credentials saved (o.configuredNetworks, see projectSettings.js's
    getTokenAndLogo), so staff can see at a glance where a project can
    actually publish. Colors match the edit popup's .net-dot legend. */
+/* Facepile «кто имеет доступ к проекту» — кружки с инициалами участников
+   (project_access), СЕО в список не попадает (см. GET /api/projects в
+   index.js). Ответственный (role='admin', "менеджер" в терминах
+   пользователя) идёт первым и выделен кольцом акцентного цвета — остальные
+   участники внахлёст следом, по прямому запросу пользователя (2026-09-25).
+   Тот же приём data-tip::after, что у .proj-net-chip выше, для всплывающей
+   подсказки "Имя — роль" при наведении. */
+.proj-members{display:flex;align-items:center;margin-top:1px}
+.proj-avatar{position:relative;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;border:2px solid var(--card,#fff);margin-left:-7px;cursor:default;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.proj-avatar:first-child{margin-left:0}
+.proj-avatar.admin{box-shadow:0 0 0 2px var(--accent),0 1px 2px rgba(0,0,0,.15)}
+.proj-avatar.more{background:var(--line);color:var(--muted);font-size:9.5px}
+.proj-avatar[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:50%;
+  transform:translateX(-50%);
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:20;
+}
+.proj-avatar[data-tip]:hover::after{opacity:1}
+@media(max-width:430px){.proj-avatar[data-tip]::after{white-space:normal;max-width:180px}}
 .proj-net-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .proj-net-chip{position:relative;width:10px;height:10px;border-radius:3px;display:inline-block;cursor:default;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
 .proj-net-chip[data-tip]::after{

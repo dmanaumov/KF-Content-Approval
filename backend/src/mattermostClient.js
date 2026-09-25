@@ -815,11 +815,14 @@ async function getUserIdByUsername(username) {
 // level (Mattermost grants board access per team), team members == the people
 // who have board access. This is what powers the responsible-worker dropdown
 // in the staff project-settings popup (see GET /api/projects/team-members in
-// index.js). Stable, documented core API; fetched with the shared bot session
-// like getUserIdByUsername above. Paginates per_page=200 — a roster that big
-// is unrealistic here, but the loop is cheap and keeps the list complete if
-// the team ever grows past a single page. Deactivated accounts (delete_at
-// set) are filtered out so the dropdown only offers real, usable people.
+// index.js), and — via the `email` field — the project-card avatar facepile
+// (GET /api/projects, added 2026-09-25) telling apart a CEO's project_access
+// row (excluded there, per config.ceoEmails) from an ordinary admin/editor's.
+// Stable, documented core API; fetched with the shared bot session like
+// getUserIdByUsername above. Paginates per_page=200 — a roster that big is
+// unrealistic here, but the loop is cheap and keeps the list complete if the
+// team ever grows past a single page. Deactivated accounts (delete_at set)
+// are filtered out so the dropdown only offers real, usable people.
 async function listTeamUsers() {
   assertConfigured();
   if (!config.teamId) return [];
@@ -851,6 +854,7 @@ async function listTeamUsers() {
       id: u.id,
       username: u.username,
       name: [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || u.username,
+      email: u.email || '',
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 }

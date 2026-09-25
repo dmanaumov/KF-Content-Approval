@@ -29,6 +29,48 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
 }
 
+// Facepile «кто имеет доступ к проекту» на карточке (o.members, см. GET
+// /api/projects в index.js) — по прямому запросу пользователя (2026-09-25):
+// «мне очень сложно сейчас стало понимать кто имеет доступ к проекту...
+// кружки с аватарками (и при наведении всплывающий бабл с именем и ролью)
+// участников проекта (СЕО не указываем). Ответственного (менеджера) надо
+// как-то выделить и выводить, например, первым». Инициалы на деривированном
+// от id цвете вместо реальных фото из Mattermost — так кружок ВСЕГДА
+// выглядит опрятно (не у каждого в Mattermost вообще есть фото профиля) и
+// не требует отдельного прокси-роута под чужие аватарки/лишнего запроса на
+// карточку. Сервер уже отдаёт members отсортированными — admin (= "Ответст-
+// венный") первым, дальше по алфавиту — здесь только рендер.
+const AVATAR_PALETTE = ['#2E7D6B', '#C9704B', '#3F6FB0', '#9A6B1E', '#7C5FC4', '#C13584', '#0E8F7A', '#B0495B'];
+function avatarColorFor(id) {
+  let h = 0;
+  const s = String(id || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+}
+function initialsOf(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+const MEMBER_ROLE_LABEL = { admin: 'Ответственный', editor: 'Участник команды' };
+const MAX_VISIBLE_MEMBERS = 5;
+function membersHtml(members) {
+  if (!members || !members.length) return '';
+  const shown = members.slice(0, MAX_VISIBLE_MEMBERS);
+  const rest = members.slice(MAX_VISIBLE_MEMBERS);
+  const bubbles = shown
+    .map((m, i) => {
+      const roleCls = m.role === 'admin' ? ' admin' : '';
+      const roleLabel = MEMBER_ROLE_LABEL[m.role] || 'Участник команды';
+      return `<span class="proj-avatar${roleCls}" style="background:${avatarColorFor(m.id)};z-index:${shown.length - i}" data-tip="${esc(m.name)} — ${esc(roleLabel)}">${esc(initialsOf(m.name))}</span>`;
+    })
+    .join('');
+  const overflow = rest.length
+    ? `<span class="proj-avatar more" data-tip="${esc(rest.map((m) => m.name).join(', '))}">+${rest.length}</span>`
+    : '';
+  return `<div class="proj-members">${bubbles}${overflow}</div>`;
+}
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -229,6 +271,7 @@ function render(filterText) {
           .map((net) => `<span class="proj-net-chip" style="background:${netMeta[net].color}" data-tip="${esc(netMeta[net].label)}"></span>`)
           .join('');
         const netRow = netChips ? `<div class="proj-net-row">${netChips}</div>` : '';
+        const membersRow = membersHtml(o.members);
         return `<div class="proj-card${aiClass}${archivedClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>
@@ -244,6 +287,7 @@ function render(filterText) {
                 <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
               </div>
               ${netRow}
+              ${membersRow}
             </div>
             <div class="proj-actions-col">
               ${avatar}

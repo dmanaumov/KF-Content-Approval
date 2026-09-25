@@ -667,6 +667,30 @@ app.get('/api/projects', staffAuth, async (req, res) => {
       return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
     }
     const { cards, blocks } = await loadBoard(boardId);
+    // Аватарки участников на карточке проекта (facepile) — по прямому
+    // запросу пользователя (2026-09-25): «мне очень сложно сейчас стало
+    // понимать кто имеет доступ к проекту». Один запрос ролей на ВСЮ доску
+    // + один запрос всего ростера — не по одному на каждый проект внутри
+    // цикла ниже (проектов может быть много, это тот же список, что
+    // страница уже рендерит целиком за один load()).
+    const [boardGrants, teamUsers] = await Promise.all([
+      projectAccess.listForBoard(boardId),
+      mm.listTeamUsers().catch((err) => {
+        console.error('[api] GET projects: listTeamUsers failed (member avatars will be empty):', err.message);
+        return [];
+      }),
+    ]);
+    const usersById = new Map(teamUsers.map((u) => [u.id, u]));
+    const grantsByProject = new Map();
+    for (const g of boardGrants) {
+      if (!grantsByProject.has(g.projectId)) grantsByProject.set(g.projectId, []);
+      grantsByProject.get(g.projectId).push(g);
+    }
+    // «СЕО не показываем» — прямые слова пользователя: у CEO и так
+    // безусловный доступ ко всем проектам (role.ceo, см. staffAuth) —
+    // значок на карточке про него был бы шумом, а не ответом на вопрос
+    // «кому именно назначен этот проект».
+    const ceoEmails = new Set(config.ceoEmails);
     const options = await Promise.all(
       (projectProp.options || []).map(async (o) => {
         // Rotatable short link + logo URL — see projectSettings.js. Row is
@@ -686,7 +710,20 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
         const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
         const posts = postsForMonth(allTasks);
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected };
+        // Ответственный (project_access.role='admin', «менеджер» в терминах
+        // пользователя) — первым, остальные участники по алфавиту следом
+        // (см. .proj-avatar.admin в projects.css, выделяющий его кольцом).
+        // Полный список отдаём как есть — сколько показать кружками и как
+        // схлопнуть остаток в "+N" решает фронт (frontend/projects.js).
+        const members = (grantsByProject.get(o.id) || [])
+          .map((g) => {
+            const u = usersById.get(g.userId);
+            if (!u || (u.email && ceoEmails.has(u.email.toLowerCase()))) return null;
+            return { id: u.id, name: u.name, role: g.role };
+          })
+          .filter(Boolean)
+          .sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name, 'ru') : a.role === 'admin' ? -1 : 1));
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members };
       })
     );
     // Project-access scoping (2026-09-20, заменяет старое «Менеджер
