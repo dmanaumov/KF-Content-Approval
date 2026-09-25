@@ -1971,6 +1971,30 @@ app.get('/api/team/projects', teamAuth.requireTeamAuth, async (req, res) => {
   }
 });
 
+// GET /api/team/users — every Mattermost team member (id+name), NOTHING
+// else. Powers the "Ответственный" (assignee) dropdown in the batch-import
+// tabs of "Запланировать публикацию" (frontend/team.js) — added 2026-09-25
+// by direct request: bulk-imported cards were always assigned to whoever
+// ran the import (see POST /api/team/tasks/bulk-import's assigneeUserId),
+// which is wrong whenever someone imports a plan on another teammate's
+// behalf. Open to any logged-in team member (same gate as /api/team/projects
+// above) — this is just names for a picker, not sensitive, and everyone who
+// can reach the create-post modal needs to be able to pick a responsible
+// person, not just admins. Same mm.listTeamUsers() source and id→name
+// shape already used server-side for GET /api/analytics/team-tasks' rows.
+app.get('/api/team/users', teamAuth.requireTeamAuth, async (req, res) => {
+  try {
+    const members = await mm.listTeamUsers();
+    const users = members
+      .map((u) => ({ id: u.id, name: u.name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    res.json({ users });
+  } catch (err) {
+    console.error('[api] team users failed:', err.message);
+    res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+});
+
 // GET /api/team/tasks/:taskId — single card lookup for deep links
 // (frontend opens /team?task=<id> and needs THIS card even when it isn't in
 // the logged-in user's own "my tasks" list — e.g. a manager/admin sharing a
@@ -2105,16 +2129,31 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
   }
 });
 
-// POST /api/team/tasks/bulk-import — body: { projectId, items: [{ date?,
-// network?, text?, keywords?, reference?, title? }, ...] }. "Пакетный
-// импорт контент-плана" — the team member picks a project they have access
-// to and uploads a JSON file (parsed client-side; this route gets the
-// already-parsed array, not a file upload), or the frontend builds `items`
-// itself from a clipboard paste (see "Буфер обмена" tab in team.js — same
-// endpoint, just a different client-side source for `items`). Same access
-// check as POST /api/team/tasks just above (editor/admin on this exact
-// project, or global admin/ceo) — checked ONCE for the whole batch since
-// every row shares one projectId.
+// POST /api/team/tasks/bulk-import — body: { projectId, assigneeUserId?,
+// items: [{ date?, network?, text?, keywords?, reference?, title? }, ...] }.
+// "Пакетный импорт контент-плана" — the team member picks a project they
+// have access to and uploads a JSON file (parsed client-side; this route
+// gets the already-parsed array, not a file upload), or the frontend builds
+// `items` itself from a clipboard paste (see "Буфер обмена" tab in
+// team.js — same endpoint, just a different client-side source for
+// `items`). Same access check as POST /api/team/tasks just above
+// (editor/admin on this exact project, or global admin/ceo) — checked ONCE
+// for the whole batch since every row shares one projectId.
+//
+// `assigneeUserId` — who every card in this batch is assigned to (see
+// GET /api/team/users for the id list the frontend's dropdown is built
+// from). Added 2026-09-25 by direct request: before this, the whole batch
+// was ALWAYS assigned to whoever ran the import (see the default just
+// below), same as POST /api/team/tasks — fine for a single self-created
+// post, wrong for a batch someone imports on a teammate's behalf (those
+// cards would only ever show up in the IMPORTER's own "my tasks" list, per
+// GET /api/team/tasks' assignee filter, never the actual responsible
+// person's). Falls back to the importer's own id when omitted/blank, so
+// existing callers that don't send it keep the old behavior. Not
+// re-validated against the real team member list — same trust level as
+// `projectId` elsewhere in this route; a bogus id just means the card's
+// "Исполнитель" property doesn't resolve to anyone, same as today if
+// someone leaves the org.
 //
 // `title` is optional (added 2026-09-24 for the clipboard-paste import,
 // which has its own explicit "Заголовок" column) — if given, used as-is. If
@@ -2146,6 +2185,9 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
   if (!projectId) {
     return res.status(400).json({ error: 'project_id_required', message: 'projectId обязателен.' });
   }
+  // Кто отвечает за весь батч — см. комментарий над роутом; пустое/отсутствующее
+  // значение (старые вызовы, до 2026-09-25) — тот же человек, что запускает импорт.
+  const assigneeUserId = String((req.body && req.body.assigneeUserId) || '').trim() || req.teamSession.user.id;
   const role = teamAuth.roleFor(req.teamSession.user);
   if (!role.admin && !role.ceo) {
     const projectRole = await projectAccess.getRole(boardId, projectId, req.teamSession.user.id);
@@ -2213,7 +2255,7 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
           reference: reference || undefined,
           publishDate: raw.date,
           status,
-          assigneeUserId: req.teamSession.user.id,
+          assigneeUserId,
           actorLabel,
         },
         board
@@ -2463,6 +2505,87 @@ app.post('/api/team/tasks/:taskId/delete', teamAuth.requireTeamAuth, requireTeam
     console.error('[api] team task delete failed:', err.message);
     res.status(502).json({ error: 'delete_failed', message: err.message });
   }
+});
+
+// POST /api/team/tasks/bulk-delete — body: { taskIds: [...] }. "Выбрать" +
+// массовое удаление в календаре команды (frontend/team.js) — по прямому
+// запросу пользователя (2026-09-25): «в календаре у админа должна появиться
+// кнопка ВЫБРАТЬ для массовых операций + последующее удаление выбранных
+// постов».
+//
+// НАМЕРЕННО доступ строже, чем у одиночного удаления выше (которое пускает
+// editor ИЛИ admin проекта — «не только у админов», см. тот роут): массовое
+// удаление сразу многих карточек — риск другого масштаба, чем одна карточка
+// у тебя перед глазами, поэтому здесь только ADMIN (глобальный admin/ceo,
+// либо project_access.role='admin' именно на проект ЭТОЙ карточки — не
+// editor). Кнопка на клиенте тоже показывается только тем, у кого
+// staffProjectsPath (тот же сигнал admin-уровня, что уже используется для
+// кнопки «Админка» и для гейта «Секретики» на /projects) — но именно этот
+// серверный чек, а не видимость кнопки, и есть настоящая граница доступа.
+//
+// Каждый taskId проверяется и удаляется ОТДЕЛЬНО (свой try/catch, как в
+// bulk-import выше) — один несуществующий/уже удалённый/недоступный id не
+// должен обрушивать удаление остальных выбранных карточек. Роль проекта
+// пересчитывается на лету по борду, загруженному ОДИН раз на весь батч (не
+// requireTeamCardAccess per-id — та мидлвара пускает editor, здесь нужен
+// именно admin), сама карточка после этого удаляется через deleteTask() —
+// тот же вызов, что у одиночного удаления, включая его собственный fresh-
+// reload перед mm.deleteBlock (см. комментарий deleteTask).
+app.post('/api/team/tasks/bulk-delete', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const taskIds = Array.isArray(req.body && req.body.taskIds)
+    ? [...new Set(req.body.taskIds.map((id) => String(id || '').trim()).filter(Boolean))]
+    : [];
+  if (!taskIds.length) {
+    return res.status(400).json({ error: 'no_tasks', message: 'Не выбрано ни одного поста.' });
+  }
+  const MAX_TASKS = 200;
+  if (taskIds.length > MAX_TASKS) {
+    return res.status(400).json({
+      error: 'too_many_tasks',
+      message: `Слишком много постов за раз (${taskIds.length}) — максимум ${MAX_TASKS}.`,
+    });
+  }
+
+  let tasksById;
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId);
+    const feedbackAuthorUserId = await getFeedbackAuthorId();
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+    tasksById = new Map(tasks.map((t) => [t.id, t]));
+  } catch (err) {
+    return res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
+  }
+
+  const role = teamAuth.roleFor(req.teamSession.user);
+  const myId = req.teamSession.user.id;
+  const actorName = teamActorName(req);
+  const results = [];
+  for (const taskId of taskIds) {
+    const task = tasksById.get(taskId);
+    if (!task) {
+      results.push({ taskId, ok: false, error: 'Карточка не найдена — возможно, уже удалена.' });
+      continue;
+    }
+    let allowed = role.admin || role.ceo;
+    if (!allowed && task.projectId) {
+      const projectRole = await projectAccess.getRole(boardId, task.projectId, myId);
+      allowed = projectRole === 'admin';
+    }
+    if (!allowed) {
+      results.push({ taskId, ok: false, error: 'Нужны права администратора на этот проект.' });
+      continue;
+    }
+    try {
+      await deleteTask(boardId, taskId, actorName);
+      results.push({ taskId, ok: true, title: task.title });
+    } catch (err) {
+      results.push({ taskId, ok: false, error: err.message });
+    }
+  }
+  const deleted = results.filter((r) => r.ok).length;
+  res.json({ deleted, failed: results.length - deleted, results });
 });
 
 // POST /api/team/tasks/:taskId/network — body: { network: 'ig'|'tg'|'vk'|'ok'|'max'|'' }.

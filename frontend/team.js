@@ -64,7 +64,16 @@ let referencePropertyFound = false;
 let archivedProjectIds = new Set();
 let boardId = null; // only needed to build /api/files/:boardId/:fileId src urls — see loadTasks()
 let currentUser = null;
+let currentAccess = null; // {admin,stat,ceo,staffProjectsPath} — from GET/POST /api/team/me|login, see showApp()
 let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
+let teamUsers = null; // [{id,name}] — cached lazily, from GET /api/team/users (see populateAssigneeSelect)
+// Массовые операции в календаре — «Выбрать» → выделить несколько карточек
+// кликом → «Удалить выбранное» (см. teamCalSelectToggle ниже). calSelectMode
+// переключает клик по .cal-post между "открыть карточку" и "выделить";
+// selectedTaskIds — id выбранных карточек, а не сами объекты, чтобы не
+// держать устаревшие ссылки после перерисовки сетки.
+let calSelectMode = false;
+let selectedTaskIds = new Set();
 const FILTERS_KEY = 'kf.team.filters.v1';
 // Фильтр по проекту — влияет и на список, и на календарь-обзор (в отличие
 // от статус-чипсов, которые применяются только к списку). Храним ID опции
@@ -123,6 +132,17 @@ function loadSavedFilters(allStatuses) {
 
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Russian plural: plural(1,'пост','поста','постов') → "пост" etc. Same
+// implementation as frontend/app.js's — no shared common.js between pages
+// (each is self-contained), needed here for the bulk-delete confirm() text.
+function plural(n, one, few, many) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+  return many;
 }
 
 function toast(msg) {
@@ -233,12 +253,14 @@ const createTabImport = document.getElementById('createTabImport');
 const createTabClipboard = document.getElementById('createTabClipboard');
 const biForm = document.getElementById('biForm');
 const biProject = document.getElementById('biProject');
+const biAssignee = document.getElementById('biAssignee');
 const biFile = document.getElementById('biFile');
 const biError = document.getElementById('biError');
 const biResults = document.getElementById('biResults');
 const biSubmit = document.getElementById('biSubmit');
 const cpForm = document.getElementById('cpForm');
 const cpProject = document.getElementById('cpProject');
+const cpAssignee = document.getElementById('cpAssignee');
 const cpNetwork = document.getElementById('cpNetwork');
 const cpPasteArea = document.getElementById('cpPasteArea');
 const cpParseBtn = document.getElementById('cpParseBtn');
@@ -255,6 +277,10 @@ const teamCalPrev = document.getElementById('teamCalPrev');
 const teamCalNext = document.getElementById('teamCalNext');
 const teamCalTitle = document.getElementById('teamCalTitle');
 const teamCalendarGrid = document.getElementById('teamCalendarGrid');
+const teamCalSelectToggle = document.getElementById('teamCalSelectToggle');
+const teamCalSelectBar = document.getElementById('teamCalSelectBar');
+const teamCalSelectCount = document.getElementById('teamCalSelectCount');
+const teamCalDeleteSelected = document.getElementById('teamCalDeleteSelected');
 const teamProjectFilterRow = document.getElementById('teamProjectFilterRow');
 const teamProjectFilter = document.getElementById('teamProjectFilter');
 const teamCommentsToggle = document.getElementById('teamCommentsToggle');
@@ -276,6 +302,7 @@ function showLogin() {
 function showApp(user, access) {
   loginApp.hidden = true;
   teamApp.hidden = false;
+  currentAccess = access;
   teamUserName.textContent = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Команда';
   statLink.hidden = !(access && access.stat);
   // Кнопка «Проекты/Админка» — для админов/CEO и для менеджеров проектов
@@ -284,6 +311,12 @@ function showApp(user, access) {
   // staffAccessFor в index.js); кто не может — кнопки нет.
   adminLink.hidden = !(access && access.staffProjectsPath);
   if (access && access.staffProjectsPath) adminLink.href = access.staffProjectsPath;
+  // «Выбрать» (массовое удаление в календаре) — тот же admin-уровень
+  // сигнала, что у кнопки «Админка» выше (по прямому запросу пользователя,
+  // 2026-09-25: «в календаре у админа»); сервер всё равно перепроверяет это
+  // же самое на каждый taskId в POST /tasks/bulk-delete — эта видимость
+  // только про UI, не про настоящую границу доступа.
+  teamCalSelectToggle.hidden = !(access && access.staffProjectsPath);
 }
 
 async function login() {
@@ -597,7 +630,15 @@ function renderTeamCalendarGrid() {
           title,
           (t.keywords || '').trim(),
         ].filter(Boolean);
-        return `<button type="button" class="cal-post" draggable="true" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
+        // Режим выбора (calSelectMode) — маленький чекбокс перед маркером
+        // статуса + подсветка всей кнопки классом .selected; drag выключен
+        // (перетаскивание даты не должно случайно срабатывать посреди
+        // выбора карточек для массового удаления).
+        const checkboxHtml = calSelectMode
+          ? `<span class="cal-post-check${selectedTaskIds.has(t.id) ? ' checked' : ''}" aria-hidden="true"></span>`
+          : '';
+        const selectedCls = calSelectMode && selectedTaskIds.has(t.id) ? ' selected' : '';
+        return `<button type="button" class="cal-post${selectedCls}" draggable="${calSelectMode ? 'false' : 'true'}" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${checkboxHtml}${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
       })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
@@ -635,10 +676,72 @@ function closeTeamCalendarView() {
   fabCreate.hidden = false;
   teamCalendarView.hidden = true;
   updateTeamCalendarToggleIcon(false);
+  setCalSelectMode(false); // уходя из календаря, не тащим выбор с собой на следующее открытие
 }
 
 function teamCalendarToggleClick() {
   if (teamCalendarView.hidden) openTeamCalendarView(); else closeTeamCalendarView();
+}
+
+// --- «Выбрать» / массовое удаление в календаре (кнопка teamCalSelectToggle,
+// видна только админам — см. showApp()). По прямому запросу пользователя,
+// 2026-09-25: «в календаре у админа должна появиться кнопка ВЫБРАТЬ для
+// массовых операций + последующее удаление выбранных постов». ---
+function updateCalSelectBar() {
+  const n = selectedTaskIds.size;
+  teamCalSelectCount.textContent = `Выбрано: ${n}`;
+  teamCalDeleteSelected.disabled = n === 0;
+}
+
+function setCalSelectMode(on) {
+  calSelectMode = on;
+  if (!on) selectedTaskIds.clear();
+  teamCalSelectToggle.textContent = on ? 'Отмена' : 'Выбрать';
+  teamCalSelectToggle.classList.toggle('active', on);
+  teamCalSelectBar.hidden = !on;
+  updateCalSelectBar();
+  renderTeamCalendarGrid(); // перерисовать карточки с чекбоксами/без и без drag
+}
+
+function toggleTaskSelection(taskId) {
+  if (selectedTaskIds.has(taskId)) selectedTaskIds.delete(taskId);
+  else selectedTaskIds.add(taskId);
+  updateCalSelectBar();
+}
+
+async function deleteSelectedTasks() {
+  const taskIds = [...selectedTaskIds];
+  if (!taskIds.length) return;
+  const word = plural(taskIds.length, 'пост', 'поста', 'постов');
+  if (!confirm(`Удалить выбранные ${taskIds.length} ${word}? Это нельзя отменить.`)) return;
+  teamCalDeleteSelected.disabled = true;
+  const originalLabel = teamCalDeleteSelected.innerHTML;
+  teamCalDeleteSelected.innerHTML = 'Удаляем…';
+  toast('Удаляем выбранные посты — идёт обработка…');
+  try {
+    const data = await teamApi('/tasks/bulk-delete', { method: 'POST', body: { taskIds } });
+    // Убираем удалённые карточки из currentTasks, чтобы не ждать полной
+    // перезагрузки списка — тот же приём, что и у одиночного удаления
+    // карточки в модалке.
+    const deletedIds = new Set((data.results || []).filter((r) => r.ok).map((r) => r.taskId));
+    currentTasks = currentTasks.filter((t) => !deletedIds.has(t.id));
+    const failed = (data.results || []).filter((r) => !r.ok);
+    if (data.deleted) {
+      toast(`Удалено постов: ${data.deleted}${data.failed ? `, ошибок: ${data.failed}` : ''}`);
+    }
+    if (failed.length) {
+      // Не проваливаемся молча — конкретные причины (например, «Нужны права
+      // администратора на этот проект») важно показать, а не просто "N ошибок".
+      toast(failed.map((r) => r.error).join('; '));
+    }
+    teamCalDeleteSelected.innerHTML = originalLabel; // иначе кнопка так и останется "Удаляем…" при следующем входе в режим выбора
+    setCalSelectMode(false);
+    renderProjectFilterOptions();
+  } catch (err) {
+    toast('Не удалось удалить посты: ' + err.message);
+    teamCalDeleteSelected.disabled = selectedTaskIds.size === 0;
+    teamCalDeleteSelected.innerHTML = originalLabel;
+  }
 }
 
 // Раздел "Комментарии" (заглушка — см. запрос пользователя 2026-09-08):
@@ -814,6 +917,8 @@ async function moveTaskToDate(taskId, dateStr) {
 
 teamCalendarToggle.addEventListener('click', teamCalendarToggleClick);
 teamCalBack.addEventListener('click', closeTeamCalendarView);
+teamCalSelectToggle.addEventListener('click', () => setCalSelectMode(!calSelectMode));
+teamCalDeleteSelected.addEventListener('click', deleteSelectedTasks);
 teamCommentsToggle.addEventListener('click', openTeamCommentsView);
 teamCommentsBack.addEventListener('click', closeTeamCommentsView);
 teamCalPrev.addEventListener('click', () => {
@@ -879,12 +984,24 @@ async function quickCreatePost(dateStr) {
 // quickCreatePost выше.
 teamCalendarGrid.addEventListener('click', (e) => {
   if (calDragActive) return;
+  const post = e.target.closest('.cal-post');
+  // Режим выбора — клик по карточке переключает выделение вместо открытия
+  // модалки; клик по пустой ячейке (кнопка "+" быстрого добавления) в этом
+  // режиме тоже отключён — добавлять новые посты посреди массового
+  // удаления не имеет смысла.
+  if (calSelectMode) {
+    if (post) {
+      post.classList.toggle('selected');
+      post.querySelector('.cal-post-check')?.classList.toggle('checked');
+      toggleTaskSelection(post.dataset.taskId);
+    }
+    return;
+  }
   const addBtn = e.target.closest('.cal-day-add-btn');
   if (addBtn) {
     quickCreatePost(addBtn.closest('.cal-day').dataset.date);
     return;
   }
-  const post = e.target.closest('.cal-post');
   if (post) {
     openTaskModal(post.dataset.taskId);
     return;
@@ -914,6 +1031,7 @@ document.addEventListener('click', (e) => {
 // целиком (ячейки/карточки перерисовываются при каждом render, поэтому
 // именно делегирование, а не listener на каждой карточке). ---
 teamCalendarGrid.addEventListener('dragstart', (e) => {
+  if (calSelectMode) return; // draggable="false" в разметке уже не должен пускать сюда браузер, но на всякий случай
   const btn = e.target.closest('.cal-post');
   if (!btn) return;
   calDragActive = true;
@@ -1108,6 +1226,7 @@ function openCreateModal(prefill = {}) {
   biResults.hidden = true;
   biResults.innerHTML = '';
   populateBulkImportProjectSelect();
+  populateAssigneeSelect(biAssignee);
   cpForm.reset();
   cpError.hidden = true;
   cpResults.hidden = true;
@@ -1115,6 +1234,7 @@ function openCreateModal(prefill = {}) {
   resetCpConfirm();
   populateNetworkSelectInto(cpNetwork);
   populateClipboardImportProjectSelect();
+  populateAssigneeSelect(cpAssignee);
   setCreateTab('single');
   createModal.hidden = false;
   // Чуть отложенный фокус — модалка ещё доигрывает открытие (см. tm-modal),
@@ -1205,6 +1325,36 @@ async function populateProjectSelectInto(selectEl) {
     teamProjects.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
 }
 
+// «Ответственный» — GET /api/team/users (id+имя всей команды), общий кэш
+// teamUsers, тем же паттерном, что populateProjectSelectInto выше для
+// teamProjects. Добавлено 2026-09-25 по прямому запросу: «при массовой
+// загрузке нам надо выбирать ответственного за создаваемые карточки» —
+// раньше POST /tasks/bulk-import всегда молча назначал импортируемые
+// карточки на того, кто нажал «Импортировать»/«Создать пост» (см.
+// комментарий у самого роута в index.js), что неверно всякий раз, когда
+// человек импортирует план ЗА коллегу. По умолчанию выбран сам текущий
+// пользователь — тот же результат, что и раньше, если поле не трогать.
+async function populateAssigneeSelect(selectEl) {
+  if (!teamUsers) {
+    try {
+      const data = await teamApi('/users');
+      teamUsers = data.users || [];
+    } catch (err) {
+      selectEl.innerHTML = '<option value="" disabled selected>Не удалось загрузить команду</option>';
+      toast('Не удалось загрузить список команды: ' + err.message);
+      return;
+    }
+  }
+  if (!teamUsers.length) {
+    selectEl.innerHTML = '<option value="" disabled selected>В команде никого не нашлось</option>';
+    return;
+  }
+  selectEl.innerHTML = teamUsers.map((u) => `<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('');
+  if (currentUser && teamUsers.some((u) => u.id === currentUser.id)) {
+    selectEl.value = currentUser.id;
+  }
+}
+
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1231,12 +1381,23 @@ async function submitBulkImportForm(e) {
   biError.hidden = true;
   biResults.hidden = true;
   const projectId = biProject.value;
+  const assigneeUserId = biAssignee.value;
   const file = biFile.files[0];
   if (!projectId || !file) {
     biError.textContent = 'Выберите проект и файл.';
     biError.hidden = false;
     return;
   }
+
+  // Кнопку блокируем и показываем «идёт обработка» СРАЗУ, до чтения файла
+  // (тоже асинхронное — на медленном устройстве/большом файле в это окно
+  // раньше можно было успеть кликнуть повторно, пока кнопка ещё активна).
+  // По прямому запросу пользователя, 2026-09-25: «деактивировать кнопку» +
+  // «выдать уведомление/попап, что идёт обработка».
+  biSubmit.disabled = true;
+  const originalLabel = biSubmit.innerHTML;
+  biSubmit.innerHTML = 'Импортируем…';
+  toast('Импортируем публикации — идёт обработка, подождите…');
 
   let items;
   try {
@@ -1249,14 +1410,13 @@ async function submitBulkImportForm(e) {
   } catch (err) {
     biError.textContent = 'Не удалось прочитать файл: ' + err.message;
     biError.hidden = false;
+    biSubmit.disabled = false;
+    biSubmit.innerHTML = originalLabel;
     return;
   }
 
-  biSubmit.disabled = true;
-  const originalLabel = biSubmit.innerHTML;
-  biSubmit.innerHTML = 'Импортируем…';
   try {
-    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, items } });
+    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, assigneeUserId: assigneeUserId || undefined, items } });
     renderBulkImportResults(data);
     if (data.created) {
       toast(`Импортировано постов: ${data.created}${data.failed ? `, ошибок: ${data.failed}` : ''}`);
@@ -1443,8 +1603,9 @@ async function submitClipboardImportForm(e) {
   cpSubmit.disabled = true;
   const originalLabel = cpSubmit.innerHTML;
   cpSubmit.innerHTML = 'Создаём…';
+  toast('Создаём пост — идёт обработка, подождите…');
   try {
-    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, items: [item] } });
+    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, assigneeUserId: cpAssignee.value || undefined, items: [item] } });
     const result = (data.results || [])[0] || { ok: false, error: 'Пустой ответ сервера.' };
     renderClipboardResult(result);
     if (result.ok) {

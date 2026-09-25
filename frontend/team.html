@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=18">
   <link rel="stylesheet" href="/projects.css?v=14">
-  <link rel="stylesheet" href="/team.css?v=27">
+  <link rel="stylesheet" href="/team.css?v=28">
 </head>
 <body>
 <div class="page">
@@ -82,6 +82,14 @@
           <span id="teamCalTitle" class="cal-title"></span>
           <button id="teamCalNext" class="cal-nav-btn" type="button" aria-label="Следующий месяц">›</button>
         </div>
+        <!-- Массовые операции — только у админа (staffProjectsPath, тот же
+             сигнал, что у кнопки «Админка»/вкладки «Секретики»), см.
+             showApp() в team.js. Скрыта по умолчанию. -->
+        <button id="teamCalSelectToggle" class="cal-select-toggle" type="button" hidden>Выбрать</button>
+      </div>
+      <div id="teamCalSelectBar" class="cal-select-bar" hidden>
+        <span id="teamCalSelectCount" class="cal-select-count">Выбрано: 0</span>
+        <button id="teamCalDeleteSelected" class="cal-select-delete-btn" type="button" disabled>🗑 Удалить выбранное</button>
       </div>
       <div class="cal-legend">
         <span><i class="cal-dot published"></i>Опубликовано</span>
@@ -193,10 +201,20 @@
 
       <div id="createTabImport" class="create-tab-panel" hidden>
         <form id="biForm" class="create-form" novalidate>
-          <label class="field-label" for="biProject">Проект</label>
-          <select id="biProject" class="field-input" required>
-            <option value="" disabled selected>Загружаем…</option>
-          </select>
+          <div class="create-row">
+            <div>
+              <label class="field-label" for="biProject">Проект</label>
+              <select id="biProject" class="field-input" required>
+                <option value="" disabled selected>Загружаем…</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="biAssignee">Ответственный</label>
+              <select id="biAssignee" class="field-input">
+                <option value="" disabled selected>Загружаем…</option>
+              </select>
+            </div>
+          </div>
 
           <label class="field-label" for="biFile">Файл контент-плана (JSON)</label>
           <input id="biFile" class="field-input" type="file" accept=".json,application/json" required>
@@ -239,6 +257,11 @@
               </select>
             </div>
           </div>
+
+          <label class="field-label" for="cpAssignee">Ответственный</label>
+          <select id="cpAssignee" class="field-input">
+            <option value="" disabled selected>Загружаем…</option>
+          </select>
 
           <label class="field-label" for="cpPasteArea">Область вставки — только один день</label>
           <textarea id="cpPasteArea" class="tm-textarea cp-paste-area" placeholder="Кликните сюда и вставьте скопированный столбец одного дня (Ctrl+V)"></textarea>
@@ -302,7 +325,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=35"></script>
+<script src="/team.js?v=36"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>
