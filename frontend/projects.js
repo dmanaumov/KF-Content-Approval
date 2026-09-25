@@ -33,13 +33,21 @@ function esc(v) {
 // /api/projects в index.js) — по прямому запросу пользователя (2026-09-25):
 // «мне очень сложно сейчас стало понимать кто имеет доступ к проекту...
 // кружки с аватарками (и при наведении всплывающий бабл с именем и ролью)
-// участников проекта (СЕО не указываем). Ответственного (менеджера) надо
-// как-то выделить и выводить, например, первым». Инициалы на деривированном
-// от id цвете вместо реальных фото из Mattermost — так кружок ВСЕГДА
-// выглядит опрятно (не у каждого в Mattermost вообще есть фото профиля) и
-// не требует отдельного прокси-роута под чужие аватарки/лишнего запроса на
-// карточку. Сервер уже отдаёт members отсортированными — admin (= "Ответст-
-// венный") первым, дальше по алфавиту — здесь только рендер.
+// участников проекта (СЕО не указываем)». Инициалы на деривированном от id
+// цвете вместо реальных фото из Mattermost — так кружок ВСЕГДА выглядит
+// опрятно (не у каждого в Mattermost вообще есть фото профиля) и не требует
+// отдельного прокси-роута под чужие аватарки/лишнего запроса на карточку.
+// Сервер уже отдаёт members отсортированными — admin первым, дальше по
+// алфавиту — здесь только рендер.
+//
+// ВАЖНО (уточнение терминологии, 2026-09-25): admin здесь — это роль ДОСТУПА
+// (project_access.role, кто может править настройки), а не "Ответственный"/
+// "менеджер" в смысле функциональной ответственности за сроки/публикации/
+// материал — та роль отдельная, живёт в o.projectManager и рендерится
+// отдельной строкой на карточке (см. managerLine ниже), см. также
+// .proj-manager-row в попапе редактирования. Изначально (в первой версии
+// facepile) эти две роли были ошибочно смешаны — label admin звучал как
+// "Ответственный" — исправлено по прямому указанию пользователя.
 const AVATAR_PALETTE = ['#2E7D6B', '#C9704B', '#3F6FB0', '#9A6B1E', '#7C5FC4', '#C13584', '#0E8F7A', '#B0495B'];
 function avatarColorFor(id) {
   let h = 0;
@@ -52,7 +60,7 @@ function initialsOf(name) {
   if (!parts.length) return '?';
   return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
 }
-const MEMBER_ROLE_LABEL = { admin: 'Ответственный', editor: 'Участник команды' };
+const MEMBER_ROLE_LABEL = { admin: 'Администратор проекта (доступ)', editor: 'Участник команды' };
 const MAX_VISIBLE_MEMBERS = 5;
 function membersHtml(members) {
   if (!members || !members.length) return '';
@@ -69,6 +77,18 @@ function membersHtml(members) {
     ? `<span class="proj-avatar more" data-tip="${esc(rest.map((m) => m.name).join(', '))}">+${rest.length}</span>`
     : '';
   return `<div class="proj-members">${bubbles}${overflow}</div>`;
+}
+
+// Card-level "Менеджер: Имя" line — see .proj-manager-line in projects.css
+// and the long comment there for why this is separate from the facepile
+// above. o.projectManager is either {id, name} (resolved server-side from
+// project_settings.project_manager against the team roster) or null/
+// undefined (not set, or set to a username no longer on the team).
+function managerLineHtml(projectManager) {
+  if (projectManager && projectManager.name) {
+    return `<div class="proj-manager-line">Менеджер: <b>${esc(projectManager.name)}</b></div>`;
+  }
+  return `<div class="proj-manager-line unset">Менеджер не назначен</div>`;
 }
 
 function toast(msg) {
@@ -272,6 +292,7 @@ function render(filterText) {
           .join('');
         const netRow = netChips ? `<div class="proj-net-row">${netChips}</div>` : '';
         const membersRow = membersHtml(o.members);
+        const managerRow = !o.isArchived ? managerLineHtml(o.projectManager) : '';
         return `<div class="proj-card${aiClass}${archivedClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>
@@ -287,6 +308,7 @@ function render(filterText) {
                 <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
               </div>
               ${netRow}
+              ${managerRow}
               ${membersRow}
             </div>
             <div class="proj-actions-col">
@@ -629,17 +651,46 @@ async function loadTgPickerData() {
   renderTgChatSelect();
 }
 
-// ПОЛЕ «Менеджер проекта» УБРАНО ИЗ UI 2026-09-20 — заменено новой ролевой
-// системой (роли editor/admin по каждому проекту на каждого сотрудника,
-// назначаются на отдельной CEO-странице /ceo/access — см. projectAccess.js
-// в бэкенде и frontend/access.js). Старое значение поля (project_settings.
-// project_manager) остаётся в базе как замороженное legacy — automation API
-// его по-прежнему отдаёт как есть, поэтому мы аккуратно перечитываем его при
-// открытии попапа и отправляем НЕИЗМЕНЁННЫМ обратно при сохранении (см.
-// currentProjectManagerLegacy ниже) — просто чтобы случайно не затереть его
-// пустой строкой первым же сохранением любой другой настройки (updateSettings
-// на бэкенде перезаписывает всю строку целиком, а не только изменённые поля).
-let currentProjectManagerLegacy = '';
+// «Менеджер проекта» — живая выпадающая роль (project_settings.
+// project_manager, Mattermost username), ВОССТАНОВЛЕНА В UI 2026-09-25 по
+// прямому запросу пользователя после того, как была убрана 2026-09-20 в
+// пользу новой ролевой системы доступа (project_access, editor/admin,
+// назначаются на CEO-странице /ceo/access — см. projectAccess.js/access.js).
+// Та система решает СОВСЕМ ДРУГОЙ вопрос — "кто может редактировать
+// настройки/секретики" — и её вернувшийся сюда facepile (см. membersHtml
+// выше) её и показывает. Менеджер — чисто функциональная подпись "кто
+// отвечает за сроки/публикации/материал" и на права доступа не влияет
+// (пользователь: «у нас была такая выпадающая штучка в карточке клиента...
+// всем должно быть ясно кто отвечает... это функциональная роль»). Значение
+// — username из GET /api/projects/team-members (тот же ростер, что уже
+// используется для facepile-имён на бэкенде), пустое значение = «не
+// назначен».
+const editProjectManager = document.getElementById('editProjectManager');
+let teamMembersForManagerSelect = null; // кэш на сессию попапа — один запрос на всё открытие, не на каждый openEdit()
+
+async function populateProjectManagerSelect(selectedUsername) {
+  if (!teamMembersForManagerSelect) {
+    try {
+      const res = await fetch('/api/projects/team-members');
+      const data = await res.json();
+      teamMembersForManagerSelect = res.ok ? (data.members || []) : [];
+    } catch (err) {
+      teamMembersForManagerSelect = [];
+    }
+  }
+  const sorted = teamMembersForManagerSelect.slice().sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username, 'ru'));
+  editProjectManager.innerHTML =
+    '<option value="">— не назначен —</option>' +
+    sorted.map((m) => `<option value="${esc(m.username)}">${esc(m.name || m.username)}</option>`).join('');
+  // Уже сохранённый username мог принадлежать человеку, которого нет в
+  // текущем ростере (уволен/переименован) — тогда добавляем его как есть,
+  // отдельным пунктом, чтобы значение не терялось молча при следующем
+  // сохранении.
+  if (selectedUsername && !sorted.some((m) => m.username === selectedUsername)) {
+    editProjectManager.insertAdjacentHTML('beforeend', `<option value="${esc(selectedUsername)}">${esc(selectedUsername)} (нет в ростере)</option>`);
+  }
+  editProjectManager.value = selectedUsername || '';
+}
 
 // Bot select only shows once there's actually something to choose between —
 // with the (today: usual) single active bot, its @username is just shown
@@ -1128,7 +1179,7 @@ async function openEdit(projectId, label) {
   igValidateHint.className = 'ig-validate-hint';
   setIgManualMode(false);
   document.getElementById('editStartDate').value = '';
-  currentProjectManagerLegacy = '';
+  editProjectManager.innerHTML = '<option value="">— не назначен —</option>';
   document.getElementById('editPostsPerMonth').value = '';
   document.getElementById('editPublishTimeMsk').value = '';
   document.getElementById('editPaidThroughDate').value = '';
@@ -1183,7 +1234,7 @@ async function openEdit(projectId, label) {
     document.getElementById('editIsAiProject').checked = !!data.isAiProject;
     document.getElementById('editIsArchived').checked = !!data.isArchived;
     document.getElementById('editStartDate').value = data.startDate || '';
-    currentProjectManagerLegacy = data.projectManager || '';
+    populateProjectManagerSelect(data.projectManager || '');
     document.getElementById('editPostsPerMonth').value = data.postsPerMonth || '';
     document.getElementById('editPublishTimeMsk').value = data.publishTimeMsk || '';
     document.getElementById('editPaidThroughDate').value = data.paidThroughDate || '';
@@ -1408,7 +1459,7 @@ async function saveEdit() {
         isAiProject: document.getElementById('editIsAiProject').checked,
         isArchived: document.getElementById('editIsArchived').checked,
         startDate: document.getElementById('editStartDate').value,
-        projectManager: currentProjectManagerLegacy,
+        projectManager: editProjectManager.value,
         postsPerMonth: document.getElementById('editPostsPerMonth').value.trim(),
         publishTimeMsk: document.getElementById('editPublishTimeMsk').value,
         paidThroughDate: document.getElementById('editPaidThroughDate').value,

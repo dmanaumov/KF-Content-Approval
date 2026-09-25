@@ -298,11 +298,14 @@
    getTokenAndLogo), so staff can see at a glance where a project can
    actually publish. Colors match the edit popup's .net-dot legend. */
 /* Facepile «кто имеет доступ к проекту» — кружки с инициалами участников
-   (project_access), СЕО в список не попадает (см. GET /api/projects в
-   index.js). Ответственный (role='admin', "менеджер" в терминах
-   пользователя) идёт первым и выделен кольцом акцентного цвета — остальные
-   участники внахлёст следом, по прямому запросу пользователя (2026-09-25).
-   Тот же приём data-tip::after, что у .proj-net-chip выше, для всплывающей
+   (project_access), СЕО/глобальный admin и FACEPILE_EXCLUDE_EMAILS в список
+   не попадают (см. GET /api/projects в index.js). Роль admin (доступ к
+   настройкам — НЕ то же самое, что менеджер, см. .proj-manager-badge ниже)
+   идёт первой и выделена кольцом акцентного цвета — остальные участники
+   внахлёст следом, по прямому запросу пользователя (2026-09-25; уточнение
+   терминологии 2026-09-25: изначально этот кружок ошибочно подписывался как
+   "Ответственный" — это отдельная функциональная роль, см. ниже). Тот же
+   приём data-tip::after, что у .proj-net-chip выше, для всплывающей
    подсказки "Имя — роль" при наведении. */
 .proj-members{display:flex;align-items:center;margin-top:1px}
 .proj-avatar{position:relative;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;border:2px solid var(--card,#fff);margin-left:-7px;cursor:default;box-shadow:0 1px 2px rgba(0,0,0,.15)}
@@ -330,6 +333,19 @@
 }
 .proj-avatar[data-tip]:hover::after{opacity:1}
 @media(max-width:430px){.proj-avatar[data-tip]::after{white-space:normal;max-width:180px}}
+/* Card-level "Менеджер: Имя" — the FUNCTIONAL role (who's accountable for
+   deadlines/publications/materials), decoupled from the access-control
+   facepile above; project_settings.project_manager, resolved to a display
+   name server-side (see o.projectManager in GET /api/projects). Restored
+   2026-09-25 by direct user request ("...всем должно быть ясно кто отвечает
+   за сроки проекта, публикации и материал! это функциональная роль") after
+   the field was dropped from the UI on 2026-09-20 in favor of project_access
+   (which answers a different question — who can edit — not this one).
+   Muted when unset so an unassigned project doesn't read as broken, just
+   "nobody's set this yet". */
+.proj-manager-line{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:2px}
+.proj-manager-line b{color:var(--ink);font-weight:800}
+.proj-manager-line.unset{font-style:italic}
 .proj-net-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .proj-net-chip{position:relative;width:10px;height:10px;border-radius:3px;display:inline-block;cursor:default;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
 .proj-net-chip[data-tip]::after{
@@ -451,6 +467,15 @@
 .logo-preview img{width:40px;height:40px;object-fit:contain;border-radius:9px;background:#fff;border:1px solid var(--line)}
 .logo-preview span{font-size:11px;color:var(--muted)}
 .cred-intro{font-size:12px;color:var(--muted);line-height:1.5;margin:16px 0 10px;padding:10px 12px;background:#FAFBFB;border-radius:12px}
+/* «Менеджер проекта» — функциональная роль (кто отвечает за сроки/
+   публикации/материал), НЕ то же самое, что project_access-доступ к
+   настройкам (см. .proj-fields/cred-intro ниже и MEMBER_ROLE_LABEL в
+   projects.js). Собственная выделенная рамка с акцентной левой полосой —
+   по прямому запросу пользователя (2026-09-25) вернуть поле так, чтобы
+   "всем должно быть ясно кто отвечает". */
+.proj-manager-row{margin-top:14px;padding:10px 12px;background:#FAFBFB;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:12px}
+.proj-manager-row .field-label{margin:0 0 6px}
+.proj-manager-row .field-label i{color:var(--muted);font-style:normal;font-weight:600}
 .proj-fields{display:grid;gap:2px}
 .proj-field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .field-textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5;resize:vertical;outline:none;font:inherit;color:var(--ink);background:var(--card)}
@@ -646,6 +671,7 @@
   .logo-preview{background:#222626}
   .logo-preview img{background:#262222}
   .cred-intro{background:#222626}
+  .proj-manager-row{background:#222626}
   .edit-tab{background:#222626}
   .edit-tab.cerberus{background:#222626;border-color:#353A3B;color:#7C8287}
   .edit-tab.cerberus.filled{background:#332A17;border-color:#8A6D2A;color:#F2C45C}

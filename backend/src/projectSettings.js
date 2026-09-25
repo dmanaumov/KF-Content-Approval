@@ -85,12 +85,24 @@ async function getToken(boardId, projectId) {
 // itself: the list has no use for the content, and pulling a potentially
 // large text blob into every row of the staff list for a feature that only
 // needs "is it non-empty" would be wasteful.
+//
+// projectManagerUsername (added 2026-09-25) — the project's "Менеджер"
+// (Mattermost username, same project_manager column getSettings() below
+// already reads for the edit popup) so the project LIST/card can show who's
+// accountable for deadlines/publications/materials at a glance, per direct
+// user request: «у нас была такая выпадающая штучка в карточке клиента...
+// всем должно быть ясно кто отвечает за сроки проекта, публикации и
+// материал! это функциональная роль». Deliberately the raw username here —
+// index.js resolves it against the team roster (same Map it already builds
+// for facepile names) to get a display name, so this function stays a thin
+// column read, not a cross-service lookup.
 async function getTokenAndLogo(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
   const { rows } = await pool.query(
     `SELECT link_token, logo_url, is_ai_project, is_archived, strategy_prompt, planning_prompt,
             post_prompt, image_prompt, posts_per_month, paid_through_date, social_credentials,
+            project_manager,
             (cerberus_markdown IS NOT NULL AND cerberus_markdown != '') AS cerberus_protected
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
@@ -106,6 +118,7 @@ async function getTokenAndLogo(boardId, projectId) {
     paidThroughDate: row.paid_through_date || '',
     configuredNetworks: configuredNetworksOf(credentials),
     cerberusProtected: !!row.cerberus_protected,
+    projectManagerUsername: row.project_manager || '',
   };
 }
 

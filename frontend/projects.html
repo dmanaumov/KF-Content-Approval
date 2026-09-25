@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=18">
-  <link rel="stylesheet" href="/projects.css?v=19">
+  <link rel="stylesheet" href="/projects.css?v=20">
 </head>
 <body>
 <div class="page">
@@ -99,8 +99,15 @@
         <span>Проект в архиве <i>— скрываем из основного списка, показываем серым с нашлепкой «АРХИВНЫЙ»</i></span>
       </label>
 
+      <div class="proj-manager-row">
+        <label class="field-label" for="editProjectManager">Менеджер проекта <i>— кто отвечает за сроки, публикации и материал (это функциональная роль, не доступ к настройкам)</i></label>
+        <select id="editProjectManager" class="field-input">
+          <option value="">— не назначен —</option>
+        </select>
+      </div>
+
       <div class="cred-intro">
-        Параметры проекта — отчётная дата, объём и время публикации. Кто из команды видит и правит этот проект — в разделе «Доступ» CEO-дашборда.
+        Параметры проекта — отчётная дата, объём и время публикации. Кто из команды видит и правит этот проект (доступ к настройкам) — в разделе «Доступ» CEO-дашборда; менеджер выше — отдельная функциональная роль и на доступ не влияет.
       </div>
       <div class="proj-fields">
         <div class="proj-field-row">
@@ -272,7 +279,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=19"></script>
+<script src="/projects.js?v=20"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

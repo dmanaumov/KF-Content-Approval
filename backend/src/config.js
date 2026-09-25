@@ -281,6 +281,21 @@ module.exports = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 
+  // Extra emails to leave out of the project-card avatar facepile (GET
+  // /api/projects, see index.js) even though they hold a real project_access
+  // grant on that project. adminEmails/ceoEmails are already excluded there
+  // automatically (company leadership with blanket access isn't useful info
+  // about who's actually working THIS project) — this is for anyone else who
+  // ends up with a project_access row on every project for oversight/
+  // production reasons (e.g. a production director) without being "admin" or
+  // "ceo" in the login sense. Added 2026-09-25 by direct user request: "во
+  // всех карточках у нас есть Малика, но она скорее директор по
+  // производству... её там быть тоже не должно". Default: empty.
+  facepileExcludeEmails: (process.env.FACEPILE_EXCLUDE_EMAILS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
   // Shared secret for the machine-to-machine automation API (see the
   // /api/automation/* routes in index.js — n8n publishing/content flows use
   // these, NOT a real staff Mattermost login, so a vendor/developer never

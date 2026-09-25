@@ -681,23 +681,29 @@ app.get('/api/projects', staffAuth, async (req, res) => {
       }),
     ]);
     const usersById = new Map(teamUsers.map((u) => [u.id, u]));
+    const usersByUsername = new Map(teamUsers.map((u) => [u.username, u]));
     const grantsByProject = new Map();
     for (const g of boardGrants) {
       if (!grantsByProject.has(g.projectId)) grantsByProject.set(g.projectId, []);
       grantsByProject.get(g.projectId).push(g);
     }
-    // «СЕО не показываем» — прямые слова пользователя: у CEO и так
-    // безусловный доступ ко всем проектам (role.ceo, см. staffAuth) —
-    // значок на карточке про него был бы шумом, а не ответом на вопрос
-    // «кому именно назначен этот проект».
-    const ceoEmails = new Set(config.ceoEmails);
+    // Кто НЕ показываем в facepile участников проекта, даже если у них есть
+    // реальный project_access грант на него: CEO/глобальный admin (у них и
+    // так безусловный доступ ко ВСЕМ проектам — значок про конкретный
+    // проект был бы шумом, а не ответом на «кому именно назначен этот
+    // проект»), плюс config.facepileExcludeEmails — ручной список для
+    // похожих случаев вне схемы admin/ceo (по прямому запросу пользователя,
+    // 2026-09-25: «во всех карточках у нас есть Малика, но она скорее
+    // директор по производству... её там быть тоже не должно» — см. её
+    // комментарий в config.js).
+    const facepileExcludedEmails = new Set([...config.ceoEmails, ...config.adminEmails, ...config.facepileExcludeEmails]);
     const options = await Promise.all(
       (projectProp.options || []).map(async (o) => {
         // Rotatable short link + logo URL — see projectSettings.js. Row is
         // created lazily on first read, so every project already has a
         // working link (and, once set, a logo) the first time this list
         // loads.
-        const { token, logoUrl, aiStatus, postsPerMonth, isArchived, paidThroughDate, configuredNetworks, cerberusProtected } =
+        const { token, logoUrl, aiStatus, postsPerMonth, isArchived, paidThroughDate, configuredNetworks, cerberusProtected, projectManagerUsername } =
           await projectSettings.getTokenAndLogo(boardId, o.id);
         // buildTasks() is pure computation over the board/cards/blocks
         // already fetched above — re-filtering per project here costs no
@@ -710,20 +716,36 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
         const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
         const posts = postsForMonth(allTasks);
-        // Ответственный (project_access.role='admin', «менеджер» в терминах
-        // пользователя) — первым, остальные участники по алфавиту следом
-        // (см. .proj-avatar.admin в projects.css, выделяющий его кольцом).
-        // Полный список отдаём как есть — сколько показать кружками и как
-        // схлопнуть остаток в "+N" решает фронт (frontend/projects.js).
+        // Facepile — КТО ИМЕЕТ ДОСТУП к проекту (project_access), чисто
+        // информационно про права. НЕ путать с projectManager ниже — тот
+        // сейчас отдельная функциональная роль ("кто отвечает за сроки/
+        // публикации/материалы"), не то же самое, что admin-роль доступа
+        // (уточнение пользователя 2026-09-25 — до этого 'admin' здесь
+        // подписывался как «Ответственный», это было неверно). admin идёт
+        // первым и с кольцом (см. .proj-avatar.admin в projects.css) просто
+        // как более заметная роль доступа, а не как признак менеджера.
         const members = (grantsByProject.get(o.id) || [])
           .map((g) => {
             const u = usersById.get(g.userId);
-            if (!u || (u.email && ceoEmails.has(u.email.toLowerCase()))) return null;
+            if (!u || (u.email && facepileExcludedEmails.has(u.email.toLowerCase()))) return null;
             return { id: u.id, name: u.name, role: g.role };
           })
           .filter(Boolean)
           .sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name, 'ru') : a.role === 'admin' ? -1 : 1));
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members };
+        // Менеджер проекта — вернули по прямому запросу пользователя
+        // (2026-09-25): «у нас была такая выпадающая штучка в карточке
+        // клиента... всем должно быть ясно кто отвечает за сроки проекта,
+        // публикации и материал! это функциональная роль». Хранится в той
+        // же легаси-колонке project_settings.project_manager (Mattermost
+        // username), которая после 2026-09-20 была лишь немым проездом
+        // через попап (см. историю currentProjectManagerLegacy во
+        // frontend/projects.js) — теперь снова живое поле с выпадающим
+        // списком (editProjectManager), просто больше НЕ управляет доступом
+        // (тем занимается project_access/facepile выше), только подписью на
+        // карточке.
+        const managerUser = projectManagerUsername ? usersByUsername.get(projectManagerUsername) : null;
+        const projectManager = managerUser ? { id: managerUser.id, name: managerUser.name } : null;
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members, projectManager };
       })
     );
     // Project-access scoping (2026-09-20, заменяет старое «Менеджер
