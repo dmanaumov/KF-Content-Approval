@@ -8,7 +8,7 @@ const { pipeline } = require('stream');
 const config = require('./config');
 const mm = require('./mattermostClient');
 const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
-const { parseAndValidateShareUrl, resolveKind, streamDiskFile } = require('./diskEmbeds');
+const { parseAndValidateShareUrl, resolveKind, streamDiskFile, extractDiskLinks, stripDiskLinks } = require('./diskEmbeds');
 const diskUpload = require('./diskUpload');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
@@ -2762,6 +2762,25 @@ app.post('/api/team/tasks/:taskId/media-order', teamAuth.requireTeamAuth, requir
   }
 });
 
+// DELETE /api/team/tasks/:taskId/media/:mediaId — "удалить фото" button next
+// to the ↑/↓ reorder arrows in the media edit-order view (frontend/team.js,
+// reorderRowHtml). Added 2026-09-25 by direct user request: «при
+// редактировании ПЕРЕЧНЯ МЕДИА В КАРТОЧКЕ надо добавить возможность удалить
+// 1 фото... сейчас есть фото вверх/вниз. Давай сделаем еще и кнопочку
+// УДАЛИТЬ ФОТО». See deleteTaskMedia() below for why mattermost- vs
+// disk-sourced media need different removal mechanics.
+app.delete('/api/team/tasks/:taskId/media/:mediaId', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const updated = await deleteTaskMedia(boardId, req.params.taskId, req.params.mediaId, teamActorName(req));
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] team media delete failed:', err.message);
+    res.status(502).json({ error: 'media_delete_failed', message: err.message });
+  }
+});
+
 // POST /api/team/tasks/:taskId/media-link — body: { url }. Attaches an
 // EXISTING disk.kontentferma share link to the card (validated the same way
 // /api/disk-embed validates one before proxying it — see diskEmbeds.js).
@@ -3613,6 +3632,59 @@ async function updateTaskMediaOrderTeam(boardId, taskId, newOrderIds, actorName)
       `${formatMoscowTimestamp()} ПОРЯДОК МЕДИА ИЗМЕНЁН (${actorName || 'команда'}):\n${moved.map((l) => `• ${l}`).join('\n')}`
     );
   }
+  invalidate(boardId);
+  return refetchTeamTask(boardId, taskId);
+}
+
+// Deletes one media item ("удалить фото" button, frontend/team.js
+// reorderRowHtml) from a card. The two media sources (see taskMapper.js
+// buildTasks — cardMedia vs diskMedia) need different removal mechanics:
+//   - mattermost source: a real child block with a stable id — delete the
+//     block directly.
+//   - disk source: NOT a stable block reference — its id is a content hash
+//     derived from a disk.kontentferma link found by scanning the card's
+//     text blocks (see diskEmbeds.extractDiskLinks/taskMapper.js). To remove
+//     it we re-scan the card's CURRENT text blocks for that same link and
+//     either delete the whole block (if it's nothing but that link — see
+//     isPureDiskLinkBlock, same helper saveDescriptionText() uses for this
+//     exact distinction) or strip just that URL substring out of a prose
+//     block via stripDiskLinks() + patchBlock.
+async function deleteTaskMedia(boardId, taskId, mediaId, actorName) {
+  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before media delete.`);
+  const media = task.media.find((m) => m.id === mediaId);
+  if (!media) throw new Error(`Материал ${mediaId} не найден на карточке ${taskId} — возможно, уже удалён.`);
+
+  if (media.source === 'mattermost') {
+    await mm.deleteBlock(boardId, media.id);
+  } else {
+    const shareUrl = media.shareUrl;
+    const textBlocks = (blocks || []).filter((b) => b.parentId === taskId && !b.deleteAt && b.type === 'text');
+    let removedAny = false;
+    for (const b of textBlocks) {
+      const title = String(b.title || (b.fields && b.fields.text) || '');
+      const matchingRaw = extractDiskLinks(title).filter((l) => parseAndValidateShareUrl(l) === shareUrl);
+      if (!matchingRaw.length) continue;
+      if (isPureDiskLinkBlock(b)) {
+        await mm.deleteBlock(boardId, b.id);
+      } else {
+        await mm.patchBlock(boardId, b.id, { title: stripDiskLinks(title, matchingRaw) });
+      }
+      removedAny = true;
+    }
+    if (!removedAny) {
+      throw new Error(`Не удалось найти текстовый блок со ссылкой на материал ${mediaId} на карточке ${taskId}.`);
+    }
+  }
+
+  await mm.addCardComment(
+    boardId,
+    taskId,
+    `${formatMoscowTimestamp()} МАТЕРИАЛ УДАЛЁН (${actorName || 'команда'}): ${media.name || (media.source === 'disk' ? media.shareUrl : media.id)}`
+  );
   invalidate(boardId);
   return refetchTeamTask(boardId, taskId);
 }

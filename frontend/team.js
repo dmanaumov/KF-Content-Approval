@@ -1966,6 +1966,7 @@ function reorderRowHtml(m, i, total) {
     <div class="tm-reorder-btns">
       <button type="button" class="tm-mini-btn" data-action="mo-up" data-id="${esc(m.id)}" ${i === 0 ? 'disabled' : ''} aria-label="Выше">↑</button>
       <button type="button" class="tm-mini-btn" data-action="mo-down" data-id="${esc(m.id)}" ${i === total - 1 ? 'disabled' : ''} aria-label="Ниже">↓</button>
+      <button type="button" class="tm-mini-btn tm-mini-btn-danger" data-action="mo-delete" data-id="${esc(m.id)}" aria-label="Удалить фото" title="Удалить это фото/видео из карточки">🗑</button>
     </div>
   </div>`;
 }
@@ -1999,13 +2000,18 @@ function attachBoxHtml() {
 function renderMediaPane(t) {
   const media = t.media || [];
   let toolbar = `<div class="tm-media-toolbar"><div class="tm-media-toolbar-title">Медиа (${media.length})</div>`;
-  if (media.length > 1) {
+  // Гейт ослаблен с ">1" до ">=1" 2026-09-25 — эта же вкладка теперь ещё и
+  // единственное место с кнопкой «удалить фото» (см. reorderRowHtml), так
+  // что она должна быть доступна и когда медиа всего одно (стрелки ↑/↓ на
+  // единственной строке просто останутся задизейбленными — это ожидаемо,
+  // менять там всё равно нечего, но удалить нужно уметь).
+  if (media.length >= 1) {
     toolbar += reorderMode
       ? `<div style="display:flex;gap:6px">
           <button type="button" class="tm-reorder-toggle" data-action="save-reorder">Сохранить порядок</button>
           <button type="button" class="tm-reorder-toggle" data-action="cancel-reorder">Отмена</button>
         </div>`
-      : `<button type="button" class="tm-reorder-toggle" data-action="toggle-reorder">Изменить порядок</button>`;
+      : `<button type="button" class="tm-reorder-toggle" data-action="toggle-reorder">Изменить порядок / удалить</button>`;
   }
   toolbar += `</div>`;
   let body;
@@ -2365,6 +2371,22 @@ tmBody.addEventListener('click', async (e) => {
     return;
   }
   if (action === 'cancel-reorder') { reorderMode = false; renderModalBody(t); return; }
+  if (action === 'mo-delete') {
+    const m = (t.media || []).find((x) => x.id === btn.dataset.id);
+    if (!m) return;
+    if (!confirm(`Удалить это ${m.kind === 'video' ? 'видео' : 'фото'} из карточки?\n\nЭто необратимо.`)) return;
+    btn.disabled = true;
+    try {
+      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/media/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+      reorderIds = reorderIds.filter((id) => id !== btn.dataset.id);
+      applyUpdatedTask(data.task);
+      toast('Материал удалён');
+    } catch (err) {
+      toast('Не удалось удалить: ' + err.message);
+      btn.disabled = false;
+    }
+    return;
+  }
   if (action === 'copy-media') {
     const m = (t.media || []).find((x) => x.id === btn.dataset.id);
     if (!m || !m.shareUrl) return;
