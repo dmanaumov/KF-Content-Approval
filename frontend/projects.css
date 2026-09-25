@@ -537,6 +537,34 @@
 .secrets-log-old pre,.secrets-log-new pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;background:var(--bg);border-radius:8px;padding:6px 8px;max-height:160px;overflow-y:auto}
 .secrets-log-old pre{color:#A32E2F}
 .secrets-log-new pre{color:#216A39}
+
+/* «Команда» вкладка — менеджер проекта (или CEO/admin) собирает команду
+   прямо из карточки: добавляет участника с обязательной заметкой "за что
+   отвечает" (project_access.role='editor' + note), убирает — сразу
+   закрывает доступ. Добавлено 2026-09-25 по прямому запросу пользователя.
+   Стиль сознательно спокойный/нейтральный (не тревожный, как у .secrets-* —
+   это не про креды), перекликается с .secrets-title/.secrets-sub. */
+.team-title{font-size:12px;font-weight:800;color:var(--ink)}
+.team-sub{font-size:12px;line-height:1.5;color:var(--muted);margin:2px 0 10px}
+.team-readonly-notice{font-size:12px;font-weight:700;color:#8A6D00;background:#FFF6E0;border:1px solid #F0DFA0;border-radius:10px;padding:8px 12px;margin:0 0 10px}
+.team-add-row{display:grid;grid-template-columns:1fr 1.3fr auto;gap:8px;margin-bottom:12px}
+@media(max-width:560px){.team-add-row{grid-template-columns:1fr}}
+.team-add-btn{border:none;background:var(--accent);color:#fff;border-radius:12px;padding:0 16px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap}
+.team-add-btn:hover{opacity:.92}
+.team-add-btn:disabled{opacity:.55;cursor:not-allowed}
+.team-list{display:grid;gap:6px}
+.team-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:8px 10px;background:#FAFBFB}
+.team-avatar{flex:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff}
+.team-meta{flex:1;min-width:0;display:grid;gap:2px}
+.team-name{font-size:13px;font-weight:700;color:var(--ink)}
+.team-role{color:var(--muted);font-style:normal;font-weight:600;font-size:11.5px}
+.team-note{font-size:12px;color:var(--muted);line-height:1.4;overflow-wrap:break-word}
+.team-note.muted{font-style:italic;opacity:.7}
+.team-remove-btn{flex:none;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.team-remove-btn:hover{background:#FDE7E7;border-color:var(--urgent);color:var(--urgent)}
+.team-remove-btn:disabled{opacity:.5;cursor:not-allowed}
+.team-empty{font-size:12px;color:var(--muted);padding:6px 2px}
+
 .edit-panel{display:grid;gap:2px}
 .edit-panel.ai{border:1px solid var(--ai);box-shadow:0 0 0 1px var(--ai) inset;border-radius:14px;padding:12px;background:linear-gradient(180deg,#FBF9FF,#fff 120px)}
 .edit-panel.ai .field-label{margin-top:10px}
@@ -688,4 +716,7 @@
   .proj-tab{background:#262222}
   .proj-tab-count{background:rgba(255,255,255,.10)}
   .readonly-notice{background:#332A17;border-color:#5C4A1E;color:#F2C45C}
+  .team-readonly-notice{background:#332A17;border-color:#5C4A1E;color:#F2C45C}
+  .team-row{background:#222626}
+  .team-remove-btn{background:#262222}
 }

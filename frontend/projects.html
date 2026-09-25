@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=18">
-  <link rel="stylesheet" href="/projects.css?v=20">
+  <link rel="stylesheet" href="/projects.css?v=21">
 </head>
 <body>
 <div class="page">
@@ -73,6 +73,7 @@
       <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
       <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
       <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
+      <button class="edit-tab" type="button" data-tab="team">👥 Команда</button>
       <button class="edit-tab secrets" type="button" data-tab="secrets">🔒 Секретики</button>
     </div>
 
@@ -234,6 +235,24 @@
       <textarea id="editCerberusMarkdown" class="field-textarea cerb-textarea" rows="14" placeholder="Вставьте сюда Markdown или загрузите файл — его текст появится здесь и его можно будет поправить…" spellcheck="false"></textarea>
     </div>
 
+    <div class="edit-panel" id="editTabTeam" hidden>
+      <div class="team-title">👥 Команда проекта</div>
+      <p class="team-sub">Кто участвует в проекте и за что отвечает — каждый добавленный получает доступ к карточкам проекта в кабинете команды. Собирать команду может менеджер проекта (см. вкладку «Настройки») или CEO/админ.</p>
+      <div id="teamReadonlyNotice" class="team-readonly-notice" hidden>Собирать команду может только менеджер этого проекта (или CEO/админ) — назначьте менеджера на вкладке «Настройки».</div>
+
+      <div id="teamAddRow" class="team-add-row">
+        <select id="teamAddSelect" class="field-input">
+          <option value="">— выберите участника —</option>
+        </select>
+        <input id="teamAddNote" class="field-input team-add-note" type="text" maxlength="300" placeholder="За что отвечает на проекте — обязательно">
+        <button type="button" id="teamAddBtn" class="team-add-btn">Добавить</button>
+      </div>
+      <div id="teamAddError" class="error-box" hidden></div>
+
+      <div id="teamList" class="team-list"></div>
+      <div id="teamEmpty" class="team-empty" hidden>В команде пока никого — добавьте первого участника выше.</div>
+    </div>
+
     <div class="edit-panel" id="editTabSecrets" hidden>
       <div class="secrets-title">🔒 Секретики — критичная информация проекта</div>
       <p class="secrets-sub">Логины, почты, пароли, доступы — всё, что раньше пересылали туда-сюда в чатах и рисковали потерять. Видит и правит любой участник команды этого проекта — хранится отдельно от остальных настроек проекта, а каждая правка попадает в историю ниже (её видят только админы проекта и владелец).</p>
@@ -279,7 +298,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=20"></script>
+<script src="/projects.js?v=21"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

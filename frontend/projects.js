@@ -70,7 +70,12 @@ function membersHtml(members) {
     .map((m, i) => {
       const roleCls = m.role === 'admin' ? ' admin' : '';
       const roleLabel = MEMBER_ROLE_LABEL[m.role] || 'Участник команды';
-      return `<span class="proj-avatar${roleCls}" style="background:${avatarColorFor(m.id)};z-index:${shown.length - i}" data-tip="${esc(m.name)} — ${esc(roleLabel)}">${esc(initialsOf(m.name))}</span>`;
+      // Заметка "за что отвечает" (project_access.note, заполняется при
+      // добавлении в «Команду» — см. вкладку «Команда» в попапе) — если
+      // есть, показываем прямо в подсказке при наведении, не только внутри
+      // попапа. Добавлено 2026-09-25.
+      const tip = m.note ? `${m.name} — ${roleLabel} · ${m.note}` : `${m.name} — ${roleLabel}`;
+      return `<span class="proj-avatar${roleCls}" style="background:${avatarColorFor(m.id)};z-index:${shown.length - i}" data-tip="${esc(tip)}">${esc(initialsOf(m.name))}</span>`;
     })
     .join('');
   const overflow = rest.length
@@ -155,6 +160,18 @@ let canManage = false;
 // «Секретики» — исключение, туда can[Manage]Project не касается, их видит и
 // правит любой участник проекта (см. staffCanViewProject в index.js).
 let editingCanManageProject = false;
+
+// Право СОБИРАТЬ КОМАНДУ (вкладка «Команда») текущего открытого проекта —
+// ОТДЕЛЬНО от editingCanManageProject выше: canManageTeam из GET .../settings
+// — true для admin/ceo (как canManageProject) ИЛИ для назначенного «Менеджера»
+// этого проекта (project_settings.project_manager), даже если у него нет ни
+// одной project_access роли (см. staffIsProjectManager/staffCanManageTeam в
+// index.js). Добавлено 2026-09-25 по прямому запросу пользователя: «менеджер
+// после назначения может включать себе команду». Обычный editor/admin по
+// доступу (у кого editingCanManageProject тоже может быть true/false)
+// команду проекта менять НЕ может — только смотреть её состав.
+let editingCanManageTeam = false;
+let teamMembers = []; // [{userId, name, username, role, note, grantedBy, grantedAt}] текущего открытого проекта
 
 // SMM/ИИ tabs above the list (added once AI projects stopped being rare
 // exceptions — see the old TODO this replaces). Ground truth for "which tab"
@@ -666,19 +683,26 @@ async function loadTgPickerData() {
 // используется для facepile-имён на бэкенде), пустое значение = «не
 // назначен».
 const editProjectManager = document.getElementById('editProjectManager');
-let teamMembersForManagerSelect = null; // кэш на сессию попапа — один запрос на всё открытие, не на каждый openEdit()
-
-async function populateProjectManagerSelect(selectedUsername) {
-  if (!teamMembersForManagerSelect) {
+// Ростер команды (GET /api/projects/team-members) — общий кэш на сессию
+// попапа, один запрос вместо одного на каждый селект: используется и здесь
+// (выбор менеджера), и во вкладке «Команда» ниже (выбор, кого добавить).
+let teamRosterCache = null;
+async function getTeamRoster() {
+  if (!teamRosterCache) {
     try {
       const res = await fetch('/api/projects/team-members');
       const data = await res.json();
-      teamMembersForManagerSelect = res.ok ? (data.members || []) : [];
+      teamRosterCache = res.ok ? (data.members || []) : [];
     } catch (err) {
-      teamMembersForManagerSelect = [];
+      teamRosterCache = [];
     }
   }
-  const sorted = teamMembersForManagerSelect.slice().sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username, 'ru'));
+  return teamRosterCache;
+}
+
+async function populateProjectManagerSelect(selectedUsername) {
+  const roster = await getTeamRoster();
+  const sorted = roster.slice().sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username, 'ru'));
   editProjectManager.innerHTML =
     '<option value="">— не назначен —</option>' +
     sorted.map((m) => `<option value="${esc(m.username)}">${esc(m.name || m.username)}</option>`).join('');
@@ -691,6 +715,122 @@ async function populateProjectManagerSelect(selectedUsername) {
   }
   editProjectManager.value = selectedUsername || '';
 }
+
+// --- «Команда» вкладка — менеджер проекта (или CEO/admin) сам собирает
+// команду прямо из карточки: добавляет участника с обязательной заметкой
+// "за что отвечает" (project_access.role='editor' + note, см.
+// projectAccess.setTeamMember в бэкенде), убирает — сразу закрывает доступ.
+// Добавлено 2026-09-25 по прямому запросу пользователя: «менеджер после
+// назначения может включать себе команду... при выборе каждого члена он
+// должен написать (не пустое поле) за что отвечает... имеет возможность
+// убрать с проекта члена команды и тем самым закрыв видимость проекта».
+const teamReadonlyNotice = document.getElementById('teamReadonlyNotice');
+const teamAddRow = document.getElementById('teamAddRow');
+const teamAddSelect = document.getElementById('teamAddSelect');
+const teamAddNote = document.getElementById('teamAddNote');
+const teamAddBtn = document.getElementById('teamAddBtn');
+const teamAddError = document.getElementById('teamAddError');
+const teamListEl = document.getElementById('teamList');
+const teamEmptyEl = document.getElementById('teamEmpty');
+
+async function loadTeamTab() {
+  teamAddError.hidden = true;
+  teamAddNote.value = '';
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/team`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    teamMembers = data.team || [];
+    editingCanManageTeam = !!data.canManageTeam;
+  } catch (err) {
+    teamMembers = [];
+    editingCanManageTeam = false;
+    toast('Не удалось загрузить команду проекта: ' + err.message);
+  }
+  teamReadonlyNotice.hidden = editingCanManageTeam;
+  teamAddRow.hidden = !editingCanManageTeam;
+  if (editingCanManageTeam) await populateTeamAddSelect();
+  renderTeamList();
+}
+
+async function populateTeamAddSelect() {
+  const roster = await getTeamRoster();
+  const already = new Set(teamMembers.map((m) => m.userId));
+  const sorted = roster
+    .filter((m) => !already.has(m.id))
+    .slice()
+    .sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username, 'ru'));
+  teamAddSelect.innerHTML =
+    '<option value="">— выберите участника —</option>' +
+    sorted.map((m) => `<option value="${esc(m.id)}">${esc(m.name || m.username)}</option>`).join('');
+}
+
+const TEAM_ROLE_LABEL = { admin: 'Администратор проекта (доступ)', editor: 'Участник' };
+function renderTeamList() {
+  teamEmptyEl.hidden = !!teamMembers.length;
+  teamListEl.innerHTML = teamMembers
+    .map((m) => `<div class="team-row">
+        <span class="team-avatar" style="background:${avatarColorFor(m.userId)}">${esc(initialsOf(m.name))}</span>
+        <span class="team-meta">
+          <span class="team-name">${esc(m.name)} <i class="team-role">— ${esc(TEAM_ROLE_LABEL[m.role] || m.role)}</i></span>
+          ${m.note ? `<span class="team-note">${esc(m.note)}</span>` : '<span class="team-note muted">без заметки</span>'}
+        </span>
+        ${editingCanManageTeam ? `<button type="button" class="team-remove-btn" data-user-id="${esc(m.userId)}" data-label="${esc(m.name)}" title="Убрать из команды — закроет доступ к проекту" aria-label="Убрать из команды">×</button>` : ''}
+      </div>`)
+    .join('');
+}
+
+teamAddBtn.addEventListener('click', async () => {
+  teamAddError.hidden = true;
+  const userId = teamAddSelect.value;
+  const note = teamAddNote.value.trim();
+  if (!userId) {
+    teamAddError.textContent = 'Выберите участника.';
+    teamAddError.hidden = false;
+    return;
+  }
+  if (!note) {
+    teamAddError.textContent = 'Укажите, за что отвечает участник, — поле обязательно.';
+    teamAddError.hidden = false;
+    return;
+  }
+  teamAddBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/team`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, note }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    toast('Участник добавлен в команду');
+    await loadTeamTab();
+  } catch (err) {
+    teamAddError.textContent = err.message;
+    teamAddError.hidden = false;
+  } finally {
+    teamAddBtn.disabled = false;
+  }
+});
+
+teamListEl.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.team-remove-btn');
+  if (!btn) return;
+  const userId = btn.dataset.userId;
+  const label = btn.dataset.label;
+  if (!confirm(`Убрать «${label}» из команды проекта?\n\nЭто сразу закроет ему доступ к карточкам проекта в кабинете команды.`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/team/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    toast(`«${label}» убран из команды`);
+    await loadTeamTab();
+  } catch (err) {
+    toast('Не удалось убрать участника: ' + err.message);
+    btn.disabled = false;
+  }
+});
 
 // Bot select only shows once there's actually something to choose between —
 // with the (today: usual) single active bot, its @username is just shown
@@ -1206,6 +1346,13 @@ async function openEdit(projectId, label) {
   document.getElementById('secretsLogList').innerHTML = '';
   document.getElementById('secretsLogBtn').textContent = '🕓 История правок';
   secretsLogLoaded = false; // лог у каждого проекта свой — не переиспользуем загруженный для предыдущего
+  // Команда — своя у каждого проекта, как и лог секретов выше; сбрасываем,
+  // чтобы состав предыдущего открытого проекта не мелькнул на долю секунды
+  // в новом, пока свежий GET .../team ещё не ответил.
+  teamMembers = [];
+  editingCanManageTeam = false;
+  teamAddError.hidden = true;
+  renderTeamList();
   switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
@@ -1214,6 +1361,7 @@ async function openEdit(projectId, label) {
       fetch(`/api/projects/${encodeURIComponent(projectId)}/settings`),
       fetch(`/api/projects/${encodeURIComponent(projectId)}/secrets`),
       loadTgPickerData(),
+      loadTeamTab(),
     ]);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
@@ -1267,6 +1415,7 @@ function switchEditTab(name) {
   document.getElementById('editTabSettings').hidden = name !== 'settings';
   document.getElementById('editTabAi').hidden = name !== 'ai';
   document.getElementById('editTabCerberus').hidden = name !== 'cerberus';
+  document.getElementById('editTabTeam').hidden = name !== 'team';
   document.getElementById('editTabSecrets').hidden = name !== 'secrets';
 }
 

@@ -315,6 +315,16 @@ function currentAccess(req) {
 // (staffCanViewProject, см. ниже).
 // Никакого Basic Auth — только живая team-сессия. При неудаче — JSON 401
 // (под /api/*) или HTML со ссылкой на /team.
+// РАСШИРЕНО 2026-09-25 (по прямому запросу пользователя: «менеджер после
+// назначения может включать себе команду») — раньше эта дверь пускала не-
+// full сотрудника только если у него ЕСТЬ хоть одна project_access роль.
+// Назначение "Менеджером" (project_settings.project_manager, отдельная
+// функциональная роль — см. её комментарий там же) само по себе НЕ создаёт
+// project_access строку, так что менеджер без единой роли не мог даже
+// открыть /admin, чтобы собрать себе команду. Теперь дверь пускает и по
+// этому признаку — managerProjectIds считается один раз здесь же и кладётся
+// в scope, чтобы staffIsProjectManager() ниже была синхронной и не била в
+// базу на каждый чувствительный роут ещё раз.
 async function staffAuth(req, res, next) {
   const access = currentAccess(req);
   if (access && (access.admin || access.ceo)) {
@@ -325,9 +335,12 @@ async function staffAuth(req, res, next) {
     try {
       const boardId = config.mattermostBoardId;
       if (boardId) {
-        const accessibleProjectIds = await projectAccess.getAccessibleProjectIds(boardId, access.user.id);
-        if (accessibleProjectIds.size > 0) {
-          req.staffScope = { full: false, user: access.user, username: access.user.username || '' };
+        const [accessibleProjectIds, managerProjectIds] = await Promise.all([
+          projectAccess.getAccessibleProjectIds(boardId, access.user.id),
+          projectSettings.getManagerProjectIds(boardId, access.user.username || ''),
+        ]);
+        if (accessibleProjectIds.size > 0 || managerProjectIds.size > 0) {
+          req.staffScope = { full: false, user: access.user, username: access.user.username || '', managerProjectIds };
           return next();
         }
       }
@@ -385,6 +398,45 @@ async function staffCanViewProject(req, projectId) {
     console.error('[staffAuth] project-view-scope check failed:', err.message);
     return false;
   }
+}
+
+// True если текущий сотрудник — назначенный "Менеджер" ИМЕННО этого проекта
+// (project_settings.project_manager, функциональная роль — см. её
+// комментарий в projectSettings.js). Синхронная: staffAuth уже посчитала
+// managerProjectIds один раз на весь запрос (см. её комментарий выше) — тут
+// только проверка множества, без похода в базу. Добавлено 2026-09-25.
+function staffIsProjectManager(req, projectId) {
+  const scope = req.staffScope;
+  if (!scope) return false;
+  return !!(projectId && scope.managerProjectIds && scope.managerProjectIds.has(projectId));
+}
+
+// Пускает ли этого сотрудника вообще ОТКРЫТЬ попап проекта (вкладки
+// «Настройки»/ИИ/Цербер на чтение + новую вкладку «Команда») — то же самое,
+// что staffCanViewProject (project_access editor/admin), РАСШИРЕННОЕ
+// назначенным менеджером проекта, у которого может не быть ни одной
+// project_access роли. НАМЕРЕННО отдельная функция, а не правка самой
+// staffCanViewProject — та по-прежнему охраняет «Секретики» (GET/PUT
+// .../secrets), и туда доступ по одному факту "ты менеджер" НЕ даём (никто
+// об этом не просил, а креды — чувствительные данные); эта функция — только
+// для не-секретных вкладок попапа. Добавлено 2026-09-25.
+async function staffCanOpenProject(req, projectId) {
+  if (staffIsProjectManager(req, projectId)) return true;
+  return staffCanViewProject(req, projectId);
+}
+
+// Может ли этот сотрудник добавлять/убирать участников КОМАНДЫ проекта
+// (POST/DELETE /api/projects/:id/team) — CEO/глобальный admin (как обычно)
+// ИЛИ назначенный менеджер именно этого проекта. НЕ то же самое, что
+// staffCanAccessProject (project_access.role='admin') — намеренно: сборка
+// команды это функция МЕНЕДЖЕРА, не access-админа, см. терминологическую
+// правку пользователя выше по файлу. Добавлено 2026-09-25 по прямому
+// запросу: «менеджер после назначения может включать себе команду».
+function staffCanManageTeam(req, projectId) {
+  const scope = req.staffScope;
+  if (!scope) return false;
+  if (scope.full) return true;
+  return staffIsProjectManager(req, projectId);
 }
 
 // Отображаемое имя текущего /admin-пользователя (req.staffScope.user) — та
@@ -724,11 +776,25 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // подписывался как «Ответственный», это было неверно). admin идёт
         // первым и с кольцом (см. .proj-avatar.admin в projects.css) просто
         // как более заметная роль доступа, а не как признак менеджера.
+        //
+        // Исключение CEO/глобальных admin'ов (facepileExcludedEmails) ТЕПЕРЬ
+        // С ОГОВОРКОЙ (2026-09-25, прямые слова пользователя: «если в ACL
+        // стоим я и Малика, то мы не указываем нас в членах команды, если
+        // лидер сам нас не внёс») — если именно ЭТОТ менеджер сам добавил
+        // CEO/админа к себе в команду через новую вкладку «Команда»
+        // (grantedBy у гранта совпадёт с username менеджера проекта), это
+        // осознанное решение лидера и его показываем как обычно; иначе (грант
+        // выдан не менеджером — например, старым bootstrap-импортом или
+        // напрямую на /ceo/access) скрываем, как и раньше.
+        const managerUsername = projectManagerUsername || '';
         const members = (grantsByProject.get(o.id) || [])
           .map((g) => {
             const u = usersById.get(g.userId);
-            if (!u || (u.email && facepileExcludedEmails.has(u.email.toLowerCase()))) return null;
-            return { id: u.id, name: u.name, role: g.role };
+            if (!u) return null;
+            const excludedByDefault = u.email && facepileExcludedEmails.has(u.email.toLowerCase());
+            const addedByLeaderThemselves = managerUsername && g.grantedBy === managerUsername;
+            if (excludedByDefault && !addedByLeaderThemselves) return null;
+            return { id: u.id, name: u.name, role: g.role, note: g.note || '' };
           })
           .filter(Boolean)
           .sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name, 'ru') : a.role === 'admin' ? -1 : 1));
@@ -741,9 +807,10 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // через попап (см. историю currentProjectManagerLegacy во
         // frontend/projects.js) — теперь снова живое поле с выпадающим
         // списком (editProjectManager), просто больше НЕ управляет доступом
-        // (тем занимается project_access/facepile выше), только подписью на
-        // карточке.
-        const managerUser = projectManagerUsername ? usersByUsername.get(projectManagerUsername) : null;
+        // напрямую (доступ выдаётся через project_access, который менеджер
+        // теперь может наполнять сам — см. вкладку «Команда»,
+        // staffIsProjectManager в index.js), только подписью на карточке.
+        const managerUser = managerUsername ? usersByUsername.get(managerUsername) : null;
         const projectManager = managerUser ? { id: managerUser.id, name: managerUser.name } : null;
         return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members, projectManager };
       })
@@ -768,7 +835,13 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         console.error('[api] GET projects project-access scope failed:', err.message);
         accessibleProjectIds = new Set();
       }
-      visible = options.filter((o) => accessibleProjectIds.has(o.id));
+      // Плюс проекты, где этот сотрудник — назначенный менеджер (см.
+      // staffAuth/managerProjectIds выше) — тот же принцип, что и для самой
+      // /admin-двери: назначение менеджером само по себе даёт видимость
+      // карточки проекта, даже без единой project_access роли. Добавлено
+      // 2026-09-25 по прямому запросу пользователя.
+      const managerProjectIds = req.staffScope.managerProjectIds || new Set();
+      visible = options.filter((o) => accessibleProjectIds.has(o.id) || managerProjectIds.has(o.id));
     }
     const who = analytics.identify(req);
     analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
@@ -1644,19 +1717,109 @@ app.get('/api/projects/telegram-chats', staffAuth, async (req, res) => {
 // canManageProject в ответе — тот самый флаг, которым фронт решает,
 // разрешить ли вообще нажать «Сохранить» на этих полях и показывать ли
 // историю правок «Секретиков».
+// ГЕЙТ РАСШИРЕН ЕЩЁ РАЗ 2026-09-25 — staffCanViewProject → staffCanOpenProject
+// (та же проверка + назначенный менеджер проекта без единой project_access
+// роли, см. её комментарий выше): менеджеру нужно открыть этот попап, чтобы
+// дойти до новой вкладки «Команда» (GET .../team ниже), даже если он сам не
+// editor/admin по доступу. canManageTeam в ответе — отдельный от
+// canManageProject флаг: правами на настройки/промпты/Цербер он НЕ
+// пользуется (это по-прежнему только project_access.role='admin'), только
+// на сборку команды.
 app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
-  if (!(await staffCanViewProject(req, req.params.projectId))) {
+  if (!(await staffCanOpenProject(req, req.params.projectId))) {
     return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
   }
   try {
     const settings = await projectSettings.getSettings(boardId, req.params.projectId);
     const canManageProject = await staffCanAccessProject(req, req.params.projectId);
-    res.json({ ...settings, canManageProject });
+    const canManageTeam = staffCanManageTeam(req, req.params.projectId);
+    res.json({ ...settings, canManageProject, canManageTeam });
   } catch (err) {
     console.error('[api] GET project settings failed:', err.message);
     res.status(500).json({ error: 'settings_failed', message: err.message });
+  }
+});
+
+// GET/POST/DELETE /api/projects/:projectId/team — «Команда» вкладка в
+// попапе «Редактировать» (frontend/projects.js): назначенный "Менеджер"
+// проекта (или CEO/глобальный admin) собирает свою команду прямо из
+// карточки — каждый добавленный участник получает project_access
+// role='editor' (см. projectAccess.setTeamMember — эта дверь НИКОГДА не
+// выдаёт 'admin') + обязательную заметку "за что отвечает". Убрать
+// участника — сразу закрывает ему доступ к проекту (project_access-строка
+// удаляется целиком, как и обычный «сброс до „нет“» на /ceo/access).
+// Добавлено 2026-09-25 по прямому запросу пользователя: «менеджер после
+// назначения может включать себе команду... при выборе каждого члена он
+// должен написать (не пустое поле) за что отвечает... имеет возможность
+// убрать с проекта члена команды и тем самым закрыв видимость проекта».
+//
+// ЧТЕНИЕ (GET) — staffCanOpenProject (тот же гейт, что и .../settings выше):
+// любой, кто вообще может открыть попап, видит состав команды. ЗАПИСЬ
+// (POST/DELETE) — staffCanManageTeam (строго CEO/admin или менеджер именно
+// этого проекта) — обычный editor/admin по project_access команду не
+// перестраивает, только сам менеджер (или CEO как универсальная подстраховка
+// — «в ACL, которую веду я, картинка... которую я при необходимости могу
+// править»: CEO может сделать то же самое прямо с этой же вкладки на любом
+// проекте, не только с /ceo/access).
+app.get('/api/projects/:projectId/team', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanOpenProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
+  try {
+    const [grants, teamUsers] = await Promise.all([
+      projectAccess.listForProject(boardId, req.params.projectId),
+      mm.listTeamUsers(),
+    ]);
+    const usersById = new Map(teamUsers.map((u) => [u.id, u]));
+    const team = grants
+      .map((g) => {
+        const u = usersById.get(g.userId);
+        if (!u) return null;
+        return { userId: g.userId, name: u.name, username: u.username, role: g.role, note: g.note, grantedBy: g.grantedBy, grantedAt: g.grantedAt };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    res.json({ team, canManageTeam: staffCanManageTeam(req, req.params.projectId) });
+  } catch (err) {
+    console.error('[api] GET project team failed:', err.message);
+    res.status(500).json({ error: 'team_unavailable', message: err.message });
+  }
+});
+
+app.post('/api/projects/:projectId/team', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!staffCanManageTeam(req, req.params.projectId)) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Собирать команду проекта может его менеджер (или CEO/админ).' });
+  }
+  const userId = String((req.body && req.body.userId) || '').trim();
+  if (!userId) {
+    return res.status(400).json({ error: 'invalid_user', message: 'Не указан участник.' });
+  }
+  try {
+    await projectAccess.setTeamMember(boardId, req.params.projectId, userId, (req.body && req.body.note) || '', req.staffScope.username || '');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: 'invalid_team_member', message: err.message });
+  }
+});
+
+app.delete('/api/projects/:projectId/team/:userId', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!staffCanManageTeam(req, req.params.projectId)) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Собирать команду проекта может его менеджер (или CEO/админ).' });
+  }
+  try {
+    await projectAccess.removeTeamMember(boardId, req.params.projectId, req.params.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] DELETE project team member failed:', err.message);
+    res.status(500).json({ error: 'remove_failed', message: err.message });
   }
 });
 

@@ -550,6 +550,26 @@ async function listProjectManagers(boardId) {
   return map;
 }
 
+// projectIds where THIS username is the designated "Менеджер" — same
+// board-wide-query-once shape as listProjectManagers() above (which this
+// just filters/inverts), used by staffAuth/staffIsProjectManager in
+// index.js. Added 2026-09-25 so being made a project's manager is, by
+// itself, enough to open /admin and that project's card and assemble its
+// team — even with ZERO project_access rows — per direct user request:
+// «менеджер после назначения может включать себе команду». A username of ''
+// (no session, or a profile with no username) always returns an empty set —
+// project_manager is never '' for a real assignment (see listProjectManagers
+// above), so there's nothing for an empty username to accidentally match.
+async function getManagerProjectIds(boardId, username) {
+  if (!username) return new Set();
+  const map = await listProjectManagers(boardId);
+  const ids = new Set();
+  for (const [projectId, manager] of map) {
+    if (manager === username) ids.add(projectId);
+  }
+  return ids;
+}
+
 // One-time (but idempotent — safe to run on every boot) import of the OLD
 // flat-JSON link store into Postgres, so a link already handed to a client
 // (already tested live by the agency, see project docs) keeps working after
@@ -614,6 +634,7 @@ module.exports = {
   listExpiringCredentials,
   listArchivedProjectIds,
   listProjectManagers,
+  getManagerProjectIds,
   deleteProjectSettings,
   importLegacyFileTokens,
   KNOWN_NETWORKS,

@@ -334,6 +334,19 @@ async function initSchema() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS project_access_user_idx ON project_access (board_id, user_id);
   `);
+  // note (added 2026-09-25) — "за что отвечает" free text, required whenever
+  // a project's МЕНЕДЖЕР assembles their own team from the project card
+  // (see projectAccess.setTeamMember(), POST /api/projects/:id/team in
+  // index.js) — direct user request: «при выборе каждого члена он должен
+  // написать (не пустое поле) за что отвечает член команды». Left empty for
+  // rows the CEO grants the old way (role-switch on /ceo/access, setRole())
+  // — that page never required one and still doesn't; this column only adds
+  // an optional extra field to what was already there, no existing row is
+  // affected by adding it.
+  await pool.query(`
+    ALTER TABLE project_access
+      ADD COLUMN IF NOT EXISTS note text NOT NULL DEFAULT '';
+  `);
   // Бот «Кот Василий» (Telegram) — куда он добавлен + переписка с ним.
   // Отдельная подсистема от project_settings/publication_log выше: тот же
   // Postgres, но пишет и читает через свой собственный ключ (BOT_API_KEY /

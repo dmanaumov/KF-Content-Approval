@@ -84,12 +84,12 @@ async function getAccessibleProjectIds(boardId, userId) {
 
 // Every grant on the board, for the "Доступ" page's matrix — one query, the
 // page itself groups by project. Returns
-// [{projectId, userId, role, grantedBy, grantedAt, updatedAt}, ...].
+// [{projectId, userId, role, note, grantedBy, grantedAt, updatedAt}, ...].
 async function listForBoard(boardId) {
   if (!db.pool) return [];
   try {
     const { rows } = await db.pool.query(
-      `SELECT project_id, user_id, role, granted_by, granted_at, updated_at
+      `SELECT project_id, user_id, role, note, granted_by, granted_at, updated_at
        FROM project_access WHERE board_id = $1`,
       [boardId]
     );
@@ -97,12 +97,38 @@ async function listForBoard(boardId) {
       projectId: r.project_id,
       userId: r.user_id,
       role: normalizeRole(r.role),
+      note: r.note || '',
       grantedBy: r.granted_by || '',
       grantedAt: r.granted_at,
       updatedAt: r.updated_at,
     }));
   } catch (err) {
     console.error('[projectAccess] listForBoard failed:', err.message);
+    return [];
+  }
+}
+
+// Same shape as listForBoard(), but scoped to ONE project — powers the new
+// "Команда" tab in the project card (GET /api/projects/:id/team, see
+// index.js) without pulling every project's grants just to show one.
+async function listForProject(boardId, projectId) {
+  if (!db.pool || !projectId) return [];
+  try {
+    const { rows } = await db.pool.query(
+      `SELECT user_id, role, note, granted_by, granted_at, updated_at
+       FROM project_access WHERE board_id = $1 AND project_id = $2`,
+      [boardId, projectId]
+    );
+    return rows.map((r) => ({
+      userId: r.user_id,
+      role: normalizeRole(r.role),
+      note: r.note || '',
+      grantedBy: r.granted_by || '',
+      grantedAt: r.granted_at,
+      updatedAt: r.updated_at,
+    }));
+  } catch (err) {
+    console.error('[projectAccess] listForProject failed:', err.message);
     return [];
   }
 }
@@ -132,6 +158,43 @@ async function setRole(boardId, projectId, userId, role, grantedByUsername) {
     [boardId, projectId, String(userId), normalized, String(grantedByUsername || '')]
   );
   return normalized;
+}
+
+// Adds/updates ONE team member on a project with role FIXED to 'editor' and
+// a REQUIRED non-empty note ("за что отвечает") — the single write behind
+// POST /api/projects/:id/team (index.js), which the project's designated
+// МЕНЕДЖЕР (not just the CEO) is allowed to call — see staffIsProjectManager
+// in index.js. Added 2026-09-25 by direct user request: «менеджер после
+// назначения может включать себе команду... при выборе каждого члена он
+// должен написать (не пустое поле) за что отвечает». Role is hardcoded here
+// (never read from a caller-supplied value) specifically so this lighter,
+// non-CEO-only write path can NEVER grant 'admin' — that stays exclusively
+// the CEO's setRole() above via /ceo/access.
+async function setTeamMember(boardId, projectId, userId, note, grantedByUsername) {
+  const pool = db.requirePool();
+  const cleanNote = String(note || '').trim();
+  if (!cleanNote) {
+    throw new Error('Укажите, за что отвечает участник, — поле не может быть пустым.');
+  }
+  await pool.query(
+    `INSERT INTO project_access (board_id, project_id, user_id, role, note, granted_by)
+     VALUES ($1, $2, $3, 'editor', $4, $5)
+     ON CONFLICT (board_id, project_id, user_id)
+     DO UPDATE SET role = 'editor', note = EXCLUDED.note, granted_by = EXCLUDED.granted_by, updated_at = now()`,
+    [boardId, projectId, String(userId), cleanNote, String(grantedByUsername || '')]
+  );
+}
+
+// Removes ONE team member from a project — "убрать с проекта, тем самым
+// закрыв видимость" (прямые слова пользователя): deletes the project_access
+// row outright, same effect as setRole(..., 'none') above, just a clearer
+// name at the call site (DELETE /api/projects/:id/team/:userId in index.js).
+async function removeTeamMember(boardId, projectId, userId) {
+  const pool = db.requirePool();
+  await pool.query(
+    'DELETE FROM project_access WHERE board_id = $1 AND project_id = $2 AND user_id = $3',
+    [boardId, projectId, String(userId)]
+  );
 }
 
 // One-time (but always safe to re-run) import of pre-existing access from
@@ -179,6 +242,9 @@ module.exports = {
   getAdminProjectIds,
   getAccessibleProjectIds,
   listForBoard,
+  listForProject,
   setRole,
+  setTeamMember,
+  removeTeamMember,
   bootstrapFromCurrentData,
 };
