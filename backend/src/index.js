@@ -290,11 +290,11 @@ function currentAccess(req) {
 // и её /api/projects* API. Пропускает:
 //   - admin (CEO + его зам) и ceo (владелец /ceo-дашборда) — видят ВСЕ
 //     проекты;
-//   - любой сотрудник, у кого роль «администратор» (project_access.role =
-//     'admin', см. projectAccess.js) хотя бы на одном проекте — получает
-//     доступ, но только к своим проектам (видимость фильтруется там же, где
-//     данные — см. фильтр в GET /api/projects и пре-гейт по projectId в
-//     POST /api/projects/:projectId/*).
+//   - любой сотрудник, у кого ЕСТЬ роль в project_access (см.
+//     projectAccess.js) хотя бы на одном проекте — 'editor' ИЛИ 'admin' —
+//     получает доступ, но только к своим проектам (видимость фильтруется
+//     там же, где данные — см. фильтр в GET /api/projects и пре-гейт по
+//     projectId в POST /api/projects/:projectId/*).
 // ИЗМЕНЕНО 2026-09-20: раньше этот скоуп давало старое поле «Менеджер
 // проекта» (один человек на проект, project_settings.project_manager) —
 // теперь его полностью заменила новая ролевая система (несколько
@@ -302,6 +302,17 @@ function currentAccess(req) {
 // project_manager осталось в БД как замороженное legacy-значение для
 // automation API (никто его больше не пишет), но доступ по нему больше не
 // выдаётся.
+// ИЗМЕНЕНО ЕЩЁ РАЗ 2026-09-25 (по прямому запросу пользователя: «проавить
+// может каждый член команды проекта» + «показываем только карточки
+// проектов, где работник имеет доступ»): раньше эта дверь пускала только
+// project_access.role='admin' (getAdminProjectIds) — обычный 'editor'
+// вообще не мог зайти на /admin и не видел ни списка своих проектов, ни
+// KPI-баннера про них. Теперь пускает ЛЮБАЯ роль (getAccessibleProjectIds).
+// Это только дверь: реальные права ВНУТРИ (кто может писать «Настройки»/KPI
+// проекта, удалять проект и т.д.) по-прежнему проверяет staffCanAccessProject
+// (role==='admin' именно на нужный проект) на каждом чувствительном роуте —
+// editor'ам открылись только чтение своих проектов и «Секретики»
+// (staffCanViewProject, см. ниже).
 // Никакого Basic Auth — только живая team-сессия. При неудаче — JSON 401
 // (под /api/*) или HTML со ссылкой на /team.
 async function staffAuth(req, res, next) {
@@ -314,8 +325,8 @@ async function staffAuth(req, res, next) {
     try {
       const boardId = config.mattermostBoardId;
       if (boardId) {
-        const adminProjectIds = await projectAccess.getAdminProjectIds(boardId, access.user.id);
-        if (adminProjectIds.size > 0) {
+        const accessibleProjectIds = await projectAccess.getAccessibleProjectIds(boardId, access.user.id);
+        if (accessibleProjectIds.size > 0) {
           req.staffScope = { full: false, user: access.user, username: access.user.username || '' };
           return next();
         }
@@ -351,6 +362,40 @@ async function staffCanAccessProject(req, projectId) {
     console.error('[staffAuth] project-scope check failed:', err.message);
     return false;
   }
+}
+
+// Как staffCanAccessProject выше, но пускает ЛЮБУЮ роль на этот проект —
+// 'editor' ИЛИ 'admin' — не только 'admin'. Добавлено 2026-09-25 для
+// «Секретиков» (GET/PUT /api/projects/:projectId/secrets) и для чтения
+// GET /api/projects/:projectId/settings — по прямому запросу пользователя
+// «проавить может каждый член команды проекта» обычный участник проекта
+// должен видеть и править «Секретики» своего проекта, даже не будучи его
+// admin'ом. Запись в остальные настройки (PUT .../settings, KPI, инста-
+// токены и т.д.) — по-прежнему только staffCanAccessProject (admin-only),
+// эта функция её НЕ заменяет.
+async function staffCanViewProject(req, projectId) {
+  const scope = req.staffScope;
+  if (!scope) return false;
+  if (scope.full) return true;
+  if (!projectId || !scope.user || !scope.user.id) return false;
+  try {
+    const role = await projectAccess.getRole(config.mattermostBoardId, projectId, scope.user.id);
+    return role === 'editor' || role === 'admin';
+  } catch (err) {
+    console.error('[staffAuth] project-view-scope check failed:', err.message);
+    return false;
+  }
+}
+
+// Отображаемое имя текущего /admin-пользователя (req.staffScope.user) — та
+// же логика, что teamActorName(req) для /team-роутов ниже, только источник
+// пользователя другой (staffScope вместо teamSession, хотя оба в итоге
+// читают одну и ту же team-сессию, см. currentAccess). Используется, чтобы
+// подписать запись в project_secrets_log именем, а не голым user id.
+function staffActorName(req) {
+  const u = req.staffScope && req.staffScope.user;
+  if (!u) return 'staff';
+  return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'staff';
 }
 
 // Стат-гейт: /team-сессия с ролью stat (admin её получает автоматически).
@@ -645,19 +690,26 @@ app.get('/api/projects', staffAuth, async (req, res) => {
       })
     );
     // Project-access scoping (2026-09-20, заменяет старое «Менеджер
-    // проекта»): не-админы видят только те проекты, где у них роль 'admin'
-    // в project_access (см. staffAuth/projectAccess.js). admin/ceo
-    // (scope.full) — все без фильтра.
+    // проекта»): не-full сотрудники видят только те проекты, где у них
+    // вообще ЕСТЬ роль в project_access (см. staffAuth/projectAccess.js).
+    // admin/ceo (scope.full) — все без фильтра. ИЗМЕНЕНО 2026-09-25 (по
+    // прямому запросу пользователя: «показываем только карточки проектов,
+    // где работник имеет доступ» + «показываем уведомления только по
+    // проекту, если работнику он доступен») — раньше здесь стоял admin-only
+    // фильтр (getAdminProjectIds), из-за чего обычный 'editor' вообще не
+    // видел ни своих карточек, ни KPI-баннера про них (renderKpiBanner в
+    // frontend/projects.js читает тот же массив options, так что баннер
+    // чинится тем же самым фильтром, отдельного кода под него не нужно).
     let visible = options;
     if (req.staffScope && !req.staffScope.full) {
-      let adminProjectIds;
+      let accessibleProjectIds;
       try {
-        adminProjectIds = await projectAccess.getAdminProjectIds(boardId, req.staffScope.user.id);
+        accessibleProjectIds = await projectAccess.getAccessibleProjectIds(boardId, req.staffScope.user.id);
       } catch (err) {
         console.error('[api] GET projects project-access scope failed:', err.message);
-        adminProjectIds = new Set();
+        accessibleProjectIds = new Set();
       }
-      visible = options.filter((o) => adminProjectIds.has(o.id));
+      visible = options.filter((o) => accessibleProjectIds.has(o.id));
     }
     const who = analytics.identify(req);
     analytics.note(who.role, { project: '', actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
@@ -1522,15 +1574,27 @@ app.get('/api/projects/telegram-chats', staffAuth, async (req, res) => {
 // for the staff "Редактировать" popup (frontend/projects.js). Returned
 // as-is (not masked) — this is already the staff-only page (see staffAuth
 // above); the popup needs to show existing values to edit them.
+// ГЕЙТ ОСЛАБЛЕН 2026-09-25: раньше staffCanAccessProject (admin-only) — с тех
+// пор как /admin открыт и обычным editor'ам проекта (см. staffAuth выше, по
+// прямому запросу пользователя), им тоже нужно ХОТЯ БЫ ОТКРЫТЬ этот попап
+// (иначе он просто падает с 403 ещё до того, как успевает показать вкладку
+// «Секретики» — см. openEdit() во frontend/projects.js, там оба запроса
+// идут параллельно и настройки бросают исключение раньше секретов). Отсюда
+// staffCanViewProject (editor ИЛИ admin) вместо staffCanAccessProject —
+// ЧТЕНИЕ теперь видят оба, ЗАПИСЬ (PUT ниже) по-прежнему только admin.
+// canManageProject в ответе — тот самый флаг, которым фронт решает,
+// разрешить ли вообще нажать «Сохранить» на этих полях и показывать ли
+// историю правок «Секретиков».
 app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
-  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+  if (!(await staffCanViewProject(req, req.params.projectId))) {
     return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
   }
   try {
     const settings = await projectSettings.getSettings(boardId, req.params.projectId);
-    res.json(settings);
+    const canManageProject = await staffCanAccessProject(req, req.params.projectId);
+    res.json({ ...settings, canManageProject });
   } catch (err) {
     console.error('[api] GET project settings failed:', err.message);
     res.status(500).json({ error: 'settings_failed', message: err.message });
@@ -1549,11 +1613,16 @@ app.get('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
 // imageReferences: up to 10 URLs (pasted, or uploaded via POST
 // /api/projects/:projectId/reference-upload below) used as AI image-
 // generation references — see projectSettings.js's normalizeImageReferences.
+// Гейт НЕ ослаблен вместе с GET выше (2026-09-25) — намеренно остаётся
+// staffCanAccessProject (admin-only): расширение на editor'ов касалось
+// только «Секретиков», а не KPI/креды соцсетей/промпты. editor видит эти
+// поля (см. GET выше), но сохранить их не может — фронт (saveEdit() в
+// projects.js) вообще не шлёт этот PUT, если canManageProject=false с GET.
 app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   if (!(await staffCanAccessProject(req, req.params.projectId))) {
-    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+    return res.status(403).json({ error: 'not_allowed', message: 'Изменять настройки может только администратор проекта.' });
   }
   try {
     await projectSettings.updateSettings(boardId, req.params.projectId, req.body || {});
@@ -1567,21 +1636,29 @@ app.put('/api/projects/:projectId/settings', staffAuth, async (req, res) => {
 
 // GET/PUT /api/projects/:projectId/secrets — вкладка «Секретики» в попапе
 // «Редактировать» (frontend/projects.js) — свободный текст с критичными
-// кредами/заметками проекта (логины, почты, пароли), по прямому запросу
-// пользователя (2026-09-24): «не хватает места где бы хранились креденшалс
-// соцсетей и др критичная информация... читать/писать будут только админы».
+// кредами/заметками проекта (логины, почты, пароли), изначально по прямому
+// запросу пользователя (2026-09-24): «не хватает места где бы хранились
+// креденшалс соцсетей и др критичная информация... читать/писать будут
+// только админы».
 //
 // НАМЕРЕННО отдельные роуты, а не поле внутри GET/PUT .../settings выше —
 // см. комментарий над projectSettings.getSecrets()/updateSecrets() для
 // причины (тот большой settings-объект расходится по доброму десятку мест
 // в этом файле, включая клиент-facing код; секреты через него никогда не
-// проходят). Тот же admin-гейт, что и у остального попапа — staffAuth
-// (глобальный admin/ceo, либо project_access.role='admin') +
-// staffCanAccessProject (именно на ЭТОТ проект).
+// проходят).
+//
+// ГЕЙТ РАСШИРЕН 2026-09-25 (по прямому запросу пользователя: «проавить
+// может каждый член команды проекта»): staffCanAccessProject (admin-only)
+// → staffCanViewProject (editor ИЛИ admin именно этого проекта, либо
+// глобальный admin/ceo) — И на чтение, И на запись. Взамен — лог правок
+// ниже (см. GET .../secrets/log): каждый PUT пишет старое/новое значение +
+// кто/когда в project_secrets_log, видно это только тому, кто раньше и был
+// единственным, кто вообще видел секреты (staffCanAccessProject) — «как
+// защита от обиды или вредительства», прямые слова пользователя.
 app.get('/api/projects/:projectId/secrets', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
-  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+  if (!(await staffCanViewProject(req, req.params.projectId))) {
     return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
   }
   try {
@@ -1596,16 +1673,43 @@ app.get('/api/projects/:projectId/secrets', staffAuth, async (req, res) => {
 app.put('/api/projects/:projectId/secrets', staffAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
-  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+  if (!(await staffCanViewProject(req, req.params.projectId))) {
     return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
   }
   try {
     const secrets = String((req.body && req.body.secrets) || '');
-    await projectSettings.updateSecrets(boardId, req.params.projectId, secrets);
+    const actor = { id: (req.staffScope.user && req.staffScope.user.id) || '', name: staffActorName(req) };
+    await projectSettings.updateSecrets(boardId, req.params.projectId, secrets, actor);
     res.json({ secrets });
   } catch (err) {
     console.error('[api] PUT project secrets failed:', err.message);
     res.status(400).json({ error: 'secrets_update_failed', message: err.message });
+  }
+});
+
+// GET /api/projects/:projectId/secrets/log — история правок «Секретиков»:
+// кто, когда и что именно поменял (старое → новое значение). Добавлено
+// 2026-09-25 по прямому запросу пользователя ровно в тот момент, когда
+// доступ к самим секретам расширили с admin-only на editor'ов — «как
+// защита от обиды или вредительства - веди лог правок, показывающийся
+// только сео», затем уточнено «и админу проекта тоже». Отсюда гейт —
+// НАМЕРЕННО staffCanAccessProject (та же функция, что раньше в одиночку
+// охраняла и сами секреты), а не staffCanViewProject: рядовой editor,
+// которому теперь можно читать/писать секреты, в лог по-прежнему не
+// попадает — историю видят только CEO/глобальный admin и admin именно
+// этого проекта.
+app.get('/api/projects/:projectId/secrets/log', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanAccessProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'История правок доступна только администратору проекта.' });
+  }
+  try {
+    const log = await projectSettings.getSecretsLog(boardId, req.params.projectId, 100);
+    res.json({ log });
+  } catch (err) {
+    console.error('[api] GET secrets log failed:', err.message);
+    res.status(500).json({ error: 'secrets_log_failed', message: err.message });
   }
 });
 
@@ -1795,24 +1899,42 @@ app.get('/api/team/me', teamAuth.requireTeamAuth, async (req, res) => {
 
 // Собирает "что этому пользователю доступно" для внутренних страниц: роль
 // (admin/stat/ceo) + path staff-страницы, если пользователь может на неё
-// попасть (admin/ceo — всегда; менеджер проекта — да, с видимостью только
-// своих проектов). Используется и /api/team/login, и /api/team/me.
+// попасть (admin/ceo — всегда; участник проекта — да, с видимостью только
+// своих проектов, см. staffAuth). Используется и /api/team/login, и
+// /api/team/me.
+//
+// ДВА РАЗНЫХ ФЛАГА с 2026-09-25 (раньше был один staffProjectsPath на обе
+// цели сразу — это перестало работать, когда /admin открыли editor'ам):
+//   - staffProjectsPath — «есть ли смысл показать кнопку „Админка“» —
+//     теперь ЛЮБАЯ роль в project_access (editor ИЛИ admin), тем же
+//     фильтром, что и сам staffAuth/GET /api/projects (по прямому запросу
+//     пользователя: «проавить может каждый член команды проекта» — им
+//     нужно попасть на /admin, чтобы увидеть «Секретики» своего проекта).
+//   - canBulkDelete — «показывать ли „Выбрать“/массовое удаление в /team»
+//     — ОСТАЁТСЯ admin-only (project_access.role='admin' именно на проект,
+//     либо глобальный admin/ceo), это раньше и было единственным смыслом
+//     staffProjectsPath здесь — массовое удаление я сознательно не
+//     расширял вместе с «Секретиками», это разные решения пользователя
+//     (см. POST /api/team/tasks/bulk-delete — сервер и так перепроверяет
+//     это же самое на каждый taskId, этот флаг только про то, показывать
+//     ли кнопку).
 async function staffAccessFor(user) {
   const role = teamAuth.roleFor(user);
   if (role.admin || role.ceo) {
-    return { ...role, staffProjectsPath: config.staffProjectsPath };
+    return { ...role, staffProjectsPath: config.staffProjectsPath, canBulkDelete: true };
   }
   if (user && user.id && config.mattermostBoardId) {
     try {
-      const adminProjectIds = await projectAccess.getAdminProjectIds(config.mattermostBoardId, user.id);
-      if (adminProjectIds.size > 0) {
-        return { ...role, staffProjectsPath: config.staffProjectsPath };
+      const roles = await projectAccess.getRolesForUser(config.mattermostBoardId, user.id);
+      if (roles.size > 0) {
+        const canBulkDelete = [...roles.values()].some((r) => r === 'admin');
+        return { ...role, staffProjectsPath: config.staffProjectsPath, canBulkDelete };
       }
     } catch (err) {
       console.error('[staff] staffAccessFor failed:', err.message);
     }
   }
-  return role;
+  return { ...role, canBulkDelete: false };
 }
 
 // Доступ текущего запроса к /projects-странице: null (нет сессии/прав),
@@ -2575,9 +2697,10 @@ app.post('/api/team/tasks/:taskId/delete', teamAuth.requireTeamAuth, requireTeam
 // у тебя перед глазами, поэтому здесь только ADMIN (глобальный admin/ceo,
 // либо project_access.role='admin' именно на проект ЭТОЙ карточки — не
 // editor). Кнопка на клиенте тоже показывается только тем, у кого
-// staffProjectsPath (тот же сигнал admin-уровня, что уже используется для
-// кнопки «Админка» и для гейта «Секретики» на /projects) — но именно этот
-// серверный чек, а не видимость кнопки, и есть настоящая граница доступа.
+// access.canBulkDelete (свой отдельный admin-only флаг с 2026-09-25 — до
+// этого им служил staffProjectsPath, но тот теперь пускает и editor'ов на
+// /admin, см. staffAccessFor выше) — но именно этот серверный чек, а не
+// видимость кнопки, и есть настоящая граница доступа.
 //
 // Каждый taskId проверяется и удаляется ОТДЕЛЬНО (свой try/catch, как в
 // bulk-import выше) — один несуществующий/уже удалённый/недоступный id не

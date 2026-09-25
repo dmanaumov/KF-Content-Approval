@@ -68,7 +68,7 @@
     </div>
 
     <div id="teamListView">
-      <!-- Массовые операции — только у админа (staffProjectsPath), тот же
+      <!-- Массовые операции — только у админа (access.canBulkDelete), тот же
            переключатель setSelectMode(), что у кнопки «Выбрать» в
            календаре ниже — см. showApp() в team.js. -->
       <button id="teamListSelectToggle" class="cal-select-toggle team-list-select-toggle" type="button" hidden>Выбрать</button>
@@ -90,9 +90,10 @@
           <span id="teamCalTitle" class="cal-title"></span>
           <button id="teamCalNext" class="cal-nav-btn" type="button" aria-label="Следующий месяц">›</button>
         </div>
-        <!-- Массовые операции — только у админа (staffProjectsPath, тот же
-             сигнал, что у кнопки «Админка»/вкладки «Секретики»), см.
-             showApp() в team.js. Скрыта по умолчанию. -->
+        <!-- Массовые операции — только у админа (access.canBulkDelete, НЕ то
+             же самое, что staffProjectsPath у кнопки «Админка» — с
+             2026-09-25 это разные флаги, см. showApp() в team.js). Скрыта
+             по умолчанию. -->
         <button id="teamCalSelectToggle" class="cal-select-toggle" type="button" hidden>Выбрать</button>
       </div>
       <div id="teamCalSelectBar" class="cal-select-bar" hidden>
@@ -333,7 +334,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=37"></script>
+<script src="/team.js?v=38"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

@@ -81,6 +81,19 @@ let busyProjectId = null;
 // не даём трогать (backend отдаёт canManage из staffScope.full).
 let canManage = false;
 
+// Права ТЕКУЩЕГО открытого в попапе «Редактировать» проекта — отдельно от
+// canManage выше (тот про список целиком: создать/удалить проект). Это же
+// про ОДИН проект: canManageProject из GET .../settings — true для admin/
+// ceo (как canManage) ИЛИ project_access.role='admin' именно на этот
+// проект. Добавлено 2026-09-25 вместе с расширением /admin на editor'ов
+// проекта (по прямому запросу пользователя «проавить может каждый член
+// команды проекта») — editor видит вкладки «Настройки»/«ИИ настройки»/
+// «Цербер» (иначе GET .../settings пришлось бы блокировать и «Секретики»
+// вместе с ними, см. openEdit()), но сохранить их не может — только читать.
+// «Секретики» — исключение, туда can[Manage]Project не касается, их видит и
+// правит любой участник проекта (см. staffCanViewProject в index.js).
+let editingCanManageProject = false;
+
 // SMM/ИИ tabs above the list (added once AI projects stopped being rare
 // exceptions — see the old TODO this replaces). Ground truth for "which tab"
 // is the same o.aiStatus the avatar/highlight already use ('none' → SMM,
@@ -1089,6 +1102,15 @@ async function openEdit(projectId, label) {
   refreshSecretsTab();
   renderRefGallery();
   refreshCerberusTab();
+  // Права предыдущего открытого проекта не должны утекать в следующий,
+  // пока свежий GET .../settings ещё не ответил — по умолчанию считаем
+  // read-only (безопаснее показать лишний disabled, чем на секунду дать
+  // редактировать чужие настройки).
+  applyProjectPermissionUi(false);
+  document.getElementById('secretsLogPanel').hidden = true;
+  document.getElementById('secretsLogList').innerHTML = '';
+  document.getElementById('secretsLogBtn').textContent = '🕓 История правок';
+  secretsLogLoaded = false; // лог у каждого проекта свой — не переиспользуем загруженный для предыдущего
   switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
@@ -1100,6 +1122,7 @@ async function openEdit(projectId, label) {
     ]);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
+    applyProjectPermissionUi(!!data.canManageProject);
     // Секретики — намеренно отдельный запрос (см. комментарий у роута в
     // index.js), поэтому не блокируем показ остальных настроек, если ИМЕННО
     // этот запрос не удался — просто оставляем поле пустым и предупреждаем.
@@ -1177,6 +1200,84 @@ function refreshSecretsTab() {
   tab.classList.toggle('filled', !!text);
 }
 
+// Переключает попап между «редактируемым» (canManageProject — admin/ceo,
+// либо project_access.role='admin' именно на этот проект) и «только чтение»
+// для вкладок «Настройки»/«ИИ настройки»/«Цербер» — editor'у проекта теперь
+// можно ИХ ВИДЕТЬ (иначе GET .../settings пришлось бы блокировать и
+// «Секретики» вместе с ними, см. openEdit()), но не сохранять. Секретики
+// эта функция намеренно не трогает — их видит и правит любой участник
+// проекта, независимо от canManageProject (см. staffCanViewProject в
+// index.js). «История правок» — та же admin-граница, что и у самих полей
+// настроек (см. GET .../secrets/log в index.js), поэтому кнопка переключа-
+// ется тут же.
+function applyProjectPermissionUi(canManageProject) {
+  editingCanManageProject = canManageProject;
+  document.getElementById('editReadonlyNotice').hidden = canManageProject;
+  document.querySelectorAll(
+    '#editTabSettings input, #editTabSettings textarea, #editTabSettings select, #editTabSettings button, ' +
+    '#editTabAi input, #editTabAi textarea, #editTabAi select, #editTabAi button, ' +
+    '#editTabCerberus input, #editTabCerberus textarea, #editTabCerberus select, #editTabCerberus button'
+  ).forEach((el) => { el.disabled = !canManageProject; });
+  document.getElementById('secretsLogBtn').hidden = !canManageProject;
+}
+
+// «История правок» в «Секретиках» — по прямому запросу пользователя
+// (2026-09-25): «как защита от обиды или вредительства - веди лог правок»,
+// затем «показывать не только СЕО, но и админу проекта». Ленивая загрузка —
+// запрашиваем только по клику на кнопку, не при каждом открытии попапа (эту
+// вкладку открывают редко, а список может быть длинным).
+let secretsLogLoaded = false;
+async function toggleSecretsLog() {
+  const panel = document.getElementById('secretsLogPanel');
+  const btn = document.getElementById('secretsLogBtn');
+  const opening = panel.hidden;
+  panel.hidden = !opening;
+  btn.textContent = opening ? '🕓 Скрыть историю' : '🕓 История правок';
+  if (!opening || secretsLogLoaded) return;
+  const list = document.getElementById('secretsLogList');
+  const empty = document.getElementById('secretsLogEmpty');
+  list.innerHTML = '<div class="secrets-log-loading">Загружаем…</div>';
+  empty.hidden = true;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/secrets/log`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    secretsLogLoaded = true;
+    renderSecretsLog(data.log || []);
+  } catch (err) {
+    list.innerHTML = '';
+    toast('Не удалось загрузить историю правок: ' + err.message);
+  }
+}
+
+function fmtLogDate(iso) {
+  try {
+    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (err) {
+    return iso || '';
+  }
+}
+
+function renderSecretsLog(entries) {
+  const list = document.getElementById('secretsLogList');
+  const empty = document.getElementById('secretsLogEmpty');
+  if (!entries.length) {
+    list.innerHTML = '';
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  list.innerHTML = entries
+    .map((e) => `<div class="secrets-log-entry">
+        <div class="secrets-log-meta"><span class="secrets-log-actor">${esc(e.actorName)}</span><span class="secrets-log-date">${esc(fmtLogDate(e.changedAt))}</span></div>
+        <div class="secrets-log-diff">
+          <div class="secrets-log-old"><div class="secrets-log-diff-label">Было</div><pre>${e.oldSecrets ? esc(e.oldSecrets) : '(пусто)'}</pre></div>
+          <div class="secrets-log-new"><div class="secrets-log-diff-label">Стало</div><pre>${e.newSecrets ? esc(e.newSecrets) : '(пусто)'}</pre></div>
+        </div>
+      </div>`)
+    .join('');
+}
+
 // Читаем загруженный .md/.txt файл как текст и кладём его в textarea —
 // «храним как текст в настройках проекта», файл никуда не грузится (в
 // отличие от reference-upload: там нужны ссылки на диск, а здесь важнее,
@@ -1206,6 +1307,31 @@ function loadCerberusFile(file) {
 async function saveEdit() {
   const errBox = document.getElementById('editError');
   errBox.hidden = true;
+
+  // editor проекта (editingCanManageProject=false, см. applyProjectPermissionUi)
+  // может сохранить только «Секретики» — остальные поля этого попапа у него
+  // read-only. НЕ шлём PUT .../settings вовсе в этом случае: тот роут всё
+  // равно ответит 403 (см. index.js), а без этой ветки его 403 обрывал бы
+  // сохранение секретов ДО того, как до них доходило (см. порядок вызовов
+  // ниже для admin-ветки — settings, потом secrets).
+  if (!editingCanManageProject) {
+    try {
+      const secretsRes = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/secrets`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secrets: document.getElementById('editSecrets').value }),
+      });
+      const secretsData = await secretsRes.json();
+      if (!secretsRes.ok) throw new Error(secretsData.message || secretsData.error);
+      toast('Секретики сохранены');
+      closeEdit();
+      load();
+    } catch (err) {
+      errBox.textContent = 'Не удалось сохранить «Секретики»: ' + err.message;
+      errBox.hidden = false;
+    }
+    return;
+  }
 
   // Parse every credentials textarea client-side first — an empty box means
   // "no creds set for this network yet" (omitted entirely, not stored as
@@ -1287,6 +1413,7 @@ async function saveEdit() {
   }
 }
 
+document.getElementById('secretsLogBtn').addEventListener('click', toggleSecretsLog);
 document.getElementById('editMmid').addEventListener('click', async () => {
   try {
     await copyToClipboard(editingProjectId);

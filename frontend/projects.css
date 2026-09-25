@@ -453,6 +453,32 @@
 .secrets-title{font-size:12px;font-weight:800;color:var(--ink)}
 .secrets-sub{font-size:12px;line-height:1.5;color:var(--muted);margin:2px 0 10px}
 .secrets-textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55}
+/* «Только просмотр» — баннер над вкладками попапа, когда открывшему её
+   участнику команды доступны «Секретики», но не остальные вкладки (editor
+   проекта, не admin — см. editingCanManageProject/applyProjectPermissionUi
+   в projects.js). Добавлено 2026-09-25 вместе с открытием /admin editor'ам. */
+.readonly-notice{font-size:12px;font-weight:700;color:#8A6D00;background:#FFF6E0;border:1px solid #F0DFA0;border-radius:10px;padding:8px 12px;margin:0 0 10px}
+.edit-panel input:disabled,.edit-panel textarea:disabled,.edit-panel select:disabled{opacity:.55;cursor:not-allowed}
+/* «История правок» «Секретиков» — видна только тем, кому доступен и сам PUT
+   .../settings (canManageProject: admin/ceo или admin именно этого проекта,
+   см. GET .../secrets/log в index.js) — по прямому запросу пользователя
+   (2026-09-25): «веди лог правок, показывающийся только сео», затем «и
+   админу проекта тоже». Каждая запись — было/стало рядом, чтобы сразу
+   видно было, что именно поменялось, а не только "кто-то что-то поменял". */
+.secrets-log-btn{margin-top:10px;font-size:12px;font-weight:700;color:var(--accent);background:none;border:1px solid var(--line);border-radius:10px;padding:7px 12px;cursor:pointer}
+.secrets-log-btn:hover{background:var(--card)}
+.secrets-log-panel{margin-top:10px;border-top:1px solid var(--line);padding-top:10px;display:grid;gap:10px;max-height:360px;overflow-y:auto}
+.secrets-log-empty{font-size:12px;color:var(--muted)}
+.secrets-log-loading{font-size:12px;color:var(--muted)}
+.secrets-log-entry{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card)}
+.secrets-log-meta{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;font-weight:700;color:var(--muted);margin-bottom:6px}
+.secrets-log-actor{color:var(--ink)}
+.secrets-log-diff{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:430px){.secrets-log-diff{grid-template-columns:1fr}}
+.secrets-log-diff-label{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);margin-bottom:3px}
+.secrets-log-old pre,.secrets-log-new pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;background:var(--bg);border-radius:8px;padding:6px 8px;max-height:160px;overflow-y:auto}
+.secrets-log-old pre{color:#A32E2F}
+.secrets-log-new pre{color:#216A39}
 .edit-panel{display:grid;gap:2px}
 .edit-panel.ai{border:1px solid var(--ai);box-shadow:0 0 0 1px var(--ai) inset;border-radius:14px;padding:12px;background:linear-gradient(180deg,#FBF9FF,#fff 120px)}
 .edit-panel.ai .field-label{margin-top:10px}
@@ -602,4 +628,5 @@
   .fp-result{background:#222626}
   .proj-tab{background:#262222}
   .proj-tab-count{background:rgba(255,255,255,.10)}
+  .readonly-notice{background:#332A17;border-color:#5C4A1E;color:#F2C45C}
 }

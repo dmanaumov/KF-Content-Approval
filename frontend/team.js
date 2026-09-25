@@ -64,7 +64,7 @@ let referencePropertyFound = false;
 let archivedProjectIds = new Set();
 let boardId = null; // only needed to build /api/files/:boardId/:fileId src urls — see loadTasks()
 let currentUser = null;
-let currentAccess = null; // {admin,stat,ceo,staffProjectsPath} — from GET/POST /api/team/me|login, see showApp()
+let currentAccess = null; // {admin,stat,ceo,staffProjectsPath,canBulkDelete} — from GET/POST /api/team/me|login, see showApp()
 let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
 let teamUsers = null; // [{id,name}] — cached lazily, from GET /api/team/users (see populateAssigneeSelect)
 // Массовые операции — «Выбрать» → выделить несколько карточек кликом →
@@ -314,20 +314,29 @@ function showApp(user, access) {
   currentAccess = access;
   teamUserName.textContent = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Команда';
   statLink.hidden = !(access && access.stat);
-  // Кнопка «Проекты/Админка» — для админов/CEO и для менеджеров проектов
-  // (которым доступ к /projects с видимостью только своих проектов) —
-  // сервер отдаёт staffProjectsPath тем, кто может зайти (см. staffAuth /
-  // staffAccessFor в index.js); кто не может — кнопки нет.
+  // Кнопка «Проекты/Админка» — для админов/CEO и для ЛЮБОГО участника
+  // проекта (editor ИЛИ admin — доступ к /admin с видимостью только своих
+  // проектов) — сервер отдаёт staffProjectsPath тем, кто может зайти (см.
+  // staffAuth/staffAccessFor в index.js); кто не может — кнопки нет.
+  // РАСШИРЕНО 2026-09-25 (раньше это было admin-only, по прямому запросу
+  // пользователя «проавить может каждый член команды проекта» — editor'ам
+  // тоже нужно попасть на /admin, чтобы увидеть «Секретики» своего
+  // проекта).
   adminLink.hidden = !(access && access.staffProjectsPath);
   if (access && access.staffProjectsPath) adminLink.href = access.staffProjectsPath;
-  // «Выбрать» (массовое удаление, календарь И перечень карточек) — тот же
-  // admin-уровень сигнала, что у кнопки «Админка» выше (по прямому запросу
-  // пользователя, 2026-09-25: сперва «в календаре у админа», затем «а
-  // теперь и в перечне карточек, но только для админа»); сервер всё равно
-  // перепроверяет это же самое на каждый taskId в POST /tasks/bulk-delete —
-  // эта видимость только про UI, не про настоящую границу доступа.
-  teamCalSelectToggle.hidden = !(access && access.staffProjectsPath);
-  teamListSelectToggle.hidden = !(access && access.staffProjectsPath);
+  // «Выбрать» (массовое удаление, календарь И перечень карточек) — ЭТОТ
+  // сигнал admin-уровня НЕ расширяли вместе с кнопкой «Админка» выше (по
+  // прямому запросу пользователя, 2026-09-25: сперва «в календаре у
+  // админа», затем «а теперь и в перечне карточек, но только для админа» —
+  // это решение отдельно от «Секретиков», массовое удаление остаётся
+  // строго admin-only). Раньше здесь тоже стоял staffProjectsPath — с тех
+  // пор как ту кнопку открыли editor'ам, для массового удаления теперь свой
+  // отдельный флаг, canBulkDelete (см. staffAccessFor в index.js). Сервер
+  // всё равно перепроверяет это же самое на каждый taskId в
+  // POST /tasks/bulk-delete — эта видимость только про UI, не про
+  // настоящую границу доступа.
+  teamCalSelectToggle.hidden = !(access && access.canBulkDelete);
+  teamListSelectToggle.hidden = !(access && access.canBulkDelete);
 }
 
 async function login() {

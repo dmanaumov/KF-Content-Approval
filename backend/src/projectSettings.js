@@ -196,8 +196,10 @@ async function getSettings(boardId, projectId) {
 // неосторожный "...settings"-спред где-нибудь и пароли клиента улетают
 // туда, где им быть не должно). Поэтому свой отдельный столбец и свои
 // отдельные функции — секреты физически никогда не проходят через
-// getSettings()/updateSettings(). Гейт на уровне роутов (index.js) тот же,
-// что и у остального попапа «Редактировать» — staffAuth + staffCanAccessProject.
+// getSettings()/updateSettings(). Гейт на уровне роутов (index.js) —
+// staffAuth + staffCanViewProject (ОБНОВЛЕНО 2026-09-25: раньше был
+// staffCanAccessProject/admin-only, по прямому запросу пользователя
+// «проавить может каждый член команды проекта» открыто editor'ам тоже).
 async function getSecrets(boardId, projectId) {
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
@@ -208,16 +210,61 @@ async function getSecrets(boardId, projectId) {
   return (rows[0] && rows[0].secrets) || '';
 }
 
-async function updateSecrets(boardId, projectId, secrets) {
+// actor — {id, name} записывающего (см. staffActorName в index.js). Пишет в
+// project_secrets_log КАЖДОЕ фактическое изменение (старое → новое значение,
+// кто, когда) — добавлено 2026-09-25 вместе с расширением доступа выше:
+// «как защита от обиды или вредительства — веди лог правок» (по прямому
+// запросу пользователя). Не пишем строку в лог, если текст не изменился
+// (повторный сабмит формы без правки секретов не должен засорять историю).
+// Сам лог — best-effort: если запись в него не удалась, сохранение секретов
+// всё равно должно пройти (это не должно ронять основную операцию).
+async function updateSecrets(boardId, projectId, secrets, actor) {
   if (typeof secrets !== 'string') {
     throw new Error('secrets must be a string (may be empty).');
   }
   await ensureRow(boardId, projectId);
   const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT secrets FROM project_settings WHERE board_id = $1 AND project_id = $2',
+    [boardId, projectId]
+  );
+  const oldSecrets = (rows[0] && rows[0].secrets) || '';
   await pool.query(
     'UPDATE project_settings SET secrets = $3, updated_at = now() WHERE board_id = $1 AND project_id = $2',
     [boardId, projectId, secrets]
   );
+  if (oldSecrets === secrets) return;
+  try {
+    await pool.query(
+      `INSERT INTO project_secrets_log (board_id, project_id, actor_id, actor_name, old_secrets, new_secrets)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [boardId, projectId, (actor && actor.id) || '', (actor && actor.name) || '', oldSecrets, secrets]
+    );
+  } catch (err) {
+    console.error('[projectSettings] failed to write secrets log (non-fatal):', err.message);
+  }
+}
+
+// История правок «Секретиков» этого проекта, новые сверху — см.
+// updateSecrets() выше. Гейт (index.js) — staffCanAccessProject: НЕ те же
+// люди, что теперь читают/пишут сами секреты (editor'ы сюда не попадают,
+// только CEO/глобальный admin или admin именно этого проекта).
+async function getSecretsLog(boardId, projectId, limit = 100) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    `SELECT actor_name, old_secrets, new_secrets, changed_at
+     FROM project_secrets_log
+     WHERE board_id = $1 AND project_id = $2
+     ORDER BY changed_at DESC
+     LIMIT $3`,
+    [boardId, projectId, limit]
+  );
+  return rows.map((r) => ({
+    actorName: r.actor_name || '(неизвестно)',
+    oldSecrets: r.old_secrets || '',
+    newSecrets: r.new_secrets || '',
+    changedAt: r.changed_at,
+  }));
 }
 
 // Referenced images for AI generation — up to 10 URLs (pasted or uploaded to
@@ -548,6 +595,7 @@ module.exports = {
   updateSettings,
   getSecrets,
   updateSecrets,
+  getSecretsLog,
   updatePlanningDates,
   upsertNetworkCredentials,
   listExpiringCredentials,

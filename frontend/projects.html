@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=18">
-  <link rel="stylesheet" href="/projects.css?v=17">
+  <link rel="stylesheet" href="/projects.css?v=18">
 </head>
 <body>
 <div class="page">
@@ -75,6 +75,8 @@
       <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
       <button class="edit-tab secrets" type="button" data-tab="secrets">🔒 Секретики</button>
     </div>
+
+    <div id="editReadonlyNotice" class="readonly-notice" hidden>Эти вкладки доступны только для просмотра — изменять их может только администратор проекта. Вам доступны только «Секретики».</div>
 
     <div class="edit-panel" id="editTabSettings">
 
@@ -227,9 +229,15 @@
 
     <div class="edit-panel" id="editTabSecrets" hidden>
       <div class="secrets-title">🔒 Секретики — критичная информация проекта</div>
-      <p class="secrets-sub">Логины, почты, пароли, доступы — всё, что раньше пересылали туда-сюда в чатах и рисковали потерять. Видят и правят только админы (те же, у кого вообще есть доступ к этому попапу) — хранится отдельно от остальных настроек проекта.</p>
+      <p class="secrets-sub">Логины, почты, пароли, доступы — всё, что раньше пересылали туда-сюда в чатах и рисковали потерять. Видит и правит любой участник команды этого проекта — хранится отдельно от остальных настроек проекта, а каждая правка попадает в историю ниже (её видят только админы проекта и владелец).</p>
       <label class="field-label" for="editSecrets">Секреты и заметки</label>
       <textarea id="editSecrets" class="field-textarea secrets-textarea" rows="14" placeholder="Например:&#10;&#10;Hosting — login@example.com / пароль&#10;Domain registrar — ...&#10;Instagram Business — ..." spellcheck="false"></textarea>
+
+      <button id="secretsLogBtn" class="secrets-log-btn" type="button" hidden>🕓 История правок</button>
+      <div id="secretsLogPanel" class="secrets-log-panel" hidden>
+        <div id="secretsLogEmpty" class="secrets-log-empty" hidden>Правок пока не было.</div>
+        <div id="secretsLogList" class="secrets-log-list"></div>
+      </div>
     </div>
 
     <div id="editError" class="error-box" hidden></div>
@@ -264,7 +272,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=17"></script>
+<script src="/projects.js?v=18"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

@@ -72,6 +72,16 @@ async function getAdminProjectIds(boardId, userId) {
   return new Set([...roles.entries()].filter(([, role]) => role === 'admin').map(([projectId]) => projectId));
 }
 
+// projectIds where this user has ANY role — 'editor' OR 'admin'. Added
+// 2026-09-25 (staffAuth's door into /projects + the "Секретики" tab used to
+// admit admin-only; по прямому запросу пользователя «проавить может каждый
+// член команды проекта» ordinary project team members now need in too —
+// see staffAuth/staffCanViewProject in index.js).
+async function getAccessibleProjectIds(boardId, userId) {
+  const roles = await getRolesForUser(boardId, userId);
+  return new Set(roles.keys());
+}
+
 // Every grant on the board, for the "Доступ" page's matrix — one query, the
 // page itself groups by project. Returns
 // [{projectId, userId, role, grantedBy, grantedAt, updatedAt}, ...].
@@ -167,6 +177,7 @@ module.exports = {
   getRole,
   getRolesForUser,
   getAdminProjectIds,
+  getAccessibleProjectIds,
   listForBoard,
   setRole,
   bootstrapFromCurrentData,

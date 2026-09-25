@@ -129,9 +129,17 @@ async function initSchema() {
   // "...settings"-спред, даже если сегодня каждый вызывающий явно выбирает
   // нужные поля. Секреты читаются/пишутся ТОЛЬКО через отдельные
   // projectSettings.getSecrets()/updateSecrets() и отдельные роуты
-  // GET/PUT /api/projects/:projectId/secrets — тот же admin-гейт
-  // (staffAuth + staffCanAccessProject), что и у остального попапа
-  // «Редактировать», но физически другой путь данных от начала до конца.
+  // GET/PUT /api/projects/:projectId/secrets — физически другой путь данных
+  // от начала до конца, чем у остального попапа «Редактировать».
+  //
+  // ГЕЙТ ОБНОВЛЁН 2026-09-25 (по прямому запросу пользователя: «проавить
+  // может каждый член команды проекта») — раньше читать/писать секреты мог
+  // только admin (staffCanAccessProject), теперь staffCanViewProject:
+  // editor ИЛИ admin проекта (см. index.js). Взамен — лог правок ниже
+  // (project_secrets_log), видимый только тем, кто раньше и был
+  // единственным, кто вообще видел секреты (staffCanAccessProject — CEO/
+  // глобальный admin, либо project_access.role='admin' именно на этот
+  // проект) — «как защита от обиды или вредительства».
   await pool.query(`
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS secrets text NOT NULL DEFAULT '';
@@ -139,6 +147,28 @@ async function initSchema() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS project_settings_link_token_idx
       ON project_settings (link_token);
+  `);
+  // Аудит правок «Секретиков» — каждый UPDATE через projectSettings.
+  // updateSecrets() дописывает сюда старое/новое значение + кто/когда (см.
+  // её комментарий). Видно только через GET /api/projects/:id/secrets/log,
+  // гейт staffCanAccessProject (см. комментарий у колонки secrets выше) —
+  // НЕ те же люди, что теперь могут сами секреты читать/писать (editor'ы в
+  // лог не попадают, только админы/CEO).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_secrets_log (
+      id bigserial PRIMARY KEY,
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      actor_id text NOT NULL DEFAULT '',
+      actor_name text NOT NULL DEFAULT '',
+      old_secrets text NOT NULL DEFAULT '',
+      new_secrets text NOT NULL DEFAULT '',
+      changed_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS project_secrets_log_lookup_idx
+      ON project_secrets_log (board_id, project_id, changed_at DESC);
   `);
   // Client-chosen display order of a post's media (photos/videos), keyed by
   // the ids buildTasks() assigns each media item (see taskMapper.js). This is
