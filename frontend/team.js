@@ -67,13 +67,18 @@ let currentUser = null;
 let currentAccess = null; // {admin,stat,ceo,staffProjectsPath} — from GET/POST /api/team/me|login, see showApp()
 let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
 let teamUsers = null; // [{id,name}] — cached lazily, from GET /api/team/users (see populateAssigneeSelect)
-// Массовые операции в календаре — «Выбрать» → выделить несколько карточек
-// кликом → «Удалить выбранное» (см. teamCalSelectToggle ниже). calSelectMode
-// переключает клик по .cal-post между "открыть карточку" и "выделить";
+// Массовые операции — «Выбрать» → выделить несколько карточек кликом →
+// «Удалить выбранное» (см. setSelectMode ниже). Общий и для календаря, и
+// для перечня карточек (по прямому запросу пользователя, 2026-09-25: «а
+// теперь и в перечне карточек, но только для админа») — оба переключателя
+// (teamCalSelectToggle/teamListSelectToggle) зовут один и тот же
+// setSelectMode(), т.к. одновременно видна только ОДНА из двух вкладок.
+// selectMode переключает клик по карточке между "открыть" и "выделить";
 // selectedTaskIds — id выбранных карточек, а не сами объекты, чтобы не
-// держать устаревшие ссылки после перерисовки сетки.
-let calSelectMode = false;
+// держать устаревшие ссылки после перерисовки списка/сетки.
+let selectMode = false;
 let selectedTaskIds = new Set();
+const DELETE_SELECTED_LABEL = '🗑 Удалить выбранное';
 const FILTERS_KEY = 'kf.team.filters.v1';
 // Фильтр по проекту — влияет и на список, и на календарь-обзор (в отличие
 // от статус-чипсов, которые применяются только к списку). Храним ID опции
@@ -226,6 +231,10 @@ const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
 const teamFilters = document.getElementById('teamFilters');
+const teamListSelectToggle = document.getElementById('teamListSelectToggle');
+const teamListSelectBar = document.getElementById('teamListSelectBar');
+const teamListSelectCount = document.getElementById('teamListSelectCount');
+const teamListDeleteSelected = document.getElementById('teamListDeleteSelected');
 const taskModal = document.getElementById('taskModal');
 const tmHead = document.getElementById('tmHead');
 const tmTabbar = document.getElementById('tmTabbar');
@@ -311,12 +320,14 @@ function showApp(user, access) {
   // staffAccessFor в index.js); кто не может — кнопки нет.
   adminLink.hidden = !(access && access.staffProjectsPath);
   if (access && access.staffProjectsPath) adminLink.href = access.staffProjectsPath;
-  // «Выбрать» (массовое удаление в календаре) — тот же admin-уровень
-  // сигнала, что у кнопки «Админка» выше (по прямому запросу пользователя,
-  // 2026-09-25: «в календаре у админа»); сервер всё равно перепроверяет это
-  // же самое на каждый taskId в POST /tasks/bulk-delete — эта видимость
-  // только про UI, не про настоящую границу доступа.
+  // «Выбрать» (массовое удаление, календарь И перечень карточек) — тот же
+  // admin-уровень сигнала, что у кнопки «Админка» выше (по прямому запросу
+  // пользователя, 2026-09-25: сперва «в календаре у админа», затем «а
+  // теперь и в перечне карточек, но только для админа»); сервер всё равно
+  // перепроверяет это же самое на каждый taskId в POST /tasks/bulk-delete —
+  // эта видимость только про UI, не про настоящую границу доступа.
   teamCalSelectToggle.hidden = !(access && access.staffProjectsPath);
+  teamListSelectToggle.hidden = !(access && access.staffProjectsPath);
 }
 
 async function login() {
@@ -416,7 +427,14 @@ function taskRowHtml(task) {
     ? `<span class="social-badge" style="background:${esc(social.color)}" title="${esc(social.label)}">${esc(social.short)}</span>`
     : '';
   const displayTitle = stripAiTag(bare);
-  return `<div class="team-task${urgent ? ' urgent' : ''}" data-task-id="${esc(task.id)}">
+  // Режим выбора (selectMode) — тот же чекбокс/паттерн, что у .cal-post в
+  // календаре (см. renderTeamCalendarGrid) — см. комментарий там.
+  const checkboxHtml = selectMode
+    ? `<span class="team-task-check${selectedTaskIds.has(task.id) ? ' checked' : ''}" aria-hidden="true"></span>`
+    : '';
+  const selectedCls = selectMode && selectedTaskIds.has(task.id) ? ' selected' : '';
+  return `<div class="team-task${urgent ? ' urgent' : ''}${selectedCls}" data-task-id="${esc(task.id)}">
+    ${checkboxHtml}
     <div class="team-task-top">
       <div>
         ${task.projectLabel ? `<div class="team-task-project">${esc(task.projectLabel)}</div>` : ''}
@@ -630,15 +648,15 @@ function renderTeamCalendarGrid() {
           title,
           (t.keywords || '').trim(),
         ].filter(Boolean);
-        // Режим выбора (calSelectMode) — маленький чекбокс перед маркером
+        // Режим выбора (selectMode) — маленький чекбокс перед маркером
         // статуса + подсветка всей кнопки классом .selected; drag выключен
         // (перетаскивание даты не должно случайно срабатывать посреди
         // выбора карточек для массового удаления).
-        const checkboxHtml = calSelectMode
+        const checkboxHtml = selectMode
           ? `<span class="cal-post-check${selectedTaskIds.has(t.id) ? ' checked' : ''}" aria-hidden="true"></span>`
           : '';
-        const selectedCls = calSelectMode && selectedTaskIds.has(t.id) ? ' selected' : '';
-        return `<button type="button" class="cal-post${selectedCls}" draggable="${calSelectMode ? 'false' : 'true'}" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${checkboxHtml}${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
+        const selectedCls = selectMode && selectedTaskIds.has(t.id) ? ' selected' : '';
+        return `<button type="button" class="cal-post${selectedCls}" draggable="${selectMode ? 'false' : 'true'}" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${checkboxHtml}${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
       })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
@@ -664,6 +682,7 @@ function updateTeamCalendarToggleIcon(calendarOpen) {
 }
 
 function openTeamCalendarView() {
+  setSelectMode(false); // режим выбора не переживает переключение вкладок — проще и предсказуемее, чем тащить выбор между списком и календарём
   teamListView.hidden = true;
   fabCreate.hidden = true;
   teamCalendarView.hidden = false;
@@ -676,37 +695,53 @@ function closeTeamCalendarView() {
   fabCreate.hidden = false;
   teamCalendarView.hidden = true;
   updateTeamCalendarToggleIcon(false);
-  setCalSelectMode(false); // уходя из календаря, не тащим выбор с собой на следующее открытие
+  setSelectMode(false); // уходя из календаря, не тащим выбор с собой на следующее открытие
 }
 
 function teamCalendarToggleClick() {
   if (teamCalendarView.hidden) openTeamCalendarView(); else closeTeamCalendarView();
 }
 
-// --- «Выбрать» / массовое удаление в календаре (кнопка teamCalSelectToggle,
-// видна только админам — см. showApp()). По прямому запросу пользователя,
-// 2026-09-25: «в календаре у админа должна появиться кнопка ВЫБРАТЬ для
-// массовых операций + последующее удаление выбранных постов». ---
-function updateCalSelectBar() {
+// --- «Выбрать» / массовое удаление — общее для календаря (teamCalSelect*)
+// и перечня карточек (teamListSelect*), видно только админам (см.
+// showApp()). По прямому запросу пользователя: сперва календарь
+// (2026-09-25: «в календаре у админа должна появиться кнопка ВЫБРАТЬ для
+// массовых операций + последующее удаление выбранных постов»), затем в тот
+// же день — «а теперь и в перечне карточек, но только для админа». Оба
+// переключателя зовут один и тот же setSelectMode() — одновременно видна
+// только ОДНА из двух вкладок (список/календарь), поэтому общее состояние
+// (selectMode/selectedTaskIds) не конфликтует. ---
+function updateSelectCounts() {
   const n = selectedTaskIds.size;
   teamCalSelectCount.textContent = `Выбрано: ${n}`;
   teamCalDeleteSelected.disabled = n === 0;
+  teamListSelectCount.textContent = `Выбрано: ${n}`;
+  teamListDeleteSelected.disabled = n === 0;
 }
 
-function setCalSelectMode(on) {
-  calSelectMode = on;
+function setSelectMode(on) {
+  selectMode = on;
   if (!on) selectedTaskIds.clear();
-  teamCalSelectToggle.textContent = on ? 'Отмена' : 'Выбрать';
+  const label = on ? 'Отмена' : 'Выбрать';
+  teamCalSelectToggle.textContent = label;
   teamCalSelectToggle.classList.toggle('active', on);
   teamCalSelectBar.hidden = !on;
-  updateCalSelectBar();
-  renderTeamCalendarGrid(); // перерисовать карточки с чекбоксами/без и без drag
+  teamListSelectToggle.textContent = label;
+  teamListSelectToggle.classList.toggle('active', on);
+  teamListSelectBar.hidden = !on;
+  updateSelectCounts();
+  // Перерисовать только видимую сейчас вкладку — с чекбоксами/без и (в
+  // календаре) без drag; другая вкладка перерисуется сама при следующем
+  // открытии (openTeamCalendarView/renderTasks уже читают актуальный
+  // selectMode на тот момент).
+  if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
+  if (!teamListView.hidden) renderTasks();
 }
 
 function toggleTaskSelection(taskId) {
   if (selectedTaskIds.has(taskId)) selectedTaskIds.delete(taskId);
   else selectedTaskIds.add(taskId);
-  updateCalSelectBar();
+  updateSelectCounts();
 }
 
 async function deleteSelectedTasks() {
@@ -714,9 +749,8 @@ async function deleteSelectedTasks() {
   if (!taskIds.length) return;
   const word = plural(taskIds.length, 'пост', 'поста', 'постов');
   if (!confirm(`Удалить выбранные ${taskIds.length} ${word}? Это нельзя отменить.`)) return;
-  teamCalDeleteSelected.disabled = true;
-  const originalLabel = teamCalDeleteSelected.innerHTML;
-  teamCalDeleteSelected.innerHTML = 'Удаляем…';
+  const buttons = [teamCalDeleteSelected, teamListDeleteSelected];
+  buttons.forEach((b) => { b.disabled = true; b.innerHTML = 'Удаляем…'; });
   toast('Удаляем выбранные посты — идёт обработка…');
   try {
     const data = await teamApi('/tasks/bulk-delete', { method: 'POST', body: { taskIds } });
@@ -734,13 +768,12 @@ async function deleteSelectedTasks() {
       // администратора на этот проект») важно показать, а не просто "N ошибок".
       toast(failed.map((r) => r.error).join('; '));
     }
-    teamCalDeleteSelected.innerHTML = originalLabel; // иначе кнопка так и останется "Удаляем…" при следующем входе в режим выбора
-    setCalSelectMode(false);
+    buttons.forEach((b) => { b.innerHTML = DELETE_SELECTED_LABEL; }); // иначе кнопка так и останется "Удаляем…" при следующем входе в режим выбора
+    setSelectMode(false);
     renderProjectFilterOptions();
   } catch (err) {
     toast('Не удалось удалить посты: ' + err.message);
-    teamCalDeleteSelected.disabled = selectedTaskIds.size === 0;
-    teamCalDeleteSelected.innerHTML = originalLabel;
+    buttons.forEach((b) => { b.disabled = selectedTaskIds.size === 0; b.innerHTML = DELETE_SELECTED_LABEL; });
   }
 }
 
@@ -758,6 +791,7 @@ async function deleteSelectedTasks() {
 // открывается поверх того, что было показано (список ИЛИ календарь), и
 // при закрытии возвращает именно его, а не всегда список.
 function openTeamCommentsView() {
+  setSelectMode(false); // уходя в «Комментарии», не оставляем висящий режим выбора на список/календарь
   preCommentsView = (teamCalendarView && !teamCalendarView.hidden) ? 'calendar' : 'list';
   teamListView.hidden = true;
   teamCalendarView.hidden = true;
@@ -917,8 +951,10 @@ async function moveTaskToDate(taskId, dateStr) {
 
 teamCalendarToggle.addEventListener('click', teamCalendarToggleClick);
 teamCalBack.addEventListener('click', closeTeamCalendarView);
-teamCalSelectToggle.addEventListener('click', () => setCalSelectMode(!calSelectMode));
+teamCalSelectToggle.addEventListener('click', () => setSelectMode(!selectMode));
 teamCalDeleteSelected.addEventListener('click', deleteSelectedTasks);
+teamListSelectToggle.addEventListener('click', () => setSelectMode(!selectMode));
+teamListDeleteSelected.addEventListener('click', deleteSelectedTasks);
 teamCommentsToggle.addEventListener('click', openTeamCommentsView);
 teamCommentsBack.addEventListener('click', closeTeamCommentsView);
 teamCalPrev.addEventListener('click', () => {
@@ -989,7 +1025,7 @@ teamCalendarGrid.addEventListener('click', (e) => {
   // модалки; клик по пустой ячейке (кнопка "+" быстрого добавления) в этом
   // режиме тоже отключён — добавлять новые посты посреди массового
   // удаления не имеет смысла.
-  if (calSelectMode) {
+  if (selectMode) {
     if (post) {
       post.classList.toggle('selected');
       post.querySelector('.cal-post-check')?.classList.toggle('checked');
@@ -1031,7 +1067,7 @@ document.addEventListener('click', (e) => {
 // целиком (ячейки/карточки перерисовываются при каждом render, поэтому
 // именно делегирование, а не listener на каждой карточке). ---
 teamCalendarGrid.addEventListener('dragstart', (e) => {
-  if (calSelectMode) return; // draggable="false" в разметке уже не должен пускать сюда браузер, но на всякий случай
+  if (selectMode) return; // draggable="false" в разметке уже не должен пускать сюда браузер, но на всякий случай
   const btn = e.target.closest('.cal-post');
   if (!btn) return;
   calDragActive = true;
@@ -1191,6 +1227,16 @@ function todayIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+// Дата поста должна быть в будущем, но не дальше чем на 2 месяца — та же
+// граница, что сервер проверяет через validateTeamPublishDate() (по
+// московскому времени); это клиентская копия для мгновенной подсказки в UI,
+// финальную проверку всё равно делает сервер.
+function maxIsoDate() {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 2);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Вкладки внутри #createModal — «Одиночный» (createForm) / «Пакетный» (biForm,
 // JSON-файл) / «Буфер обмена» (cpForm, вставка из Google Таблиц), см.
 // .create-tabs/.create-tab в team.css. Переключение не сбрасывает формы —
@@ -1216,6 +1262,7 @@ function openCreateModal(prefill = {}) {
   createForm.reset();
   createError.hidden = true;
   cfDate.min = todayIsoDate();
+  cfDate.max = maxIsoDate();
   cfDate.value = prefill.date || '';
   if (prefill.title) cfTitle.value = prefill.title;
   populateNetworkSelect();
@@ -1581,6 +1628,13 @@ async function submitClipboardImportForm(e) {
     cpError.hidden = false;
     return;
   }
+  // Быстрая клиентская подсказка — та же граница (будущее, не дальше 2
+  // месяцев), что сервер всё равно перепроверит через validateTeamPublishDate().
+  if (date < todayIsoDate() || date > maxIsoDate()) {
+    cpError.textContent = `Дата «${dateRaw}» вне допустимого диапазона — публикация должна быть в будущем и не дальше чем через 2 месяца.`;
+    cpError.hidden = false;
+    return;
+  }
   const formatRaw = buckets.format.join(' ');
   const titleRaw = buckets.title.join('\n');
   // «формат — добавляем к названию большими буквами» (решение пользователя).
@@ -1769,7 +1823,7 @@ function renderModalHead(t) {
 // в frontend/app.js (UTC-математика, чтобы не плыло у полуночи), только
 // компактнее и с "занятостью" по GET /api/team/schedule вместо статусных точек. ---
 
-function buildCalGrid(year, month, selectedDateStr, days, todayStr) {
+function buildCalGrid(year, month, selectedDateStr, days, todayStr, maxDateStr) {
   const first = new Date(Date.UTC(year, month, 1));
   const leadDow = first.getUTCDay() || 7; // Mon=1..Sun=7
   const lead = leadDow - 1;
@@ -1791,10 +1845,17 @@ function buildCalGrid(year, month, selectedDateStr, days, todayStr) {
     if (dateStr === todayStr) cls.push('today');
     if (dateStr === selectedDateStr) cls.push('selected');
     if (otherCount > 0) cls.push('busy');
+    // Дата публикации — обязательно в будущем, не дальше 2 месяцев (тот же
+    // диапазон, что проверяет сервер в validateTeamPublishDate) — серым и
+    // некликабельным, а не просто "попробуй — сервер откажет". Не трогаем
+    // уже выбранный день (если у старой карточки дата вне диапазона —
+    // всё равно показываем, что на ней стоит, просто без "busy"-логики).
+    const outOfRange = dateStr < todayStr || dateStr > maxDateStr;
+    const disabledAttr = outOfRange && dateStr !== selectedDateStr ? ' disabled' : '';
     const titleAttr = otherCount > 0
       ? ` title="${esc(`Уже запланировано: ${(days[dateStr].titles || []).join(', ')}${otherCount > days[dateStr].titles.length ? '…' : ''}`)}"`
       : '';
-    cells.push(`<button type="button" class="${cls.join(' ')}" data-date="${dateStr}"${titleAttr}>${d.getUTCDate()}</button>`);
+    cells.push(`<button type="button" class="${cls.join(' ')}" data-date="${dateStr}"${titleAttr}${disabledAttr}>${d.getUTCDate()}</button>`);
   }
   return cells.join('');
 }
@@ -1817,6 +1878,7 @@ async function renderDateCalendar(t) {
   const days = scheduleCache[monthKey];
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const maxDateStr = maxIsoDate();
   popNow.innerHTML = `
     <div class="tm-cal-head">
       <button type="button" class="tm-cal-nav-btn" data-action="cal-prev" aria-label="Предыдущий месяц">‹</button>
@@ -1824,7 +1886,7 @@ async function renderDateCalendar(t) {
       <button type="button" class="tm-cal-nav-btn" data-action="cal-next" aria-label="Следующий месяц">›</button>
     </div>
     <div class="tm-cal-weekdays">${WEEKDAYS_RU.map((w) => `<span>${w}</span>`).join('')}</div>
-    <div class="tm-cal-grid">${buildCalGrid(dateCalYear, dateCalMonth, t.publishDate, days, todayStr)}</div>
+    <div class="tm-cal-grid">${buildCalGrid(dateCalYear, dateCalMonth, t.publishDate, days, todayStr, maxDateStr)}</div>
     <div class="tm-cal-legend"><span class="dot"></span>Уже есть запланированные посты — чтобы не собрать всё в один день</div>
   `;
 }
@@ -2631,6 +2693,12 @@ teamProjectFilter.addEventListener('change', () => {
 teamList.addEventListener('click', (e) => {
   const row = e.target.closest('.team-task');
   if (!row) return;
+  if (selectMode) {
+    row.classList.toggle('selected');
+    row.querySelector('.team-task-check')?.classList.toggle('checked');
+    toggleTaskSelection(row.dataset.taskId);
+    return;
+  }
   openTaskModal(row.dataset.taskId);
 });
 

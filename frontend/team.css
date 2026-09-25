@@ -33,12 +33,15 @@
 .chip.wait.active{background:#EDEFEF;border-color:#DDE1E1;color:#4B5654}
 .chip:not(.active){opacity:.45}
 
-/* «Выбрать» — массовые операции в календаре (team.js: setCalSelectMode,
-   deleteSelectedTasks). Кнопка живёт третьим элементом в .cal-header
+/* «Выбрать» — массовые операции, общие для календаря И перечня карточек
+   (team.js: setSelectMode, deleteSelectedTasks — по прямому запросу
+   пользователя, 2026-09-25: «а теперь и в перечне карточек, но только для
+   админа»). В календаре кнопка живёт третьим элементом в .cal-header
    (app.css: display:flex;justify-content:space-between — трогать сам
-   .cal-header не нужно, он общий с клиентским календарём в app.js). Видна
-   только админам (см. showApp() в team.js), по прямому запросу
-   пользователя, 2026-09-25. */
+   .cal-header не нужно, он общий с клиентским календарём в app.js); в
+   перечне — тот же класс, но отдельно позиционирована (.team-list-select-
+   toggle/-bar ниже), т.к. там нет готового header-flex-ряда. Видна только
+   админам (см. showApp() в team.js). */
 .cal-select-toggle{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 13px;font-size:11.5px;font-weight:800;color:var(--ink);cursor:pointer}
 .cal-select-toggle.active{background:var(--ink-solid);border-color:var(--ink-solid);color:#fff}
 .cal-select-bar{display:flex;align-items:center;gap:10px;margin:-4px 0 12px;padding:9px 12px;background:#F7F8F8;border:1px solid var(--line);border-radius:12px}
@@ -49,6 +52,10 @@
 .cal-select-delete-btn:hover{background:#FFE3DE}
 .cal-select-delete-btn:active{background:#FBD5CE}
 .cal-select-delete-btn:disabled{opacity:.5;cursor:default}
+/* Позиционирование той же кнопки/бара над #teamList (нет готового header-
+   ряда, в отличие от .cal-header в календаре). */
+.team-list-select-toggle{margin:10px 12px 0;display:inline-flex}
+.team-list-select-bar{margin:10px 12px}
 
 /* Чекбокс выбора на карточке календаря в режиме "Выбрать" (см.
    checkboxHtml в renderTeamCalendarGrid) + подсветка выбранной карточки
@@ -58,6 +65,16 @@
 .cal-post-check{flex:0 0 auto;width:11px;height:11px;margin-top:2px;border:1.5px solid #C7CECD;border-radius:50%;background:#fff}
 .cal-post-check.checked{background:var(--accent);border-color:var(--accent);position:relative}
 .cal-post-check.checked::after{content:"";position:absolute;left:2.5px;top:0px;width:3px;height:6px;border:solid #fff;border-width:0 1.5px 1.5px 0;transform:rotate(40deg)}
+
+/* Тот же чекбокс, но на карточке перечня (.team-task, см. app.css/team.css
+   выше) — крупнее (16px), т.к. сама карточка заметно больше, чем .cal-post
+   в клетке календаря; абсолютно спозиционирован в правый верхний угол,
+   чтобы не разъезжаться с существующей flex-раскладкой .team-task-top. */
+.team-task{position:relative}
+.team-task-check{position:absolute;top:14px;right:16px;width:16px;height:16px;border:1.5px solid #C7CECD;border-radius:50%;background:#fff}
+.team-task-check.checked{background:var(--accent);border-color:var(--accent)}
+.team-task-check.checked::after{content:"";position:absolute;left:5px;top:2px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(40deg)}
+.team-task.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset;background:#F2F8F7}
 
 .team-list{display:grid;gap:12px;padding:4px 12px 32px}
 /* Same reasoning as .proj-list in projects.css — the page's own max-width
@@ -543,6 +560,8 @@
   .cal-select-delete-btn:active{background:#452824}
   .cal-post.selected{background:rgba(63,169,143,.16)}
   .cal-post-check{border-color:#3A4040;background:#222626}
+  .team-task-check{border-color:#3A4040;background:#222626}
+  .team-task.selected{background:#1E2927}
   .create-tabs{background:#222626}
   .create-tab{color:#93A19C}
   .create-tab.active{background:#262222;color:#ECEFED}

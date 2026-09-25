@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=18">
   <link rel="stylesheet" href="/projects.css?v=14">
-  <link rel="stylesheet" href="/team.css?v=28">
+  <link rel="stylesheet" href="/team.css?v=29">
 </head>
 <body>
 <div class="page">
@@ -68,6 +68,14 @@
     </div>
 
     <div id="teamListView">
+      <!-- Массовые операции — только у админа (staffProjectsPath), тот же
+           переключатель setSelectMode(), что у кнопки «Выбрать» в
+           календаре ниже — см. showApp() в team.js. -->
+      <button id="teamListSelectToggle" class="cal-select-toggle team-list-select-toggle" type="button" hidden>Выбрать</button>
+      <div id="teamListSelectBar" class="cal-select-bar team-list-select-bar" hidden>
+        <span id="teamListSelectCount" class="cal-select-count">Выбрано: 0</span>
+        <button id="teamListDeleteSelected" class="cal-select-delete-btn" type="button" disabled>🗑 Удалить выбранное</button>
+      </div>
       <div id="teamFilters" class="team-filters" hidden></div>
       <div id="teamLoading" class="loading">Загружаем ваши задачи…</div>
       <div id="teamEmpty" class="team-empty" hidden>На вас пока нет ни одной задачи.</div>
@@ -219,7 +227,7 @@
           <label class="field-label" for="biFile">Файл контент-плана (JSON)</label>
           <input id="biFile" class="field-input" type="file" accept=".json,application/json" required>
           <a id="biExampleLink" class="bi-example-link" href="/content-plan-example.json" download>⬇ Скачать пример файла</a>
-          <p class="create-subtitle bi-hint">Такой же формат удобно попросить у ИИ при генерации плана — просто приложите этот файл как образец в промт.</p>
+          <p class="create-subtitle bi-hint">Такой же формат удобно попросить у ИИ при генерации плана — просто приложите этот файл как образец в промт. Поле <code>date</code> обязательно: дата должна быть в будущем и не дальше чем через 2 месяца, иначе строка будет пропущена с ошибкой.</p>
 
           <div id="biError" class="error-box" hidden></div>
           <div id="biResults" class="bi-results" hidden></div>
@@ -325,7 +333,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=36"></script>
+<script src="/team.js?v=37"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

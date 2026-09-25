@@ -877,6 +877,44 @@ function previousMonthKey(y, m) {
 function moscowDateStr(ms) {
   return new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
 }
+
+function addMonthsToDateStr(dateStr, months) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+// Дата публикации поста в кабинете команды — ОБЯЗАТЕЛЬНА, не может быть в
+// прошлом и не может быть дальше, чем через 2 месяца вперёд. По прямому
+// запросу пользователя (2026-09-25): «внедряем проверку чтобы даты постов
+// были обязательно и в будущем, но не более чем на 2 мес». «Сегодня» —
+// московское время (см. moscowDateStr выше, тот же расчёт, что уже
+// используется в weeklyActivity) — команда и клиенты работают по МСК,
+// UTC-полночь дала бы отличающийся от их календаря результат ближе к концу
+// дня. Возвращает текст ошибки или null, если дата валидна.
+//
+// НАМЕРЕННО только для кабинета команды (везде, где вызывается явно —
+// POST /api/team/tasks, /tasks/bulk-import, /tasks/:taskId/date) — НЕ внутри
+// createAutomationTask()/updateTaskDate() самих по себе, т.к. те же функции
+// обслуживают и Automation API (/api/automation/*, n8n и подобные), у
+// которого свои сценарии (например, программное планирование значительно
+// заранее) и это ограничение не должно на него распространяться.
+function validateTeamPublishDate(dateStr) {
+  const s = String(dateStr || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(new Date(`${s}T00:00:00Z`).getTime())) {
+    return 'Дата публикации обязательна.';
+  }
+  const todayStr = moscowDateStr(Date.now());
+  if (s < todayStr) {
+    return 'Дата публикации не может быть в прошлом.';
+  }
+  const maxStr = addMonthsToDateStr(todayStr, 2);
+  if (s > maxStr) {
+    return `Дата публикации не может быть дальше, чем через 2 месяца (максимум ${maxStr.split('-').reverse().join('.')}).`;
+  }
+  return null;
+}
+
 // Русское склонение: pluralRu(2, 'карточка', 'карточки', 'карточек') → "карточки".
 function pluralRu(n, one, few, many) {
   const n10 = n % 10;
@@ -2110,6 +2148,10 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этому проекту.' });
     }
   }
+  const dateError = validateTeamPublishDate(req.body && req.body.publishDate);
+  if (dateError) {
+    return res.status(400).json({ error: 'invalid_publish_date', message: dateError });
+  }
   try {
     const task = await createAutomationTask(boardId, {
       ...(req.body || {}),
@@ -2130,7 +2172,10 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
 });
 
 // POST /api/team/tasks/bulk-import — body: { projectId, assigneeUserId?,
-// items: [{ date?, network?, text?, keywords?, reference?, title? }, ...] }.
+// items: [{ date, network?, text?, keywords?, reference?, title? }, ...] }.
+// `date` is now REQUIRED per row (added 2026-09-25, see
+// validateTeamPublishDate below — must be today..+2 months, Moscow time; a
+// row that fails gets its own per-row error, same as a missing title).
 // "Пакетный импорт контент-плана" — the team member picks a project they
 // have access to and uploads a JSON file (parsed client-side; this route
 // gets the already-parsed array, not a file upload), or the frontend builds
@@ -2227,6 +2272,17 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
     const title = explicitTitle || keywords || text.slice(0, 60);
     if (!title) {
       results.push({ row: rowNum, ok: false, error: 'Нужен заголовок, текст или ключевые слова — не из чего собрать заголовок карточки.' });
+      continue;
+    }
+    // Дата публикации — обязательна, в будущем, не дальше 2 месяцев (см.
+    // validateTeamPublishDate) — по тому же прямому запросу пользователя,
+    // 2026-09-25, что и массовое удаление выше. Раньше date был просто
+    // необязательным полем строки; одна плохая дата не топит весь батч —
+    // та же логика "ошибка в одной строке не мешает остальным", что и у
+    // title выше.
+    const dateError = validateTeamPublishDate(raw.date);
+    if (dateError) {
+      results.push({ row: rowNum, ok: false, error: dateError });
       continue;
     }
     // Статус пакетно импортированной карточки — ВСЕГДА «Не начато», жёстко,
@@ -2607,14 +2663,18 @@ app.post('/api/team/tasks/:taskId/network', teamAuth.requireTeamAuth, requireTea
 
 // POST /api/team/tasks/:taskId/date — body: { date: 'YYYY-MM-DD' }. Moves
 // the publish date — the month-calendar picker in the /team cabinet's card
-// header (see also GET /api/team/schedule below, which feeds that picker's
-// "this day is already busy" markers).
+// header AND the calendar drag-and-drop (see also GET /api/team/schedule
+// below, which feeds that picker's "this day is already busy" markers).
+// Same обязательно-в-будущем-не-дальше-2-месяцев rule as at creation time
+// (validateTeamPublishDate) — otherwise someone could route around the
+// create-time check by just rescheduling a card afterward.
 app.post('/api/team/tasks/:taskId/date', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const dateStr = String((req.body && req.body.date) || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return res.status(400).json({ error: 'invalid_date', message: 'Ожидался формат YYYY-MM-DD.' });
+  const dateError = validateTeamPublishDate(dateStr);
+  if (dateError) {
+    return res.status(400).json({ error: 'invalid_date', message: dateError });
   }
   try {
     const updated = await updateTaskDate(boardId, req.params.taskId, dateStr);
