@@ -1983,9 +1983,9 @@ function attachBoxHtml() {
       <div class="tm-dropzone-icon">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17a4.5 4.5 0 0 1-.4-8.98A5.5 5.5 0 0 1 17.2 9.5 4 4 0 0 1 17 17H7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 20v-7m0 0-2.6 2.6M12 13l2.6 2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
-      <div class="tm-dropzone-title">Перетащите файл сюда или нажмите, чтобы выбрать</div>
-      <div class="tm-dropzone-hint">Фото или видео — загрузится на disk.kontentferma, в карточку попадёт только ссылка</div>
-      <input type="file" id="tmFileInput" accept="image/*,video/*">
+      <div class="tm-dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</div>
+      <div class="tm-dropzone-hint">Фото или видео, можно сразу несколько — загрузятся на disk.kontentferma по очереди, порядок потом можно поменять</div>
+      <input type="file" id="tmFileInput" accept="image/*,video/*" multiple>
     </div>
     <div class="tm-attach-link-row">
       <span class="tm-attach-link-label">или ссылка</span>
@@ -2520,41 +2520,72 @@ tmBody.addEventListener('click', (e) => {
   openLightbox(img.dataset.src || img.src);
 });
 
-// Реальная загрузка файла — перетащить в #tmDropzone или выбрать через
-// скрытый <input type="file"> внутри него (клик по зоне landing прямо на
-// input, см. .tm-dropzone CSS). Оба пути ведут в uploadMediaFile().
-async function uploadMediaFile(t, file) {
-  const zone = document.getElementById('tmDropzone');
-  const titleEl = zone && zone.querySelector('.tm-dropzone-title');
-  if (zone) zone.classList.add('uploading');
-  if (titleEl) titleEl.textContent = `Загружаем «${file.name}»…`;
-  try {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/media-upload`, { method: 'POST', body: form });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      toast(
-        data.error === 'disk_upload_not_configured'
-          ? 'Загрузка ещё не настроена на сервере — вставьте готовую ссылку ниже.'
-          : 'Не удалось загрузить файл: ' + (data.message || data.error || 'ошибка')
-      );
-      return;
+// Реальная загрузка файлов — перетащить в #tmDropzone или выбрать через
+// скрытый <input type="file" multiple> внутри него (клик по зоне landing
+// прямо на input, см. .tm-dropzone CSS). Оба пути ведут в
+// uploadMediaFiles().
+//
+// МНОГО ФАЙЛОВ ЗА РАЗ (добавлено 2026-09-26, прямой запрос пользователя: «а
+// у нас 3+ фото на каждый пост! Давай дадим людям возможность грузить сразу
+// несколько фото? (а потом они сами переупорядочат)») — файлы уходят на
+// сервер ПО ОДНОМУ, последовательно (не Promise.all), а не бургли всё сразу:
+// каждая загрузка — это отдельный round-trip на disk.kontentferma (WebDAV +
+// создание публичной ссылки), а его же concurrency-лимитер
+// (mediaUploadLimiter, backend/src/index.js) был введён именно из-за того,
+// что Nextcloud не переживает всплеск параллельных запросов — см. его
+// комментарий там. Последовательная загрузка с одного человека держит
+// нагрузку минимальной сама по себе; лимитер на сервере — вторая линия
+// защиты на случай, если несколько человек одновременно грузят по несколько
+// фото. Порядок в карточке — как выбрали/перетащили, а разложить по местам
+// потом можно кнопками ↑/↓ в «Изменить порядок / удалить» — это
+// пользователь сам и предложил.
+async function uploadMediaFiles(t, files) {
+  if (!files || !files.length) return;
+  let ok = 0;
+  const failed = [];
+  let stoppedEarly = false;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const zone = document.getElementById('tmDropzone');
+    const titleEl = zone && zone.querySelector('.tm-dropzone-title');
+    if (zone) zone.classList.add('uploading');
+    if (titleEl) {
+      titleEl.textContent = files.length > 1
+        ? `Загружаем ${i + 1} из ${files.length}: «${file.name}»…`
+        : `Загружаем «${file.name}»…`;
     }
-    applyUpdatedTask(data.task);
-    flashSaved(document.querySelector('#tmBody .tm-media-grid'));
-  } catch (err) {
-    toast('Не удалось загрузить файл: ' + err.message);
-  } finally {
-    // На успехе applyUpdatedTask уже пересоздал #tmDropzone заново (обычным
-    // состоянием) — ищем свежий узел, а не держимся за старую ссылку,
-    // которая могла быть заменена перерисовкой.
-    const freshZone = document.getElementById('tmDropzone');
-    if (freshZone) {
-      freshZone.classList.remove('uploading');
-      const freshTitle = freshZone.querySelector('.tm-dropzone-title');
-      if (freshTitle) freshTitle.textContent = 'Перетащите файл сюда или нажмите, чтобы выбрать';
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/media-upload`, { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        failed.push({ name: file.name, message: data.message || data.error || 'ошибка' });
+        if (data.error === 'disk_upload_not_configured') { stoppedEarly = true; break; } // остальные файлы упрутся в то же самое — не мучаем сервер
+        continue;
+      }
+      // На успехе applyUpdatedTask уже пересоздал #tmDropzone заново (обычным
+      // состоянием) — на следующей итерации мы заново находим свежий узел,
+      // а не держимся за старую ссылку.
+      applyUpdatedTask(data.task);
+      ok++;
+    } catch (err) {
+      failed.push({ name: file.name, message: err.message });
     }
+  }
+  if (ok) flashSaved(document.querySelector('#tmBody .tm-media-grid'));
+  if (stoppedEarly) {
+    toast('Загрузка ещё не настроена на сервере — вставьте готовую ссылку ниже.');
+  } else if (failed.length === files.length) {
+    toast('Не удалось загрузить ' + (failed.length === 1 ? 'файл' : 'файлы') + ': ' + failed[0].message);
+  } else if (failed.length) {
+    toast(`Загружено ${ok} из ${files.length}; не удалось: ${failed.map((f) => f.name).join(', ')}`);
+  }
+  const freshZone = document.getElementById('tmDropzone');
+  if (freshZone) {
+    freshZone.classList.remove('uploading');
+    const freshTitle = freshZone.querySelector('.tm-dropzone-title');
+    if (freshTitle) freshTitle.textContent = 'Перетащите файлы сюда или нажмите, чтобы выбрать';
   }
 }
 
@@ -2562,9 +2593,9 @@ tmBody.addEventListener('change', (e) => {
   const fileInput = e.target.closest('#tmFileInput');
   if (fileInput) {
     const t = currentModalTask();
-    const file = fileInput.files && fileInput.files[0];
-    fileInput.value = ''; // позволяет выбрать тот же файл повторно в будущем
-    if (t && file) uploadMediaFile(t, file);
+    const files = fileInput.files ? Array.from(fileInput.files) : [];
+    fileInput.value = ''; // позволяет выбрать те же файлы повторно в будущем
+    if (t && files.length) uploadMediaFiles(t, files);
     return;
   }
   const chatFileInput = e.target.closest('#tmTeamChatFileInput, #tmClientChatFileInput');
@@ -2629,8 +2660,13 @@ tmBody.addEventListener('drop', (e) => {
   e.preventDefault();
   zone.classList.remove('drag-over');
   const t = currentModalTask();
-  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (t && file) uploadMediaFile(t, file);
+  // Drag-and-drop не уважает accept="image/*,video/*" у инпута — фильтруем
+  // сами, чтобы случайно перетащенный посторонний файл (pdf, docx…) не ушёл
+  // на disk.kontentferma как «медиа».
+  const dropped = e.dataTransfer && e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+  const files = dropped.filter((f) => /^(image|video)\//.test(f.type));
+  if (t && files.length) uploadMediaFiles(t, files);
+  else if (dropped.length) toast('Сюда можно перетаскивать только фото или видео.');
 });
 
 // Полноэкранный просмотр фото из чата — маленькая миниатюра в сообщении,

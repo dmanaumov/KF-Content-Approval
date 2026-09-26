@@ -2828,22 +2828,34 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, requi
     if (!boardId) return;
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     try {
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === req.params.taskId);
-      if (!task) return res.status(404).json({ error: 'task_not_found' });
-      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
-      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
-      const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
-      const shareUrl = await diskUpload.uploadAndShare({
-        folderName: task.projectLabel || 'Без клиента',
-        filename,
-        buffer: req.file.buffer,
-        mimeType: req.file.mimetype,
+      // Queued behind mediaUploadLimiter (added 2026-09-26, same day the team
+      // cabinet got multi-file upload — frontend/team.js now sends several
+      // photos per post one call after another, and several TEAM MEMBERS can
+      // still land on this route at the same moment; see mediaUploadLimiter's
+      // own comment above for why Nextcloud can't take an unbounded
+      // concurrent burst — this route had no such guard before, only the
+      // n8n-facing /api/automation one did).
+      await mediaUploadLimiter(async () => {
+        const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+        const feedbackAuthorUserId = await getFeedbackAuthorId();
+        const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+        const task = tasks.find((t) => t.id === req.params.taskId);
+        if (!task) {
+          res.status(404).json({ error: 'task_not_found' });
+          return;
+        }
+        const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+        const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+        const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
+        const shareUrl = await diskUpload.uploadAndShare({
+          folderName: task.projectLabel || 'Без клиента',
+          filename,
+          buffer: req.file.buffer,
+          mimeType: req.file.mimetype,
+        });
+        const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, teamActorName(req));
+        res.json({ task: updated });
       });
-      const updated = await addTeamMediaLink(boardId, req.params.taskId, shareUrl, teamActorName(req));
-      res.json({ task: updated });
     } catch (err) {
       console.error('[api] team media upload failed:', err.message);
       const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
