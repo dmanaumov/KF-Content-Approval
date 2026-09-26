@@ -13,6 +13,16 @@ const MONTH_NAMES = ['январь', 'февраль', 'март', 'апрель
 let summary = null; // данные «за 30 дней» — загружаются один раз
 let viewMonth = null; // { y, m } — московский месяц, который показываем в месячных вью
 
+// Фильтры «Недавних посещений» (добавлено 2026-09-26, прямой запрос
+// пользователя: сортировка по убыванию — она и так уже была, ORDER BY ts
+// DESC что на /api/analytics/summary, что на новом /api/analytics/recent —
+// плюс минимальные фильтры «где / пользователь / дата»). where — не
+// project, а то же самое, что показывает колонка «Где» в recentTable ниже:
+// имя проекта, когда есть, иначе путь эндпоинта (уточнение пользователя:
+// «точнее не проект, а "где" выпадающий список»).
+let recentFilters = { where: '', actor: '', date: '' };
+let recentRows = []; // текущие (отфильтрованные) строки «Недавних посещений»
+
 function currentMoscowMonth() {
   const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
   const [y, m] = d.slice(0, 7).split('-').map(Number);
@@ -126,7 +136,7 @@ function actorsByProjectTable(rows) {
 }
 
 function recentTable(rows) {
-  if (!rows || !rows.length) return '<div class="muted">Пока нет событий.</div>';
+  if (!rows || !rows.length) return '<div class="muted">Ничего не найдено — попробуйте сбросить фильтры.</div>';
   return `<table class="stat-table"><thead><tr><th>Когда (МСК)</th><th>Кто</th><th>Где</th><th>Устройство</th><th>Браузер</th></tr></thead><tbody>${rows
     .map((r) => {
       const who = r.role === 'team' ? `👤 ${esc(r.actor)}` : ROLE_LABEL[r.role] || esc(r.role);
@@ -140,6 +150,67 @@ function recentTable(rows) {
       </tr>`;
     })
     .join('')}</tbody></table>`;
+}
+
+// Строит выпадающие списки «Где»/«Кто» из summary.byWhere/actorsByProject —
+// тот же пул значений «за 30 дней», что и остальные срезы на странице,
+// плюс те, кто вообще есть в byActor (actorsByProject требует project<>'',
+// так что чисто внутренние действия без проекта туда не попадают, а
+// человека всё равно нужно найти в списке).
+function recentFilterBarHtml() {
+  const whereOptions = ((summary && summary.byWhere) || [])
+    .map((w) => `<option value="${esc(w.where_label)}"${recentFilters.where === w.where_label ? ' selected' : ''}>${esc(w.where_label)}</option>`)
+    .join('');
+  const actorNames = new Map();
+  ((summary && summary.actorsByProject) || []).forEach((r) => {
+    if (!actorNames.has(r.actor)) actorNames.set(r.actor, r.actor_name || r.actor);
+  });
+  ((summary && summary.byActor) || []).forEach((r) => {
+    if (!actorNames.has(r.actor)) actorNames.set(r.actor, r.actor);
+  });
+  const actorOptions = [...actorNames.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1], 'ru'))
+    .map(([actor, label]) => `<option value="${esc(actor)}"${recentFilters.actor === actor ? ' selected' : ''}>${esc(label)}</option>`)
+    .join('');
+  return `<div class="stat-filters">
+    <select id="recentFilterWhere" class="stat-filter-select"><option value="">Где — все</option>${whereOptions}</select>
+    <select id="recentFilterActor" class="stat-filter-select"><option value="">Кто — все</option>${actorOptions}</select>
+    <input type="date" id="recentFilterDate" class="stat-filter-date" value="${esc(recentFilters.date)}">
+    <button type="button" id="recentFilterReset" class="stat-filter-reset">Сбросить</button>
+  </div>`;
+}
+
+function recentSectionHtml() {
+  return `${recentFilterBarHtml()}<div id="recentTableWrap">${recentTable(recentRows)}</div>`;
+}
+
+function recentQuery() {
+  const params = new URLSearchParams();
+  if (recentFilters.where) params.set('where', recentFilters.where);
+  if (recentFilters.actor) params.set('actor', recentFilters.actor);
+  if (recentFilters.date) params.set('date', recentFilters.date);
+  const qs = params.toString();
+  return qs ? '?' + qs : '';
+}
+
+async function fetchRecent() {
+  const res = await fetch('/api/analytics/recent' + recentQuery());
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'Ошибка загрузки посещений');
+  recentRows = data.rows || [];
+}
+
+// Точечно обновляет только таблицу «Недавних посещений» (не всю страницу) —
+// используется при смене любого из трёх фильтров и кнопкой «Сбросить».
+async function refreshRecentTable() {
+  try {
+    await fetchRecent();
+    const wrap = document.getElementById('recentTableWrap');
+    if (wrap) wrap.innerHTML = recentTable(recentRows);
+  } catch (err) {
+    const wrap = document.getElementById('recentTableWrap');
+    if (wrap) wrap.innerHTML = `<div class="muted">Не удалось загрузить: ${esc(err.message)}</div>`;
+  }
 }
 
 function section(title, body, sub) {
@@ -273,7 +344,7 @@ function render(data, proj, team, tasks) {
     section('Устройства посетителей', hbars(data.byDevice, 'device_label', { valueKey: 'visitors', subKey: 'events', subUnit: 'заход(ов)' })),
     section('Браузеры посетителей', hbars(data.byBrowser, 'browser_label', { valueKey: 'visitors', subKey: 'events', subUnit: 'заход(ов)' })),
     section('В какие проекты заходят работники', actorsByProjectTable(data.actorsByProject)),
-    section('Недавние посещения', recentTable(data.recent)),
+    section('Недавние посещения', recentSectionHtml()),
   ].join('');
   root.innerHTML = html;
   document.getElementById('monthPrev').addEventListener('click', () => {
@@ -289,11 +360,41 @@ function render(data, proj, team, tasks) {
   document.getElementById('statRefreshBtn').addEventListener('click', async () => {
     try {
       if (!(await fetchSummary())) return;
+      await fetchRecent();
       await renderAll();
     } catch (err) {
       errorBox.textContent = 'Не удалось обновить статистику: ' + err.message;
       errorBox.hidden = false;
     }
+  });
+  // Фильтры «Недавних посещений» — каждый меняет своё поле в recentFilters
+  // и точечно перерисовывает только таблицу (без полного renderAll):
+  // остальные секции этот выбор не затрагивает.
+  document.getElementById('recentFilterWhere').addEventListener('change', (e) => {
+    recentFilters.where = e.target.value;
+    refreshRecentTable();
+  });
+  document.getElementById('recentFilterActor').addEventListener('change', (e) => {
+    recentFilters.actor = e.target.value;
+    refreshRecentTable();
+  });
+  document.getElementById('recentFilterDate').addEventListener('change', (e) => {
+    recentFilters.date = e.target.value;
+    refreshRecentTable();
+  });
+  document.getElementById('recentFilterReset').addEventListener('click', () => {
+    recentFilters = { where: '', actor: '', date: '' };
+    // Сбрасываем сами инпуты руками (без полного render()) — им не нужно
+    // ничего, кроме сброса значения, а сам render() ничего не выиграл бы:
+    // options списков «Где»/«Кто» и так не зависят от recentFilters, кроме
+    // атрибута selected, который сейчас нам и не важен.
+    const wSel = document.getElementById('recentFilterWhere');
+    const aSel = document.getElementById('recentFilterActor');
+    const dInp = document.getElementById('recentFilterDate');
+    if (wSel) wSel.value = '';
+    if (aSel) aSel.value = '';
+    if (dInp) dInp.value = '';
+    refreshRecentTable();
   });
 }
 
@@ -335,6 +436,7 @@ function startAutoRefresh() {
   autoRefreshTimer = setInterval(async () => {
     try {
       if (!(await fetchSummary())) return;
+      await fetchRecent();
       await renderAll();
     } catch (err) {
       console.error('[stat] auto-refresh failed:', err.message);
@@ -346,6 +448,7 @@ async function load() {
   try {
     viewMonth = currentMoscowMonth();
     if (!(await fetchSummary())) return;
+    await fetchRecent();
     await renderAll();
     startAutoRefresh();
   } catch (err) {

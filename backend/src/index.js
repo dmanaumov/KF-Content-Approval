@@ -952,7 +952,7 @@ app.delete('/api/projects/:projectId', staffAuth, async (req, res) => {
 app.get('/api/analytics/summary', requireStatAuth, async (req, res) => {
   try {
     const pool = db.requirePool();
-    const [totalVisitors, byRole, byDate, byProject, byDevice, byBrowser, byActor, actorsByProject, recent] = await Promise.all([
+    const [totalVisitors, byRole, byDate, byProject, byWhere, byDevice, byBrowser, byActor, actorsByProject, recent] = await Promise.all([
       pool.query(
         `SELECT count(DISTINCT visitor_id)::int AS visitors
          FROM access_log WHERE ts > now() - interval '30 days' AND visitor_id <> ''`
@@ -969,6 +969,19 @@ app.get('/api/analytics/summary', requireStatAuth, async (req, res) => {
       pool.query(
         `SELECT project, count(*)::int AS events, count(DISTINCT visitor_id)::int AS visitors
          FROM access_log WHERE ts > now() - interval '30 days' AND project <> '' GROUP BY project ORDER BY events DESC LIMIT 50`
+      ),
+      // «Где» — то же самое, что recentTable() в frontend/stat.js показывает
+      // в одноимённой колонке: имя проекта, когда оно есть (клиентский заход),
+      // иначе путь эндпоинта (внутреннее действие команды/админки, у
+      // которого своего "проекта" нет — /api/team/tasks, /api/team/login,
+      // /api/projects). Питает выпадающий список фильтра «Где» у «Недавних
+      // посещений» (добавлено 2026-09-26 по прямому запросу пользователя —
+      // «точнее не проект, а "где" выпадающий список»), а не только "Заходы
+      // по проектам", отсюда и отдельный агрегат, а не переиспользование
+      // byProject.
+      pool.query(
+        `SELECT (CASE WHEN project <> '' THEN project ELSE path END) AS where_label, count(*)::int AS events
+         FROM access_log WHERE ts > now() - interval '30 days' GROUP BY 1 ORDER BY events DESC LIMIT 50`
       ),
       pool.query(
         `SELECT COALESCE(NULLIF(device_label,''), device) AS device_label,
@@ -1002,6 +1015,7 @@ app.get('/api/analytics/summary', requireStatAuth, async (req, res) => {
       byRole: byRole.rows,
       byDate: byDate.rows,
       byProject: byProject.rows,
+      byWhere: byWhere.rows,
       byDevice: byDevice.rows,
       byBrowser: byBrowser.rows,
       byActor: byActor.rows,
@@ -1010,6 +1024,49 @@ app.get('/api/analytics/summary', requireStatAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('[api] analytics summary failed:', err.message);
+    res.status(500).json({ error: 'analytics_unavailable', message: err.message });
+  }
+});
+
+// GET /api/analytics/recent — «Недавние посещения» на /stat, отдельно от
+// /api/analytics/summary (которая отдаёт то же самое БЕЗ фильтров, только
+// последние 200 строк вообще — оставлено для первой отрисовки страницы).
+// Добавлено 2026-09-26 по прямому запросу пользователя: сортировка по
+// убыванию (уже была — ORDER BY ts DESC, просто явно фиксируем это здесь
+// тоже) + минимальные фильтры «где / пользователь / дата». Все три
+// параметра необязательны и работают независимо друг от друга; без единого
+// фильтра — просто последние LIMIT строк по всей таблице, как раньше.
+// LIMIT поднят с 200 до 300 — с фильтром по конкретному месту/дню 200
+// «вообще последних» строк слишком легко полностью не содержат ни одной
+// подходящей, если в этот день/место было немного заходов, а другие —
+// шумели активнее.
+//
+// «where» — НЕ просто project: фильтр по колонке «Где», как её строит
+// recentTable() на фронтенде (frontend/stat.js) — project, когда он есть
+// (клиентский заход), иначе path (внутреннее действие команды/админки без
+// своего "проекта" — /api/team/tasks, /api/team/login, /api/projects).
+// Уточнение пользователя: «точнее не проект, а "где" выпадающий список».
+app.get('/api/analytics/recent', requireStatAuth, async (req, res) => {
+  try {
+    const pool = db.requirePool();
+    const where = String(req.query.where || '').trim() || null;
+    const actor = String(req.query.actor || '').trim() || null;
+    const rawDate = String(req.query.date || '').trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null;
+    const { rows } = await pool.query(
+      `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','DD.MM HH24:MI') AS ts, role, project, actor, path,
+              COALESCE(NULLIF(device_label,''), device) AS device, COALESCE(NULLIF(browser_label,''), browser) AS browser
+       FROM access_log
+       WHERE ($1::text IS NULL OR (CASE WHEN project <> '' THEN project ELSE path END) = $1)
+         AND ($2::text IS NULL OR actor = $2)
+         AND ($3::text IS NULL OR to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD') = $3)
+       ORDER BY ts DESC
+       LIMIT 300`,
+      [where, actor, date]
+    );
+    res.json({ rows });
+  } catch (err) {
+    console.error('[api] analytics recent failed:', err.message);
     res.status(500).json({ error: 'analytics_unavailable', message: err.message });
   }
 });
