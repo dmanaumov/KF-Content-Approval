@@ -34,9 +34,12 @@ function monthNav() {
   const cur = currentMoscowMonth();
   const atCurrent = viewMonth.y === cur.y && viewMonth.m === cur.m;
   return `<section class="stat-section month-nav">
-    <button id="monthPrev" class="month-btn" title="Предыдущий месяц" aria-label="Предыдущий месяц">←</button>
-    <span class="month-label">${MONTH_NAMES[viewMonth.m - 1]} ${viewMonth.y}</span>
-    <button id="monthNext" class="month-btn" title="Следующий месяц" aria-label="Следующий месяц" ${atCurrent ? 'disabled' : ''}>→</button>
+    <div class="month-nav-group">
+      <button id="monthPrev" class="month-btn" title="Предыдущий месяц" aria-label="Предыдущий месяц">←</button>
+      <span class="month-label">${MONTH_NAMES[viewMonth.m - 1]} ${viewMonth.y}</span>
+      <button id="monthNext" class="month-btn" title="Следующий месяц" aria-label="Следующий месяц" ${atCurrent ? 'disabled' : ''}>→</button>
+    </div>
+    <button id="statRefreshBtn" class="month-btn" title="Обновить сейчас" aria-label="Обновить">⟳</button>
   </section>`;
 }
 
@@ -281,21 +284,70 @@ function render(data, proj, team, tasks) {
     viewMonth = shiftMonth(viewMonth, 1);
     renderAll();
   });
+  // Обновить сейчас — тянет и summary (см. fetchSummary), и месячные вью,
+  // не дожидаясь автообновления (см. startAutoRefresh ниже) или ручного F5.
+  document.getElementById('statRefreshBtn').addEventListener('click', async () => {
+    try {
+      if (!(await fetchSummary())) return;
+      await renderAll();
+    } catch (err) {
+      errorBox.textContent = 'Не удалось обновить статистику: ' + err.message;
+      errorBox.hidden = false;
+    }
+  });
+}
+
+// Тянет «за 30 дней» (включая «Недавние посещения») и кладёт в module-level
+// summary. Вынесено из load() в отдельную функцию 2026-09-26 — баг:
+// «Недавние посещения» показывали конец августа и не обновлялись, хотя
+// access_log все это время копился (см. teamHeatmap/projectHeatmap — те
+// свежие, потому что renderAll() дёргает их эндпоинты заново при листании
+// месяцев). Причина — summary грузился РОВНО ОДИН РАЗ, при открытии
+// страницы (см. комментарий у renderAll: «кэшируется и не дёргается при
+// листании месяцев» — экономия запросов, о которой никто не думал как о
+// «эта вкладка открыта у Дмитрия неделями»). Возвращает false и сама
+// показывает ошибку/401, если статистику вообще не удалось получить —
+// вызывающий код в этом случае просто останавливается, ничего больше не
+// рисуя поверх.
+async function fetchSummary() {
+  const sumRes = await fetch('/api/analytics/summary');
+  if (sumRes.status === 401) {
+    errorBox.textContent = 'Нужен доступ администратора (введите пароль от админки). Обновите страницу после входа.';
+    errorBox.hidden = false;
+    loading.hidden = true;
+    return false;
+  }
+  summary = await sumRes.json();
+  if (!sumRes.ok) throw new Error(summary.message || 'Ошибка загрузки статистики');
+  return true;
+}
+
+// Раз в 5 минут, пока страница открыта, тихо обновляет summary + месячные
+// вью — та же причина, что и у fetchSummary() выше: страница может
+// оставаться открытой вкладкой неделями, и без этого «недавние посещения»
+// не были на самом деле недавними. Фейл — просто в консоль, не поверх
+// текущего экрана: разовый сетевой сбой в фоне не должен перекрывать уже
+// показанные (пусть и на минуту устаревшие) данные сообщением об ошибке.
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+let autoRefreshTimer = null;
+function startAutoRefresh() {
+  if (autoRefreshTimer) return;
+  autoRefreshTimer = setInterval(async () => {
+    try {
+      if (!(await fetchSummary())) return;
+      await renderAll();
+    } catch (err) {
+      console.error('[stat] auto-refresh failed:', err.message);
+    }
+  }, AUTO_REFRESH_MS);
 }
 
 async function load() {
   try {
     viewMonth = currentMoscowMonth();
-    const sumRes = await fetch('/api/analytics/summary');
-    if (sumRes.status === 401) {
-      errorBox.textContent = 'Нужен доступ администратора (введите пароль от админки). Обновите страницу после входа.';
-      errorBox.hidden = false;
-      loading.hidden = true;
-      return;
-    }
-    summary = await sumRes.json();
-    if (!sumRes.ok) throw new Error(summary.message || 'Ошибка загрузки статистики');
+    if (!(await fetchSummary())) return;
     await renderAll();
+    startAutoRefresh();
   } catch (err) {
     loading.hidden = true;
     errorBox.textContent = 'Не удалось загрузить статистику: ' + err.message;
