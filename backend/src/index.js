@@ -1004,7 +1004,13 @@ app.get('/api/analytics/summary', requireStatAuth, async (req, res) => {
          FROM access_log WHERE ts > now() - interval '30 days' AND actor <> '' AND project <> '' GROUP BY actor, project ORDER BY events DESC LIMIT 200`
       ),
       pool.query(
-        `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','DD.MM HH24:MI') AS ts, role, project, actor, path,
+        // Полная дата (год-месяц-день), не только «ДД.ММ» — добавлено
+        // 2026-09-26 по прямому запросу пользователя, пока разбирались с
+        // «Недавние посещения показывают конец августа, хотя за сегодня
+        // данные есть»: без года «31.08» нельзя было отличить от «31.08 из
+        // прошлого года» — а именно это и оказалось похоже на реальную
+        // причину (см. тот же формат в /api/analytics/recent ниже).
+        `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD HH24:MI') AS ts, role, project, actor, path,
                 COALESCE(NULLIF(device_label,''), device) AS device, COALESCE(NULLIF(browser_label,''), browser) AS browser
          FROM access_log ORDER BY ts DESC LIMIT 200`
       ),
@@ -1054,7 +1060,7 @@ app.get('/api/analytics/recent', requireStatAuth, async (req, res) => {
     const rawDate = String(req.query.date || '').trim();
     const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null;
     const { rows } = await pool.query(
-      `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','DD.MM HH24:MI') AS ts, role, project, actor, path,
+      `SELECT to_char(ts AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD HH24:MI') AS ts, role, project, actor, path,
               COALESCE(NULLIF(device_label,''), device) AS device, COALESCE(NULLIF(browser_label,''), browser) AS browser
        FROM access_log
        WHERE ($1::text IS NULL OR (CASE WHEN project <> '' THEN project ELSE path END) = $1)
