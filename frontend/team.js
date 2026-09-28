@@ -28,8 +28,9 @@ const SOCIAL_MAP = {
   vk: { label: 'ВКонтакте', short: 'VK', color: '#0077FF' },
   ok: { label: 'Одноклассники', short: 'OK', color: '#EE8208' },
   max: { label: 'MAX', short: 'MAX', color: '#7C3AED' },
+  pin: { label: 'Pinterest', short: 'PIN', color: '#E60023' },
 };
-const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max)\b[\s:\-–—]*/i;
+const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max|pin)\b[\s:\-–—]*/i;
 function detectSocial(title) {
   const m = String(title || '').match(SOCIAL_PREFIX_RE);
   if (!m) return null;
@@ -88,6 +89,16 @@ let projectFilterId = '';
 const PROJECT_FILTER_KEY = 'kf.team.projectFilter.v1';
 try { projectFilterId = localStorage.getItem(PROJECT_FILTER_KEY) || ''; } catch (e) {}
 
+// Мультивыбор по соцсети (задача 2026-09-28: «добавим фильтры и в
+// календарь, и в перечень задач») — та же логика, что и projectFilterId
+// (влияет на список И на календарь), но множественный выбор, как у
+// activeStatuses, поэтому набор чипов, а не select. null = фильтр не
+// трогали — показываем всё, ключи SOCIAL_MAP + служебный '' для карточек
+// без соцсети вообще (см. detectSocial/splitTitle выше — bare-заголовок
+// без префикса ig:/tg:/…).
+let activeNetworks = null;
+const NETWORK_FILTER_KEY = 'kf.team.networkFilter.v1';
+
 // --- Модалка карточки: состояние открытой карточки ---
 let modalTaskId = null;
 let activeTab = 'media';
@@ -121,6 +132,22 @@ let pendingClientImage = null;
 
 function saveFilters() {
   try { localStorage.setItem(FILTERS_KEY, JSON.stringify(activeStatuses ? [...activeStatuses] : [])); } catch (e) {}
+}
+
+function saveNetworkFilter() {
+  try { localStorage.setItem(NETWORK_FILTER_KEY, JSON.stringify(activeNetworks ? [...activeNetworks] : [])); } catch (e) {}
+}
+
+// Как loadSavedFilters — по умолчанию всё включено, восстанавливаем ранее
+// снятые галочки, новые сети (например только что добавленный Pinterest)
+// включены по умолчанию, даже если сохранённый набор их не знал.
+function loadSavedNetworkFilter(allKeys) {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(NETWORK_FILTER_KEY) || 'null'); } catch (e) {}
+  if (Array.isArray(saved) && saved.length) {
+    return new Set(allKeys.filter((k) => saved.includes(k)));
+  }
+  return new Set(allKeys);
 }
 
 // По умолчанию все статусы включены; выбранное пользователем запоминается и
@@ -292,6 +319,7 @@ const teamCalSelectCount = document.getElementById('teamCalSelectCount');
 const teamCalDeleteSelected = document.getElementById('teamCalDeleteSelected');
 const teamProjectFilterRow = document.getElementById('teamProjectFilterRow');
 const teamProjectFilter = document.getElementById('teamProjectFilter');
+const teamNetworkFilterRow = document.getElementById('teamNetworkFilterRow');
 const teamCommentsToggle = document.getElementById('teamCommentsToggle');
 const teamCommentsView = document.getElementById('teamCommentsView');
 const teamCommentsBack = document.getElementById('teamCommentsBack');
@@ -522,13 +550,57 @@ function projectFiltered(tasks) {
   return projectFilterId ? tasks.filter((t) => t.projectId === projectFilterId) : tasks;
 }
 
+// Ключ соцсети задачи для фильтра — тот же detectSocial(title), что и для
+// бейджа ('' — заголовок без префикса ig:/tg:/…, т.е. "Без соцсети").
+function networkKeyOf(t) {
+  const social = detectSocial(t.title);
+  return social ? social.key : '';
+}
+
+// Мультивыбор по соцсети (см. activeNetworks выше) — та же роль, что и
+// projectFiltered: применяется и к списку, и к календарю-обзору (в отличие
+// от activeStatuses, который только к списку — см. renderTeamCalendarGrid).
+function networkFiltered(tasks) {
+  return activeNetworks ? tasks.filter((t) => activeNetworks.has(networkKeyOf(t))) : tasks;
+}
+
+// Строит чипы фильтра по соцсети из того, что реально есть в currentTasks
+// (тот же принцип, что renderChips() для статусов) — прячем ряд целиком,
+// если у всех задач одна и та же сеть (или её нет), фильтровать нечего.
+function renderNetworkFilterOptions() {
+  const seen = [];
+  currentTasks.forEach((t) => {
+    const key = networkKeyOf(t);
+    if (!seen.includes(key)) seen.push(key);
+  });
+  if (seen.length < 2) {
+    teamNetworkFilterRow.hidden = true;
+    activeNetworks = null;
+    return;
+  }
+  seen.sort((a, b) => {
+    if (a === '') return 1; // "Без соцсети" — всегда последним
+    if (b === '') return -1;
+    return Object.keys(SOCIAL_MAP).indexOf(a) - Object.keys(SOCIAL_MAP).indexOf(b);
+  });
+  activeNetworks = loadSavedNetworkFilter(seen);
+  teamNetworkFilterRow.hidden = false;
+  teamNetworkFilterRow.innerHTML = seen
+    .map((key) => {
+      const meta = key ? SOCIAL_MAP[key] : { label: 'Без соцсети', short: '—', color: '#B7BEBC' };
+      const active = activeNetworks.has(key) ? ' active' : '';
+      return `<button type="button" class="chip net-chip${active}" data-network="${esc(key)}" style="--net-color:${esc(meta.color)}">${esc(meta.short)}</button>`;
+    })
+    .join('');
+}
+
 function renderTasks() {
-  const byProject = projectFiltered(currentTasks);
+  const byProject = networkFiltered(projectFiltered(currentTasks));
   const visible = activeStatuses
     ? byProject.filter((t) => activeStatuses.has(norm(t.statusLabel)))
     : byProject;
   if (!visible.length) {
-    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами/проектом.' : 'На вас пока нет ни одной задачи.';
+    teamEmpty.textContent = currentTasks.length ? 'Нет задач с выбранными статусами/проектом/соцсетью.' : 'На вас пока нет ни одной задачи.';
     teamEmpty.hidden = false;
     teamList.innerHTML = '';
     return;
@@ -558,6 +630,7 @@ async function loadTasks() {
     currentTasks = (data.tasks || []).slice().sort(byDeadline);
     renderChips();
     renderProjectFilterOptions();
+    renderNetworkFilterOptions();
     renderTasks();
     if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
     if (modalTaskId) renderModal(); // держим открытую карточку в актуальном состоянии после фонового обновления списка
@@ -617,7 +690,7 @@ function renderTeamCalendarGrid() {
   teamCalTitle.textContent = `${MONTHS_RU_FULL[tcalMonth]} ${tcalYear}`;
 
   const byDate = new Map();
-  for (const t of projectFiltered(currentTasks)) {
+  for (const t of networkFiltered(projectFiltered(currentTasks))) {
     if (!t.publishDate) continue;
     if (!byDate.has(t.publishDate)) byDate.set(t.publishDate, []);
     byDate.get(t.publishDate).push(t);
@@ -2753,6 +2826,18 @@ teamFilters.addEventListener('click', (e) => {
 teamProjectFilter.addEventListener('change', () => {
   projectFilterId = teamProjectFilter.value;
   try { localStorage.setItem(PROJECT_FILTER_KEY, projectFilterId); } catch (e) {}
+  renderTasks();
+  if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
+});
+
+teamNetworkFilterRow.addEventListener('click', (e) => {
+  const btn = e.target.closest('.chip');
+  if (!btn || !activeNetworks) return;
+  const key = btn.dataset.network; // '' — «Без соцсети», иначе ключ SOCIAL_MAP
+  if (activeNetworks.has(key)) activeNetworks.delete(key);
+  else activeNetworks.add(key);
+  btn.classList.toggle('active');
+  saveNetworkFilter();
   renderTasks();
   if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
 });

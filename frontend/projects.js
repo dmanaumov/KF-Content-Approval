@@ -302,6 +302,7 @@ function render(filterText) {
           vk: { color: '#0077FF', label: 'ВКонтакте' },
           ok: { color: '#EE8208', label: 'Одноклассники' },
           max: { color: '#7C3AED', label: 'MAX' },
+          pin: { color: '#E60023', label: 'Pinterest' },
         };
         const netChips = (o.configuredNetworks || [])
           .filter((net) => netMeta[net])
@@ -603,7 +604,7 @@ createProjectName.addEventListener('keydown', (e) => {
 
 // --- "Редактировать" popup: logo URL + per-network publishing credentials
 // (backend/src/projectSettings.js) --------------------------------------
-const NET_KEYS = ['ig', 'tg', 'vk', 'ok', 'max'];
+const NET_KEYS = ['ig', 'tg', 'vk', 'ok', 'max', 'pin'];
 let editingProjectId = null;
 // Референсы картинок для ИИ-генерации (до 10 шт., project_settings.image_references) —
 // собираются локально в этом массиве (и добавлением ссылки, и загрузкой файла

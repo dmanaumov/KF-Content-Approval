@@ -296,13 +296,13 @@ function normalizeImageReferences(value) {
   return cleaned;
 }
 
-// Same 5 shorthands the client cabinet already detects in a post title
+// Same shorthands the client cabinet already detects in a post title
 // (see SOCIAL_MAP in frontend/app.js) — kept in sync manually since one
 // lives in the browser and one here; see docs/N8N_AUTOMATION.md which spells
 // this rule out for whoever builds the automation.
-const KNOWN_NETWORKS = ['ig', 'tg', 'vk', 'ok', 'max'];
+const KNOWN_NETWORKS = ['ig', 'tg', 'vk', 'ok', 'max', 'pin'];
 
-// Which of ig/tg/vk/ok/max actually have real, non-empty publishing
+// Which of ig/tg/vk/ok/max/pin actually have real, non-empty publishing
 // credentials saved for a project. Was inlined once inside getTokenAndLogo()
 // (still the only caller until 2026-09-20); pulled out here so
 // index.js's automation API (getAutomationProjects, createAutomationTask —
@@ -338,7 +338,7 @@ async function updateSettings(boardId, projectId, {
     throw new Error('logoUrl must be a string (may be empty).');
   }
   if (socialCredentials === undefined || socialCredentials === null || typeof socialCredentials !== 'object' || Array.isArray(socialCredentials)) {
-    throw new Error('socialCredentials must be a JSON object keyed by network (ig/tg/vk/ok/max).');
+    throw new Error('socialCredentials must be a JSON object keyed by network (ig/tg/vk/ok/max/pin).');
   }
   for (const key of Object.keys(socialCredentials)) {
     if (!KNOWN_NETWORKS.includes(key)) {

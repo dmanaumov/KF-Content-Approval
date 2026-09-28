@@ -3853,8 +3853,8 @@ async function updateTaskReference(boardId, taskId, text) {
 // (a block field, patched the same way saveDescriptionText patches a text
 // child block's title — see mm.patchBlock). Keep this regex/map in sync
 // with SOCIAL_MAP/SOCIAL_PREFIX_RE in frontend/app.js and frontend/team.js.
-const SOCIAL_LABELS = { ig: 'Instagram', tg: 'Telegram', vk: 'ВКонтакте', ok: 'Одноклассники', max: 'MAX' };
-const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max)\b[\s:\-–—]*/i;
+const SOCIAL_LABELS = { ig: 'Instagram', tg: 'Telegram', vk: 'ВКонтакте', ok: 'Одноклассники', max: 'MAX', pin: 'Pinterest' };
+const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max|pin)\b[\s:\-–—]*/i;
 
 // Live check against Instagram's own Graph API — see POST /api/projects/
 // :projectId/validate-instagram above for the why. GET https://graph.

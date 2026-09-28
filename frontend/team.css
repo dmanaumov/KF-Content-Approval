@@ -33,6 +33,16 @@
 .chip.wait.active{background:#EDEFEF;border-color:#DDE1E1;color:#4B5654}
 .chip:not(.active){opacity:.45}
 
+/* Фильтр-чипы по соцсети (мультивыбор, задача 2026-09-28) — та же строка,
+   что и .team-filters, но цвет каждого чипа берётся из SOCIAL_MAP через
+   инлайновую переменную --net-color (см. renderNetworkFilterOptions в
+   team.js), чтобы не заводить отдельный CSS-класс на каждую сеть. Видим и
+   над списком, и над календарём (см. #teamNetworkFilterRow в team.html,
+   вне #teamListView/#teamCalendarView — тот же принцип, что и у фильтра
+   по проекту). */
+.team-network-filter{display:flex;flex-wrap:wrap;gap:8px;padding:4px 12px 12px}
+.chip.net-chip.active{background:var(--net-color);border-color:var(--net-color);color:#fff}
+
 /* «Выбрать» — массовые операции, общие для календаря И перечня карточек
    (team.js: setSelectMode, deleteSelectedTasks — по прямому запросу
    пользователя, 2026-09-25: «а теперь и в перечне карточек, но только для
