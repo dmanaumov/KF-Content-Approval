@@ -295,7 +295,23 @@ function mediaHtml(task, canReorder) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l0 10M8 7L5 10M8 7l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l0-10M16 17l3-3M16 17l-3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>`
     : '';
-  return `<div class="media">${reorderBtn}<div class="carousel" data-count="${task.media.length}">${slides}</div>${counter}</div>`;
+  // Стрелки для листания карусели кликом — на телефоне листают свайпом
+  // (нативный горизонтальный скролл, см. .carousel), но на десктопе без
+  // тачпада (жалоба клиента 2026-09-29: "если у клиента Windows, то у него
+  // нет swipe") мышью пролистать было нечем — колесо мыши по умолчанию
+  // скроллит страницу вертикально, а не карусель горизонтально. Сами
+  // стрелки не следят за текущим слайдом (не прячутся на первом/последнем)
+  // — carousel.scrollBy() на границе просто не даёт скроллу уйти дальше,
+  // усложнять ради этого не стали.
+  const navArrows = task.media.length > 1
+    ? `<button type="button" class="carousel-nav prev" data-action="carousel-prev" aria-label="Предыдущее фото/видео">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button type="button" class="carousel-nav next" data-action="carousel-next" aria-label="Следующее фото/видео">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>`
+    : '';
+  return `<div class="media">${reorderBtn}<div class="carousel" data-count="${task.media.length}">${slides}</div>${navArrows}${counter}</div>`;
 }
 
 function cardHtml(task) {
@@ -1323,6 +1339,13 @@ document.getElementById('stack').addEventListener('click', (e) => {
   }
   if (btn.dataset.action === 'open-lightbox') {
     openLightbox(btn.dataset.src);
+  }
+  if (btn.dataset.action === 'carousel-prev' || btn.dataset.action === 'carousel-next') {
+    const carousel = btn.closest('.media')?.querySelector('.carousel');
+    if (carousel) {
+      const dir = btn.dataset.action === 'carousel-prev' ? -1 : 1;
+      carousel.scrollBy({ left: dir * (carousel.clientWidth || 0), behavior: 'smooth' });
+    }
   }
 });
 
