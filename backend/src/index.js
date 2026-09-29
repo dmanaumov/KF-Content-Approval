@@ -10,6 +10,7 @@ const mm = require('./mattermostClient');
 const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile, extractDiskLinks, stripDiskLinks } = require('./diskEmbeds');
 const diskUpload = require('./diskUpload');
+const diskCache = require('./diskCache');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
@@ -5615,6 +5616,41 @@ app.get('/api/files/:boardId/:fileId', async (req, res) => {
 app.get('/api/disk-embed', async (req, res) => {
   const shareUrl = parseAndValidateShareUrl(req.query.u || '');
   if (!shareUrl) return res.status(400).json({ error: 'invalid_disk_url' });
+  // Local cache first (see diskCache.js): once a file is here, Nextcloud is
+  // never touched again for it — not for repeat views, not for video seeks.
+  // First view of an uncached file waits up to DISK_CACHE_WAIT_MS for the
+  // one full download; if it isn't done by then (big video), this request
+  // falls through to the old passthrough stream while the download finishes
+  // in the background for everyone after.
+  let cached = await diskCache.lookup(shareUrl);
+  if (!cached) {
+    cached = await Promise.race([
+      diskCache.ensureCached(shareUrl),
+      new Promise((r) => setTimeout(() => r(null), config.diskCacheWaitMs)),
+    ]);
+  }
+  if (cached) {
+    return res.sendFile(
+      cached.file,
+      {
+        acceptRanges: true,
+        cacheControl: false,
+        lastModified: true,
+        etag: true,
+        headers: {
+          'Content-Type': cached.contentType || 'application/octet-stream',
+          'Cache-Control': 'public, max-age=604800, immutable',
+          'X-Disk-Cache': 'HIT',
+        },
+      },
+      (err) => {
+        if (err && !res.headersSent) res.status(err.status || 500).end();
+        else if (err && err.code !== 'ECONNABORTED' && err.code !== 'ECONNRESET') {
+          console.error('[api] disk-embed cached send failed:', err.message);
+        }
+      }
+    );
+  }
   try {
     const upstream = await streamDiskFile(shareUrl, req.headers.range);
     res.status(upstream.status);
@@ -5623,6 +5659,30 @@ app.get('/api/disk-embed', async (req, res) => {
       if (v) res.setHeader(h, v);
     }
     if (!res.hasHeader('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('X-Disk-Cache', 'MISS');
+    // If the viewer disconnects (tab closed, video element dropped), abort
+    // the upstream request right away instead of leaving a Nextcloud PHP
+    // worker stuck on it.
+    // Stall watchdog: a PAUSED video doesn't disconnect — the browser just
+    // stops reading, backpressure propagates all the way back, and the
+    // Nextcloud PHP worker sits blocked on write until Apache's Timeout
+    // (300s by default — exactly the 5-minute requests seen in the Nextcloud
+    // log 2026-09-29). If no bytes have moved for DISK_STREAM_IDLE_MS, drop
+    // both sides; the <video> element simply re-requests with a Range header
+    // when playback resumes.
+    let lastProgress = Date.now();
+    upstream.body.on('data', () => { lastProgress = Date.now(); });
+    const idleTimer = setInterval(() => {
+      if (Date.now() - lastProgress > config.diskStreamIdleMs) {
+        clearInterval(idleTimer);
+        upstream.body.destroy();
+        res.destroy();
+      }
+    }, 5000);
+    res.on('close', () => {
+      clearInterval(idleTimer);
+      if (!res.writableFinished && upstream.body && upstream.body.destroy) upstream.body.destroy();
+    });
     // Every request for this file goes agency-server → our Node process →
     // disk.kontentferma → back — two hops, and disk.kontentferma isn't fast.
     // A share link's bytes never change once uploaded (see comment on
@@ -5930,6 +5990,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }
+  diskCache.init(); // cleans leftover .part files, never throws — see diskCache.js
   app.listen(config.port, () => {
     console.log(`KF Approval listening on :${config.port}`);
     if (!config.mattermostUrl || !config.mattermostToken) {

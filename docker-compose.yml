@@ -71,6 +71,10 @@ services:
       # Postgres. Safe to remove once you've confirmed the staff page still
       # shows the same client link after the first deploy of this version.
       - project-links-data:/app/data
+      # Local cache of disk.kontentferma media (backend/src/diskCache.js) —
+      # persistent so a redeploy doesn't send every file back through
+      # Nextcloud again. Size cap: DISK_CACHE_MAX_MB (default 5 GB).
+      - disk-cache:/app/cache
     networks:
       default:
       dokploy-network:
@@ -78,6 +82,7 @@ services:
 volumes:
   project-links-data:
   kf-db-data:
+  disk-cache:
 
 networks:
   default:

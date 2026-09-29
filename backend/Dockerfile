@@ -14,7 +14,7 @@ COPY frontend /frontend
 # already-issued link). The actual persistence comes from docker-compose.yml's
 # named volume at this path, this just makes sure the directory exists even
 # before that volume's first write.
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/cache/disk
 
 ENV NODE_ENV=production
 EXPOSE 3000

@@ -13,6 +13,7 @@
 
 const fetch = require('node-fetch');
 const config = require('./config');
+const diskCache = require('./diskCache');
 
 // Bound time-to-headers on upstream disk-server requests (node-fetch has no
 // default timeout — a hanging disk server would otherwise stall the whole
@@ -74,8 +75,16 @@ function parseAndValidateShareUrl(rawUrl) {
   return `${u.protocol}//${u.hostname}${u.pathname}`;
 }
 
+// Straight to the public-share WebDAV URL that /s/<token>/download would
+// 303-redirect to anyway — saves one PHP request on Nextcloud per fetch.
 function downloadUrlFor(shareUrl) {
-  return `${shareUrl}/download`;
+  return diskCache.davUrlFor(shareUrl);
+}
+
+function kindFromContentType(contentType) {
+  if (contentType.startsWith('image/')) return 'image';
+  if (contentType.startsWith('video/')) return 'video';
+  return 'file';
 }
 
 // Cached in memory only (no database, matches the rest of the app) — a
@@ -87,16 +96,21 @@ const kindCache = new Map(); // shareUrl -> { kind, name }
 
 async function resolveKind(shareUrl) {
   if (kindCache.has(shareUrl)) return kindCache.get(shareUrl);
+  // Already on local disk (survives restarts) — no network call at all.
+  const cached = await diskCache.lookup(shareUrl);
+  if (cached) {
+    const result = { kind: kindFromContentType(cached.contentType), name: cached.name || '' };
+    kindCache.set(shareUrl, result);
+    return result;
+  }
   try {
     const res = await fetchWithTimeout(downloadUrlFor(shareUrl), { headers: { Range: 'bytes=0-1' } }, config.diskProbeTimeoutMs);
     const contentType = (res.headers.get('content-type') || '').split(';')[0].trim();
     const disposition = res.headers.get('content-disposition') || '';
     const nameMatch = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
     const name = nameMatch ? decodeURIComponent(nameMatch[1]) : '';
-    let kind = 'file';
-    if (contentType.startsWith('image/')) kind = 'image';
-    else if (contentType.startsWith('video/')) kind = 'video';
-    const result = { kind, name };
+    if (res.body && res.body.resume) res.body.resume();
+    const result = { kind: kindFromContentType(contentType), name };
     kindCache.set(shareUrl, result);
     return result;
   } catch (err) {

@@ -147,6 +147,25 @@ module.exports = {
   // must fail fast or the whole cabinet waits on it.
   diskProbeTimeoutMs: parseInt(process.env.MM_DISK_PROBE_TIMEOUT_MS || '5000', 10),
 
+  // Local on-disk cache of disk.kontentferma share files (backend/src/diskCache.js)
+  // so /api/disk-embed stops hammering Nextcloud with one proxied request per
+  // view/seek. DISK_CACHE_DIR must be a persistent volume (docker-compose.yml
+  // mounts one at /app/cache). DISK_CACHE_WAIT_MS: how long the FIRST viewer
+  // of a not-yet-cached file waits for the full download before we fall back
+  // to plain streaming passthrough for that one request (the download keeps
+  // going in the background either way) — small images finish well within
+  // it, big videos start playing via passthrough and are cached for the next view.
+  diskCacheEnabled: (process.env.DISK_CACHE_ENABLED || 'true').toLowerCase() !== 'false',
+  diskCacheDir: process.env.DISK_CACHE_DIR || '/app/cache/disk',
+  diskCacheMaxMb: parseInt(process.env.DISK_CACHE_MAX_MB || '5120', 10),
+  diskCacheMaxFileMb: parseInt(process.env.DISK_CACHE_MAX_FILE_MB || '500', 10),
+  diskCacheMaxConcurrent: parseInt(process.env.DISK_CACHE_MAX_CONCURRENT || '2', 10),
+  diskCacheWaitMs: parseInt(process.env.DISK_CACHE_WAIT_MS || '8000', 10),
+  diskCacheDownloadTimeoutMs: parseInt(process.env.DISK_CACHE_DOWNLOAD_TIMEOUT_MS || '600000', 10),
+  // Passthrough (not-yet-cached) streams with no bytes moving for this long
+  // are dropped so a paused video can't pin a Nextcloud worker — see index.js.
+  diskStreamIdleMs: parseInt(process.env.DISK_STREAM_IDLE_MS || '30000', 10),
+
   // Real drag-and-drop / file-picker upload from the /team cabinet straight
   // to disk.kontentferma (see backend/src/diskUpload.js) — as opposed to the
   // existing "paste an already-created share link" fallback, which stays
