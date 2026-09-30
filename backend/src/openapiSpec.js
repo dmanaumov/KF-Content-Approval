@@ -73,7 +73,7 @@ function buildOpenApiSpec() {
             title: { type: 'string' },
             status: { type: 'string', enum: ['waiting', 'approved', 'changes', 'published', 'archived'], nullable: true },
             statusLabel: { type: 'string', description: 'сырой текст опции "Статус" в Mattermost' },
-            network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'], nullable: true, description: 'только в GET /api/automation/tasks — разобрано из префикса названия' },
+            network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'], nullable: true, description: 'только в GET /api/automation/tasks — разобрано из префикса названия' },
             recommendedPublishTime: { type: 'string', nullable: true, example: '10:00', description: 'только в GET /api/automation/tasks — из project_settings.publish_time_msk' },
             publishDate: { type: 'string', format: 'date', nullable: true },
             caption: { type: 'string', description: 'текст поста (тело — не путать с keywords ниже)' },
@@ -236,14 +236,14 @@ function buildOpenApiSpec() {
             'Единственный эндпоинт автоматизации, который отдаёт настоящие секреты (то, что заполнено в попапе ' +
             '"Редактировать" на /projects). Одна выдача — один проект: нельзя одним вызовом получить креды сразу ' +
             'всех клиентов. Без параметра network — отдаёт объект со всеми настроенными сетями сразу (ключи из ' +
-            'ig/tg/vk/ok/max/pin, только реально заполненные). С параметром network — отдаёт креды ТОЛЬКО этой сети ' +
+            'ig/tg/vk/ok/max/pin/li, только реально заполненные). С параметром network — отдаёт креды ТОЛЬКО этой сети ' +
             '(меньше данных за вызов, если публикатор и так уже знает, в какую сеть публикует). Формат содержимого ' +
             'каждой сети — на усмотрение разработчика автоматизации. Никогда не логируется даже при включённом ' +
             'DEBUG_MATTERMOST.',
           security: [{ automationApiKey: [] }],
           parameters: [
             { name: 'projectId', in: 'path', required: true, schema: { type: 'string' }, description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
-            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] }, description: 'если задан — отдать креды только этой сети, а не всех сразу' },
+            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] }, description: 'если задан — отдать креды только этой сети, а не всех сразу' },
           ],
           responses: {
             200: {
@@ -254,10 +254,10 @@ function buildOpenApiSpec() {
                     type: 'object',
                     properties: {
                       projectId: { type: 'string' },
-                      network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'], description: 'присутствует в ответе, только если был передан в запросе' },
+                      network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'], description: 'присутствует в ответе, только если был передан в запросе' },
                       credentials: {
                         description:
-                          'БЕЗ network в запросе — объект с ключами ig/tg/vk/ok/max/pin (только заполненные). ' +
+                          'БЕЗ network в запросе — объект с ключами ig/tg/vk/ok/max/pin/li (только заполненные). ' +
                           'С network в запросе — объект с кредами именно этой сети напрямую (не вложен под ключ сети ' +
                           'ещё раз), либо null, если для этой сети у проекта ничего не настроено.',
                         oneOf: [
@@ -271,7 +271,7 @@ function buildOpenApiSpec() {
                 },
               },
             },
-            400: { description: 'projectId не указан/не найден, либо network не из списка ig/tg/vk/ok/max/pin', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            400: { description: 'projectId не указан/не найден, либо network не из списка ig/tg/vk/ok/max/pin/li', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             401: { $ref: '#/components/responses/Unauthorized' },
           },
         },
@@ -299,7 +299,7 @@ function buildOpenApiSpec() {
                   type: 'object',
                   required: ['network'],
                   properties: {
-                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] },
+                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] },
                     expiresAt: { type: 'string', nullable: true, description: 'опционально, но нужен для GET /api/automation/credentials', example: '2026-11-01T00:00:00Z' },
                   },
                   additionalProperties: true,
@@ -317,7 +317,7 @@ function buildOpenApiSpec() {
                     type: 'object',
                     properties: {
                       projectId: { type: 'string' },
-                      network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] },
+                      network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] },
                       credentials: { type: 'object', additionalProperties: true, example: { accessToken: '...', igUserId: '...', expiresAt: '2026-11-01T00:00:00Z', lastRefreshedAt: '2026-09-03T12:00:00.000Z' } },
                     },
                   },
@@ -343,7 +343,7 @@ function buildOpenApiSpec() {
             'самим рефрешем.',
           security: [{ automationApiKey: [] }],
           parameters: [
-            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] }, description: 'если не задан — по всем сетям сразу' },
+            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] }, description: 'если не задан — по всем сетям сразу' },
             { name: 'expiringWithinDays', in: 'query', required: true, schema: { type: 'integer', minimum: 1, maximum: 365 }, description: 'окно в днях от текущего момента' },
           ],
           responses: {
@@ -361,7 +361,7 @@ function buildOpenApiSpec() {
                           properties: {
                             projectId: { type: 'string' },
                             projectLabel: { type: 'string', nullable: true },
-                            network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] },
+                            network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] },
                             expiresAt: { type: 'string' },
                             lastRefreshedAt: { type: 'string', nullable: true },
                           },
@@ -372,7 +372,7 @@ function buildOpenApiSpec() {
                 },
               },
             },
-            400: { description: 'expiringWithinDays не указан/вне диапазона 1-365, либо network не из списка ig/tg/vk/ok/max/pin', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            400: { description: 'expiringWithinDays не указан/вне диапазона 1-365, либо network не из списка ig/tg/vk/ok/max/pin/li', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             401: { $ref: '#/components/responses/Unauthorized' },
           },
         },
@@ -572,7 +572,7 @@ function buildOpenApiSpec() {
                   required: ['title', 'projectId'],
                   properties: {
                     title: { type: 'string', description: 'без префикса соцсети' },
-                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] },
+                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] },
                     projectId: { type: 'string', description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
                     text: { type: 'string', description: 'текст поста (тело)' },
                     keywords: { type: 'string', description: 'ключевые слова/мысли — отдельное поле-бриф, не текст поста' },
@@ -919,7 +919,7 @@ function buildOpenApiSpec() {
                   required: ['title', 'projectId'],
                   properties: {
                     title: { type: 'string', description: 'без префикса соцсети' },
-                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin'] },
+                    network: { type: 'string', enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li'] },
                     projectId: { type: 'string', description: 'id опции свойства "Проект", см. GET /api/automation/projects' },
                     text: { type: 'string', description: 'текст поста (тело)' },
                     keywords: { type: 'string', description: 'ключевые слова/мысли — отдельное поле-бриф, не текст поста' },

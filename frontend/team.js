@@ -29,8 +29,9 @@ const SOCIAL_MAP = {
   ok: { label: 'Одноклассники', short: 'OK', color: '#EE8208' },
   max: { label: 'MAX', short: 'MAX', color: '#7C3AED' },
   pin: { label: 'Pinterest', short: 'PIN', color: '#E60023' },
+  li: { label: 'LinkedIn', short: 'LI', color: '#0A66C2' },
 };
-const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max|pin)\b[\s:\-–—]*/i;
+const SOCIAL_PREFIX_RE = /^(ig|tg|vk|ok|max|pin|li)\b[\s:\-–—]*/i;
 function detectSocial(title) {
   const m = String(title || '').match(SOCIAL_PREFIX_RE);
   if (!m) return null;

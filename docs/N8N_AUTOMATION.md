@@ -264,7 +264,7 @@ GET  /api/automation/projects/{projectId}/credentials — НОВОЕ: реаль
                                                       запросом получить креды
                                                       сразу всех клиентов.
                                                       Опциональный query-параметр
-                                                      ?network=ig|tg|vk|ok|max —
+                                                      ?network=ig|tg|vk|ok|max|pin|li —
                                                       если знаете сеть заранее,
                                                       отдаст креды ТОЛЬКО этой
                                                       сети (не гонять остальные
@@ -309,7 +309,7 @@ GET  /api/automation/credentials                    — НОВОЕ (2026-09-03):
 | Параметр | Где | Обязателен | Значения | Описание |
 |---|---|---|---|---|
 | `projectId` | path | да | id опции свойства "Проект" | см. `GET /api/automation/projects` |
-| `network` | query | нет | `ig` \| `tg` \| `vk` \| `ok` \| `max` | если передан — вернуть креды только этой сети |
+| `network` | query | нет | `ig` \| `tg` \| `vk` \| `ok` \| `max` \| `pin` \| `li` | если передан — вернуть креды только этой сети |
 | `X-Api-Key` | header | да | значение `AUTOMATION_API_KEY` | тот же ключ, что и для всех `/api/automation/*` |
 
 **Без `network`** — весь набор сразу:
@@ -345,7 +345,7 @@ X-Api-Key: <ваш ключ>
 { "projectId": "ajdkoks6pmti4bk388yuarrjdnr", "network": "vk", "credentials": null }
 ```
 
-**Ошибки**: `400 project_id_required` / `400 project_not_found` (плохой/неизвестный `projectId`), `400 invalid_network` (значение `network` не из списка `ig`/`tg`/`vk`/`ok`/`max`), `401` без корректного `X-Api-Key`.
+**Ошибки**: `400 project_id_required` / `400 project_not_found` (плохой/неизвестный `projectId`), `400 invalid_network` (значение `network` не из списка `ig`/`tg`/`vk`/`ok`/`max`/`pin`/`li`), `401` без корректного `X-Api-Key`.
 
 **Рекомендация**: если ваш workflow уже определил сеть карточки на шаге 3 (`GET /api/automation/tasks` → `network` в каждой задаче), сразу передавайте `?network=<то самое значение>` — тогда каждый вызов несёт только один реально нужный секрет, а не все пять сетей проекта разом.
 
@@ -399,7 +399,7 @@ credential (не коммитить в git, не логировать, роти�
 |---|---|---|---|---|
 | `projectId` | path | да | id опции свойства "Проект" | см. `GET /api/automation/projects` |
 | `X-Api-Key` | header | да | значение `AUTOMATION_API_KEY` | тот же ключ, что и для всех `/api/automation/*` |
-| `network` | body | да | `ig` \| `tg` \| `vk` \| `ok` \| `max` | какую сеть обновляем |
+| `network` | body | да | `ig` \| `tg` \| `vk` \| `ok` \| `max` \| `pin` \| `li` | какую сеть обновляем |
 | остальные поля | body | нет* | что угодно | сохраняются как есть — формат каждой сети на ваше усмотрение, как и раньше (см. п.3 в конце документа); *хотя бы одно поле кроме `network` обязательно |
 
 ```
@@ -451,7 +451,7 @@ Content-Type: application/json
 | Параметр | Где | Обязателен | Значения | Описание |
 |---|---|---|---|---|
 | `expiringWithinDays` | query | **да** | целое число 1–365 | окно в днях от текущего момента |
-| `network` | query | нет | `ig` \| `tg` \| `vk` \| `ok` \| `max` | если не задан — по всем сетям сразу |
+| `network` | query | нет | `ig` \| `tg` \| `vk` \| `ok` \| `max` \| `pin` \| `li` | если не задан — по всем сетям сразу |
 | `X-Api-Key` | header | да | значение `AUTOMATION_API_KEY` | тот же ключ |
 
 ```
@@ -922,7 +922,7 @@ apiKeys.js`).
    заполняет вручную через попап «Редактировать» на внутренней странице
    `/projects`):
    - `logo_url` — лого клиента (не нужно для публикации, для справки);
-   - `social_credentials` — JSON-объект с ключами `ig`/`tg`/`vk`/`ok`/`max`,
+   - `social_credentials` — JSON-объект с ключами `ig`/`tg`/`vk`/`ok`/`max`/`pin`/`li`,
      содержимое каждого ключа — что понадобится для API конкретной сети
      (токены, id аккаунта/группы и т.п.) — **формат содержимого каждого
      ключа определяет сам разработчик n8n**, в зависимости от того, что
@@ -981,7 +981,7 @@ CREATE TABLE project_settings (
   link_token text NOT NULL,          -- НЕ нужен для этой автоматизации
   link_token_updated_at timestamptz,
   logo_url text,                     -- НЕ нужен для этой автоматизации
-  social_credentials jsonb,          -- {"ig": {...}, "tg": {...}, "vk": {...}, "ok": {...}, "max": {...}}
+  social_credentials jsonb,          -- {"ig": {...}, "tg": {...}, "vk": {...}, "ok": {...}, "max": {...}, "pin": {...}, "li": {...}}
   start_date text,                   -- отчётная дата проекта (дата старта), "YYYY-MM-DD" или пусто
   posts_per_month text,              -- количество постов в месяц (число строкой) или пусто
 publish_time_msk text,             -- время публикации (МСК), "HH:MM" или пусто
@@ -1004,7 +1004,7 @@ CREATE TABLE publication_log (
   board_id text NOT NULL,
   project_id text NOT NULL,
   task_id text NOT NULL,             -- id карточки Mattermost
-  network text,                      -- 'ig' | 'tg' | 'vk' | 'ok' | 'max'
+  network text,                      -- 'ig' | 'tg' | 'vk' | 'ok' | 'max' | 'pin' | 'li'
   status text NOT NULL,              -- 'success' | 'error' — на ваше усмотрение, но эти два минимум
   message text,                      -- текст ошибки, если status='error'; ссылка/детали, если 'success'
   post_url text,                     -- ссылка на реально опубликованный пост
@@ -1127,7 +1127,7 @@ GET {appBase}/api/disk-embed?u={encodeURIComponent(shareUrl)}  — для source
 `` `код` ``, `[текст](url)`). Чтобы задумка дошла до целевой соцсети как есть:
 - **Telegram** — отправляйте с `parse_mode=Markdown`: `**...**` станут жирными
   в посте, переносы сохраняются.
-- **Остальные сети** (VK/Instagram/OK/MAX) — форматирование своё или никакое:
+- **Остальные сети** (VK/Instagram/OK/MAX/Pinterest/LinkedIn) — форматирование своё или никакое:
   конвертируйте/снимайте маркдаун под их синтаксис, но переносы строк
   обязательно сохраняйте.
 
@@ -1139,14 +1139,14 @@ GET {appBase}/api/disk-embed?u={encodeURIComponent(shareUrl)}  — для source
 
 - Берёте `card.title`.
 - Проверяете, начинается ли (без учёта регистра) с одного из: `ig`, `tg`,
-  `vk`, `ok`, `max` — причём именно как отдельное "слово" в начале (после
-  сокращения должна идти НЕ буква/цифра — то есть "Igor" не должно
-  считаться за `ig`).
+  `vk`, `ok`, `max`, `pin`, `li` — причём именно как отдельное "слово" в
+  начале (после сокращения должна идти НЕ буква/цифра — то есть "Igor" не
+  должно считаться за `ig`, а "link" не должно считаться за `li`).
 - Если да — дальше может идти необязательный разделитель: пробел, двоеточие
   `:`, тире `-`/`–`/`—` (в любом сочетании) — их тоже нужно "съесть", чтобы
   получить чистый текст названия без сокращения.
 - Соответствие: `ig`→Instagram, `tg`→Telegram, `vk`→ВКонтакте, `ok`→
-  Одноклассники, `max`→MAX.
+  Одноклассники, `max`→MAX, `pin`→Pinterest, `li`→LinkedIn.
 - Если ничего не совпало — у карточки нет опознанной сети; агентство ещё не
   проставило сокращение в названии, публикацию для такой карточки лучше
   пропустить и залогировать как ошибку (`status='error'`, `message='сеть не
@@ -1154,9 +1154,26 @@ GET {appBase}/api/disk-embed?u={encodeURIComponent(shareUrl)}  — для source
 
 Пример на JS (ровно то же регулярное выражение, что в `app.js`):
 ```js
-const m = String(cardTitle).match(/^(ig|tg|vk|ok|max)\b[\s:\-–—]*/i);
-const network = m ? m[1].toLowerCase() : null; // 'ig' | 'tg' | 'vk' | 'ok' | 'max' | null
+const m = String(cardTitle).match(/^(ig|tg|vk|ok|max|pin|li)\b[\s:\-–—]*/i);
+const network = m ? m[1].toLowerCase() : null; // 'ig' | 'tg' | 'vk' | 'ok' | 'max' | 'pin' | 'li' | null
 ```
+
+**LinkedIn — на что обратить внимание при построении POST-запроса.** В
+отличие от остальных сетей, LinkedIn API требует явно указать, ОТ ЧЬЕГО
+ИМЕНИ публикуется пост: обычный OAuth-токен личного профиля
+(scope `w_member_social`) не даст постить в Company Page клиента — для
+этого нужен отдельный scope `w_organization_social` и `authorUrn`
+(`urn:li:person:{id}` для личного профиля или `urn:li:organization:{id}`
+для страницы компании — какой из двух используется, решает агентство при
+подключении клиента). Так что `social_credentials.li` разумно хранить
+минимум как `{"accessToken": "...", "authorUrn": "urn:li:person:... или
+urn:li:organization:..."}` — так сразу понятно, от чьего имени публиковать,
+без гадания по типу токена. Ещё две особенности: (1) сам вызов Posts API
+требует заголовок `LinkedIn-Version: <YYYYMM>` (например `202409`) — без
+него запрос отклоняется; (2) access token живёт ~60 дней, а автоматический
+рефреш без отдельного статуса Marketing Developer Platform недоступен —
+как и с VK/OK/MAX, рассчитывайте на ручной перевыпуск токена агентством
+через попап «Редактировать», а не на автообновление.
 
 ## 4. Ежедневный алгоритм
 
