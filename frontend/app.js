@@ -1281,9 +1281,22 @@ stackEl.addEventListener('pointercancel', cancelSwipe);
 // после каждого render() (список карточек периодически перерисовывается
 // целиком — см. loadTasks/render — так что слушатели на самих .carousel
 // всё равно пришлось бы навешивать заново после каждого опроса).
+//
+// РЕГРЕССИЯ (найдена 2026-10-01, жалоба "опять всегда 1/4"): искали .dots
+// через carousel.nextElementSibling — работало, пока .dots шёл в разметке
+// СРАЗУ за .carousel. Фикс "нет свайпа на Windows" вставил между ними
+// кнопки .carousel-nav (см. mediaHtml → navArrows), и nextElementSibling
+// стал указывать на первую стрелку, а не на .dots — проверка
+// classList.contains('dots') проваливалась, функция тихо выходила, счётчик
+// переставал обновляться вообще (оставался «1 / N» с первого рендера,
+// хотя сам скролл карусели работал нормально). .dots и .carousel-nav оба
+// position:absolute внутри .media (см. app.css) — порядок в разметке на
+// раскладку не влияет, так что ищем .dots явно через родителя, а не через
+// соседний элемент — тогда порядок блоков внутри .media можно будет менять
+// и дальше, не ломая счётчик снова.
 function updateCarouselCounter(carousel) {
-  const dots = carousel.nextElementSibling;
-  if (!dots || !dots.classList.contains('dots')) return;
+  const dots = carousel.parentElement && carousel.parentElement.querySelector('.dots');
+  if (!dots) return;
   const count = parseInt(carousel.dataset.count, 10) || 0;
   if (count <= 1) return;
   const width = carousel.clientWidth || 1;
