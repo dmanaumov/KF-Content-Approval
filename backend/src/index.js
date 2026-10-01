@@ -12,6 +12,8 @@ const { parseAndValidateShareUrl, resolveKind, streamDiskFile, extractDiskLinks,
 const diskUpload = require('./diskUpload');
 const diskCache = require('./diskCache');
 const mmFileCache = require('./mattermostFileCache');
+const telegramStickers = require('./telegramStickers');
+const stickerPacks = require('./stickerPacks');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
@@ -1997,6 +1999,105 @@ app.get('/api/projects/:projectId/secrets/log', staffAuth, async (req, res) => {
   } catch (err) {
     console.error('[api] GET secrets log failed:', err.message);
     res.status(500).json({ error: 'secrets_log_failed', message: err.message });
+  }
+});
+
+// GET/POST/DELETE /api/projects/:projectId/sticker-packs — «Стикеры»
+// вкладка в попапе «Редактировать» (frontend/projects.js) И стикер-пикер в
+// редакторе текста (frontend/team.js, кнопка у tmCaptionInput). ПЛАН —
+// проект может иметь НЕСКОЛЬКО привязанных паков одновременно (у клиента
+// может быть не один набор стикеров, а несколько — разных тематик/кампаний,
+// заведённых в разное время), поэтому это список, а не одно поле.
+//
+// GET возвращает уже сохранённый каталог ВСЕХ привязанных паков (без похода
+// в Telegram); POST принимает { packName } (короткое имя пака — то, что
+// после .../addemoji/ в ссылке StickersBot) и ДОБАВЛЯЕТ его к уже
+// привязанным (не заменяет) — реально запрашивает у Telegram и сохраняет
+// результат; повторный POST с уже привязанным именем просто пере-
+// синхронизирует именно этот пак. DELETE отвязывает один пак от проекта
+// (остальные привязанные остаются). См. комментарий над
+// project_sticker_packs/telegram_stickers в db.js. Гейт — staffCanOpenProject
+// (любой, кто вообще открывает попап/задачу проекта, может и смотреть, и
+// синхронизировать каталог — это не секреты/креды, просто справочник
+// стикеров).
+app.get('/api/projects/:projectId/sticker-packs', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanOpenProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
+  try {
+    res.json({ packs: await stickerPacks.listPacks(boardId, req.params.projectId) });
+  } catch (err) {
+    console.error('[api] GET sticker-packs failed:', err.message);
+    res.status(500).json({ error: 'sticker_packs_failed', message: err.message });
+  }
+});
+
+app.post('/api/projects/:projectId/sticker-packs', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanOpenProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
+  const packName = String((req.body && req.body.packName) || '').trim();
+  if (!packName) {
+    return res.status(400).json({ error: 'invalid_pack_name', message: 'Укажите короткое имя стикерпака.' });
+  }
+  try {
+    const fetched = await telegramStickers.fetchStickerSet(packName);
+    if (!fetched.stickers.length) {
+      return res.status(400).json({
+        error: 'no_custom_emoji',
+        message: 'В этом паке нет кастомных эмодзи-стикеров (или имя пака неверное) — проверьте ссылку addemoji.',
+      });
+    }
+    await stickerPacks.addOrSyncPack(boardId, req.params.projectId, packName, fetched);
+    res.json({ packs: await stickerPacks.listPacks(boardId, req.params.projectId) });
+  } catch (err) {
+    console.error('[api] POST sticker-packs sync failed:', err.message);
+    const status = /TELEGRAM_BOT_TOKEN/.test(err.message) ? 503 : 400;
+    res.status(status).json({ error: 'sticker_sync_failed', message: err.message });
+  }
+});
+
+app.delete('/api/projects/:projectId/sticker-packs/:packName', staffAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(await staffCanOpenProject(req, req.params.projectId))) {
+    return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
+  }
+  try {
+    await stickerPacks.removePack(boardId, req.params.projectId, req.params.packName);
+    res.json({ packs: await stickerPacks.listPacks(boardId, req.params.projectId) });
+  } catch (err) {
+    console.error('[api] DELETE sticker-pack failed:', err.message);
+    res.status(500).json({ error: 'sticker_pack_remove_failed', message: err.message });
+  }
+});
+
+// GET /api/sticker-thumb/:customEmojiId — serves one sticker's cached
+// thumbnail bytes. Deliberately UNAUTHENTICATED and not scoped to a
+// project/boardId in the URL, same posture as /api/files/:boardId/:fileId
+// above: a custom_emoji_id is itself an opaque, unguessable Telegram id, and
+// this route is referenced both from staff pages (team.js/projects.js,
+// behind staffAuth already) and potentially from the client-facing
+// approval cabinet (wherever a post's text/preview is shown) — gating it
+// again here would need a third auth mode for no real security gain.
+app.get('/api/sticker-thumb/:customEmojiId', async (req, res) => {
+  try {
+    const sticker = await stickerPacks.findSticker(req.params.customEmojiId);
+    if (!sticker) return res.status(404).end();
+    let cached = await telegramStickers.lookupThumb(sticker.customEmojiId);
+    if (!cached) cached = await telegramStickers.ensureThumbCached(sticker.customEmojiId, sticker.thumbFileId);
+    if (!cached) return res.status(502).end();
+    res.sendFile(cached.file, {
+      cacheControl: false,
+      headers: { 'Content-Type': cached.contentType || 'image/webp', 'Cache-Control': 'public, max-age=604800, immutable' },
+    });
+  } catch (err) {
+    console.error('[api] sticker thumb failed:', err.message);
+    res.status(500).end();
   }
 });
 

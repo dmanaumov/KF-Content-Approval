@@ -1469,6 +1469,11 @@ async function openEdit(projectId, label) {
   editingCanManageTeam = false;
   teamAddError.hidden = true;
   renderTeamList();
+  // Стикеры — свои у каждого проекта, тот же принцип сброса, что и у
+  // команды/лога секретов выше.
+  document.getElementById('editStickerPackName').value = '';
+  document.getElementById('stickerSyncError').hidden = true;
+  renderStickerPacksList([]);
   switchEditTab('settings');
   document.getElementById('editModal').classList.add('show');
 
@@ -1478,6 +1483,7 @@ async function openEdit(projectId, label) {
       fetch(`/api/projects/${encodeURIComponent(projectId)}/secrets`),
       loadTgPickerData(),
       loadTeamTab(),
+      loadStickerPacks(),
     ]);
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error);
@@ -1534,7 +1540,121 @@ function switchEditTab(name) {
   document.getElementById('editTabCerberus').hidden = name !== 'cerberus';
   document.getElementById('editTabTeam').hidden = name !== 'team';
   document.getElementById('editTabSecrets').hidden = name !== 'secrets';
+  document.getElementById('editTabStickers').hidden = name !== 'stickers';
 }
+
+// --- Стикеры (кастомные эмодзи клиента, вкладка «Стикеры») ---------------
+//
+// Проект может иметь НЕСКОЛЬКО привязанных паков одновременно (у клиента
+// бывает не один набор стикеров, а несколько — разных тематик/кампаний,
+// заведённых в разное время), поэтому это список карточек, а не одно поле —
+// см. комментарий над /api/projects/:id/sticker-packs в index.js. GET
+// возвращает уже синхронизированный каталог ВСЕХ привязанных паков;
+// «Добавить» делает POST с новым именем (ДОБАВЛЯЕТ пак к уже привязанным, не
+// заменяет), у каждой карточки своя кнопка «✕», которая DELETE-ит именно
+// этот пак (остальные привязанные остаются).
+function renderStickerPacksList(packs) {
+  const list = document.getElementById('stickerPacksList');
+  const empty = document.getElementById('stickerPacksEmpty');
+  const items = Array.isArray(packs) ? packs : [];
+  if (!items.length) {
+    list.innerHTML = '';
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  list.innerHTML = items
+    .map((pack) => {
+      const hint = pack.syncedAt
+        ? `${pack.stickers.length} стикер(ов), синхронизировано ${new Date(pack.syncedAt).toLocaleString('ru-RU')}`
+        : '';
+      const tiles = pack.stickers
+        .map(
+          (s) => `
+        <div class="sticker-tile" data-tip="${esc(s.customEmojiId)}">
+          <img src="${esc(s.thumbUrl)}" alt="${esc(s.emoji)}" loading="lazy">
+          <span class="sticker-tile-emoji">${esc(s.emoji)}</span>
+        </div>`
+        )
+        .join('');
+      return `
+    <div class="sticker-pack-card">
+      <div class="sticker-pack-header">
+        <span class="sticker-pack-name">«${esc(pack.packTitle || pack.packName)}»</span>
+        <button type="button" class="sticker-pack-remove-btn" data-pack-name="${esc(pack.packName)}" data-label="${esc(pack.packTitle || pack.packName)}" title="Отвязать пак">✕</button>
+      </div>
+      ${hint ? `<div class="sticker-synced-hint">${esc(hint)}</div>` : ''}
+      <div class="sticker-grid">${tiles}</div>
+    </div>`;
+    })
+    .join('');
+}
+
+async function loadStickerPacks() {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/sticker-packs`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    renderStickerPacksList(data.packs);
+  } catch (err) {
+    renderStickerPacksList([]);
+  }
+}
+
+async function addStickerPack() {
+  const input = document.getElementById('editStickerPackName');
+  const packName = input.value.trim();
+  const errBox = document.getElementById('stickerSyncError');
+  errBox.hidden = true;
+  if (!packName) {
+    errBox.textContent = 'Укажите короткое имя пака.';
+    errBox.hidden = false;
+    return;
+  }
+  const btn = document.getElementById('stickerSyncBtn');
+  btn.disabled = true;
+  btn.textContent = 'Добавление…';
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/sticker-packs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packName }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    renderStickerPacksList(data.packs);
+    input.value = '';
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Добавить';
+  }
+}
+
+document.getElementById('stickerSyncBtn').addEventListener('click', addStickerPack);
+
+document.getElementById('stickerPacksList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.sticker-pack-remove-btn');
+  if (!btn) return;
+  const packName = btn.dataset.packName;
+  const label = btn.dataset.label;
+  if (!confirm(`Отвязать пак «${label}» от проекта?\n\nЕго стикеры исчезнут из пикера вставки для этого проекта (но останутся доступны другим проектам, если он привязан и там).`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(editingProjectId)}/sticker-packs/${encodeURIComponent(packName)}`,
+      { method: 'DELETE' }
+    );
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error);
+    renderStickerPacksList(data.packs);
+  } catch (err) {
+    toast('Не удалось отвязать пак: ' + err.message);
+    btn.disabled = false;
+  }
+});
 
 function closeEdit() {
   document.getElementById('editModal').classList.remove('show');

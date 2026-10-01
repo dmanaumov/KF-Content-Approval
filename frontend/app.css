@@ -244,6 +244,10 @@ button{cursor:pointer}
 .caption-wrap.empty{padding-bottom:12px}
 .caption{font-size:14px;line-height:1.52;max-height:126px;overflow:hidden;position:relative}
 .caption.open{max-height:none}
+/* Стикеры клиента (кастомные эмодзи) внутри текста поста — formatTelegram()
+   в app.js превращает маркер [[sticker:id:emoji]] в эту картинку. Размер
+   подогнан под строку текста, как у реального кастомного эмодзи в Telegram. */
+.sticker-inline{width:1.1em;height:1.1em;vertical-align:-0.2em;object-fit:contain}
 .caption-head{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0 0 6px}
 .caption-tip{flex:1;min-width:0;color:var(--muted);font-size:12px;font-weight:650}
 .caption-head-actions{display:flex;gap:8px;flex:0 0 auto}

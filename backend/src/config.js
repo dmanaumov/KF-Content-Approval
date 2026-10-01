@@ -192,6 +192,25 @@ module.exports = {
   // a paused video must not pin a Mattermost connection/socket forever.
   mmFileStreamIdleMs: parseInt(process.env.MM_FILE_STREAM_IDLE_MS || '30000', 10),
 
+  // Telegram Bot API token (backend/src/telegramStickers.js) — used ONLY
+  // for read-only calls (getStickerSet, getFile) to build the per-project
+  // custom-emoji "sticker" catalog (client agency-made letter-badge packs
+  // registered via @Stickers/StickersBot, see claude/kf-approval-mattermost
+  // project notes — a custom emoji's entity binding is lost the instant its
+  // text leaves Telegram's own UI, so staff need to pick it from a real
+  // catalog instead of copy-pasting). Deliberately a NEW, separate token
+  // from BOT_API_KEY below — that one is this app's OWN inbound API key
+  // (n8n → us, header X-Bot-Key), not a Telegram credential at all and
+  // cannot call api.telegram.org. ANY bot's token works here: getStickerSet
+  // is a public lookup by pack short name, it does not require the querying
+  // bot to own or administer the pack.
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  // Local disk cache of sticker thumbnail bytes (same /app/cache volume as
+  // diskCache.js/mattermostFileCache.js — no infra change needed), keyed by
+  // custom_emoji_id. These are tiny (a few KB each) so no eviction/size cap
+  // is needed the way the media caches have one.
+  telegramStickerCacheDir: process.env.TELEGRAM_STICKER_CACHE_DIR || '/app/cache/telegram-stickers',
+
   // Real drag-and-drop / file-picker upload from the /team cabinet straight
   // to disk.kontentferma (see backend/src/diskUpload.js) — as opposed to the
   // existing "paste an already-created share link" fallback, which stays

@@ -255,6 +255,21 @@
 .tm-save-row{display:flex;justify-content:flex-end;gap:8px}
 .tm-save-row .btn{padding:9px 16px;font-size:12.5px;border-radius:11px}
 
+/* Стикеры клиента (кастомные эмодзи, кнопка «🎟 Стикер» у текста поста) —
+   всплывающая панель с миниатюрами, вставляет маркер в textarea (см.
+   insertSticker() в team.js). .tm-sticker-inline — та же маленькая картинка
+   внутри предпросмотра поста (captionWithStickers()), что и у клиента
+   (app.css .sticker-inline) — размер подогнан по тому же принципу. */
+.tm-sticker-picker{margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--card);max-height:260px;overflow-y:auto}
+.tm-sticker-pack-group{margin-bottom:10px}
+.tm-sticker-pack-group:last-child{margin-bottom:0}
+.tm-sticker-pack-title{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px}
+.tm-sticker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:6px}
+.tm-sticker-tile{aspect-ratio:1;border:1px solid var(--line);border-radius:8px;background:#F2F4F4;display:grid;place-items:center;cursor:pointer;padding:4px}
+.tm-sticker-tile img{width:100%;height:100%;object-fit:contain;display:block}
+.tm-sticker-empty{font-size:12px;color:var(--muted);text-align:center;padding:4px}
+.tm-sticker-inline{width:1.1em;height:1.1em;vertical-align:-0.2em;object-fit:contain}
+
 /* Чаты (команда / клиент) */
 .tm-chat{display:flex;flex-direction:column;gap:10px}
 .tm-chat-empty{color:var(--muted);font-size:12.5px;text-align:center;padding:18px 0}
@@ -511,6 +526,7 @@
     --line:#2A3532;
     --accent:#3FA98F;
   }
+  .tm-sticker-tile{background:#222525}
   .chip{background:#262222}
   .chip.need.active{background:#2E1C19;border-color:#4E302C}
   .chip.wait.active{background:#222626;border-color:#3A4040;color:#ECEEEE}

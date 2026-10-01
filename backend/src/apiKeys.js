@@ -35,6 +35,13 @@ const BUILTIN_SEEDS = [
   { name: 'AUTOMATION_API_KEY', label: 'SMM-автоматизация (публикация постов)', value: () => config.automationApiKey },
   { name: 'BOT_API_KEY', label: 'Telegram-бот «Кот Василий»', value: () => config.botApiKey },
   { name: 'GOOGLE_DOCS_API_KEY', label: 'Google Docs интеграция', value: () => config.googleDocsApiKey },
+  // Настоящий токен Telegram-бота от @BotFather — для синхронизации каталога
+  // стикеров клиента (getStickerSet/getFile, см. backend/src/
+  // telegramStickers.js). ОТДЕЛЬНЫЙ от BOT_API_KEY выше: тот — свой же
+  // входящий API-ключ для n8n→нас, не умеет говорить с api.telegram.org
+  // вообще. Любой бот подходит — обе Telegram-функции публичные и не
+  // требуют владения паком.
+  { name: 'TELEGRAM_BOT_TOKEN', label: 'Telegram-бот — синхронизация стикеров клиента', value: () => config.telegramBotToken },
   // NOT a machine secret we generate ourselves — an id/secret Meta issues
   // for the agency's OWN app (Meta for Developers → app → Настройки →
   // Основные), one pair for every project. Used only by the "Освежить" IG

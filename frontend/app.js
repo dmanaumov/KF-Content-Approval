@@ -146,6 +146,19 @@ function formatTelegram(text) {
   s = s.replace(/```([\s\S]*?)```/g, (m, body) => hide(`<pre>${body.replace(/\n/g, '<br>')}</pre>`));
   s = s.replace(/`([^`\n]+)`/g, (m, code) => hide(`<code>${code}</code>`));
 
+  // Стикеры клиента (кастомные эмодзи Telegram, см. вкладка «Стикеры» в
+  // настройках проекта) — staff вставляет их в текст как
+  // [[sticker:<custom_emoji_id>:<эмодзи-заглушка>]] (frontend/team.js,
+  // insertSticker()); здесь превращаем маркер в маленькую картинку вместо
+  // того чтобы показывать клиенту сырые квадратные скобки. customEmojiId
+  // уже прошёл через esc() выше (цифры), сам по себе безопасен в URL.
+  // Thumbnail-роут /api/sticker-thumb/:id не требует авторизации — тот же
+  // принцип, что у остальных медиа-прокси этого приложения (см. index.js).
+  s = s.replace(
+    /\[\[sticker:([^:\]]+):([^\]]+)\]\]/g,
+    (m, id, emoji) => `<img class="sticker-inline" src="/api/sticker-thumb/${id}" alt="${emoji}" title="${emoji}">`
+  );
+
   // Inline styling — flat token pairs, the way Telegram's own parser handles
   // them. Each is replaced in turn so `**bold**` never trips the *italic* rule.
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');

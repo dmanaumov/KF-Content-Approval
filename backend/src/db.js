@@ -170,6 +170,56 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS project_secrets_log_lookup_idx
       ON project_secrets_log (board_id, project_id, changed_at DESC);
   `);
+  // «Стикеры» — Telegram custom-emoji sticker-pack catalog, per project
+  // (added 2026-10-01, see claude/kf-approval-mattermost project notes: a
+  // custom emoji's Telegram entity binding is lost the instant its text
+  // leaves Telegram's own UI, so copy-pasting a client's agency-made
+  // letter-badge stickers into a post silently turned them into plain
+  // fallback emoji — e.g. "ОКТЯБРЬ" becoming "🧡🧡🧡🧡🧡🧡🧡"). Staff register
+  // each client's pack once (via @Stickers/StickersBot, so the pack is
+  // owned by the agency, not a personal account) and give us its short
+  // name here; we sync the real catalog from Telegram (see
+  // backend/src/telegramStickers.js) so staff can pick stickers from actual
+  // thumbnails instead of retyping/copy-pasting broken text.
+  //
+  // A project can have SEVERAL packs linked (a client may register more
+  // than one set over time — different campaigns/themes), so the link is
+  // its own table (one row per project+pack), NOT a single column on
+  // project_settings. The actual sticker catalog is a separate global
+  // table below, NOT nested JSON here — deliberately: the catalog is
+  // Telegram's own data (customEmojiId, emoji, file ids), identical no
+  // matter which project's pack points at it, and a flat table keyed by
+  // custom_emoji_id lets the thumbnail-serving route look a sticker up
+  // directly without knowing which project/pack it belongs to (same
+  // "obscure id, no project scoping needed" posture as the existing
+  // /api/files/:boardId/:fileId media proxy).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_sticker_packs (
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      pack_name text NOT NULL,
+      pack_title text NOT NULL DEFAULT '',
+      position integer NOT NULL DEFAULT 0,
+      synced_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (board_id, project_id, pack_name)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS telegram_stickers (
+      custom_emoji_id text PRIMARY KEY,
+      pack_name text NOT NULL,
+      emoji text NOT NULL DEFAULT '',
+      file_id text NOT NULL DEFAULT '',
+      file_unique_id text NOT NULL DEFAULT '',
+      thumb_file_id text NOT NULL DEFAULT '',
+      position integer NOT NULL DEFAULT 0,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS telegram_stickers_pack_idx
+      ON telegram_stickers (pack_name, position);
+  `);
   // Client-chosen display order of a post's media (photos/videos), keyed by
   // the ids buildTasks() assigns each media item (see taskMapper.js). This is
   // the other reason (besides project_settings above) this app keeps its own

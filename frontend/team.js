@@ -2134,13 +2134,107 @@ function renderMediaPane(t) {
 
 // --- Текст + ключевые слова ---
 
+// Кэш каталога стикеров по projectId — одна и та же задача может открываться
+// и закрываться много раз за сессию, не имеет смысла дёргать Telegram-кэш
+// нашего же бэкенда на каждый клик по кнопке «🎟 Стикер». Сбрасывается
+// только перезагрузкой страницы — если каталог обновили (вкладка «Стикеры»
+// в настройках проекта), staff просто переоткрывает задачу позже или
+// обновляет страницу; не стоит того, чтобы городить инвалидацию кэша ради
+// редкого случая.
+const stickerPackCache = new Map(); // projectId -> array of packs | null
+
+function stickerTileHtml(s) {
+  return `<button type="button" class="tm-sticker-tile" data-action="insert-sticker" data-id="${esc(s.customEmojiId)}" data-emoji="${esc(s.emoji)}" title="${esc(s.emoji)}">
+    <img src="${esc(s.thumbUrl)}" alt="${esc(s.emoji)}" loading="lazy">
+  </button>`;
+}
+
+// Проект может иметь несколько привязанных паков (см. комментарий над
+// /api/projects/:id/sticker-packs в index.js) — показываем стикеры из ВСЕХ
+// сразу, с маленьким заголовком-группой на каждый пак (если пак всего один,
+// заголовок всё равно показываем — лишним не мешает, а код проще).
+async function toggleStickerPicker(t) {
+  const panel = document.getElementById('tmStickerPicker');
+  if (!panel.hidden) {
+    panel.hidden = true;
+    return;
+  }
+  if (!t.projectId) {
+    panel.innerHTML = `<div class="tm-sticker-empty">У задачи не определён проект.</div>`;
+    panel.hidden = false;
+    return;
+  }
+  panel.innerHTML = `<div class="tm-sticker-empty">Загрузка…</div>`;
+  panel.hidden = false;
+  let packs = stickerPackCache.get(t.projectId);
+  if (packs === undefined) {
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(t.projectId)}/sticker-packs`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error);
+      packs = Array.isArray(data.packs) ? data.packs : [];
+    } catch (err) {
+      packs = null;
+    }
+    stickerPackCache.set(t.projectId, packs);
+  }
+  if (panel.hidden) return; // пользователь успел закрыть, пока шёл запрос
+  const withStickers = (packs || []).filter((p) => p.stickers && p.stickers.length);
+  if (!withStickers.length) {
+    panel.innerHTML = `<div class="tm-sticker-empty">У проекта пока нет привязанных стикерпаков — настройте во вкладке «Стикеры» в настройках проекта.</div>`;
+    return;
+  }
+  panel.innerHTML = withStickers
+    .map(
+      (pack) => `
+    <div class="tm-sticker-pack-group">
+      <div class="tm-sticker-pack-title">${esc(pack.packTitle || pack.packName)}</div>
+      <div class="tm-sticker-grid">${pack.stickers.map(stickerTileHtml).join('')}</div>
+    </div>`
+    )
+    .join('');
+}
+
+// Вставляет маркер [[sticker:<id>:<эмодзи>]] в текущую позицию курсора
+// textarea — custom_emoji_id нужен целиком для n8n на публикации (чтобы
+// собрать настоящий Telegram custom-emoji при отправке, не теряя его как
+// при обычном копировании текста из Telegram), эмодзи-заглушка — чтобы
+// маркер был читаем даже без картинки. Рендер маркера обратно в картинку —
+// formatTelegram() в app.js (клиентский предпросмотр) и captionWithStickers()
+// здесь же (предпросмотр у команды, renderPreviewPane ниже).
+function insertSticker(customEmojiId, emoji) {
+  const ta = document.getElementById('tmCaptionInput');
+  const marker = `[[sticker:${customEmojiId}:${emoji}]]`;
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + marker + ta.value.slice(end);
+  const caret = start + marker.length;
+  ta.focus();
+  ta.setSelectionRange(caret, caret);
+  document.getElementById('tmStickerPicker').hidden = true;
+}
+
+// Экранирует текст и заменяет маркеры [[sticker:id:emoji]] на маленькую
+// картинку — то же самое, что formatTelegram() в app.js делает для
+// клиентского предпросмотра, но без остального Markdown-форматирования
+// (bold/italic/links), которое здесь, в предпросмотре команды, никогда и
+// не рендерилось — не стал заодно расширять то, о чём не просили.
+function captionWithStickers(text) {
+  return esc(text).replace(
+    /\[\[sticker:([^:\]]+):([^\]]+)\]\]/g,
+    (m, id, emoji) => `<img class="tm-sticker-inline" src="/api/sticker-thumb/${id}" alt="${emoji}" title="${emoji}">`
+  );
+}
+
 function renderTextPane(t) {
   let html = `<div>
     <div class="tm-field-label">Текст поста</div>
     <textarea class="tm-textarea" id="tmCaptionInput" spellcheck="true">${esc(t.caption || '')}</textarea>
     <div class="tm-save-row" style="margin-top:8px">
       <button type="button" class="btn changes" data-action="save-caption">Сохранить текст</button>
+      <button type="button" class="btn changes" data-action="toggle-sticker-picker">🎟 Стикер</button>
     </div>
+    <div class="tm-sticker-picker" id="tmStickerPicker" hidden></div>
   </div>`;
   if (keywordsPropertyFound) {
     html += `<div>
@@ -2303,7 +2397,7 @@ function renderPreviewPane(t) {
       : `<img src="${mediaFileUrl(media)}" alt="">`
     : `<div class="tm-preview-empty" style="padding:60px 10px">Медиа не выбрано</div>`;
   const captionText = stripAiTag(t.caption || bare || '');
-  const captionHtml = captionText ? esc(captionText) : '<span class="tm-preview-empty">Текст ещё не задан</span>';
+  const captionHtml = captionText ? captionWithStickers(captionText) : '<span class="tm-preview-empty">Текст ещё не задан</span>';
   // "Ключевые слова/мысли" — та же вводная для копирайтера/ИИ, что уже
   // редактируется во вкладке "Текст" (см. renderTextPane выше), но здесь —
   // мелким серым текстом под самим постом, чтобы бриф был виден с одного
@@ -2535,6 +2629,14 @@ tmBody.addEventListener('click', async (e) => {
     } catch (err) {
       toast('Не удалось сохранить текст: ' + err.message);
     }
+    return;
+  }
+  if (action === 'toggle-sticker-picker') {
+    toggleStickerPicker(t);
+    return;
+  }
+  if (action === 'insert-sticker') {
+    insertSticker(btn.dataset.id, btn.dataset.emoji);
     return;
   }
   if (action === 'save-keywords') {

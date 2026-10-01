@@ -671,6 +671,26 @@
 .ref-upload-btn.uploading{opacity:.55;pointer-events:none}
 .ref-error{margin-top:10px}
 
+/* Стикеры (кастомные эмодзи клиента, вкладка «Стикеры» в попапе
+   «Редактировать») — грид миниатюр по образцу .ref-gallery выше, плюс
+   строка синхронизации по имени пака. */
+.sticker-sub{font-size:12px;line-height:1.5;color:var(--muted);margin:2px 0 10px}
+.sticker-title{font-weight:800;font-size:14px;margin-bottom:4px}
+.sticker-packs-list{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.sticker-pack-card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#F8F9F9}
+.sticker-pack-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sticker-pack-name{font-weight:700;font-size:13px}
+.sticker-pack-remove-btn{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:8px;width:24px;height:24px;line-height:1;cursor:pointer;flex:0 0 auto}
+.sticker-pack-remove-btn:hover{background:#FBE9E9;color:#C0392B;border-color:#E6B5B5}
+.sticker-sync-row{display:flex;gap:8px;flex-wrap:wrap}
+.sticker-sync-row .field-input{flex:1;min-width:160px;margin:0}
+.sticker-synced-hint{font-size:11.5px;color:var(--muted);margin-top:8px}
+.sticker-empty{font-size:12.5px;color:var(--muted);margin-top:12px}
+.sticker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px;margin-top:12px}
+.sticker-tile{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:#F2F4F4;border:1px solid var(--line);display:grid;place-items:center}
+.sticker-tile img{width:70%;height:70%;object-fit:contain;display:block}
+.sticker-tile-emoji{position:absolute;bottom:2px;right:3px;font-size:11px;line-height:1}
+
 /* Вход в кабинет команды (frontend/team.html) — переиспользует
    .field-label/.field-input из стилей edit-popup выше. */
 .fp-box{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;display:grid;gap:4px}
@@ -721,6 +741,10 @@
   .edit-tab.cerberus.filled.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .cerberus-badge{background:#332A17;color:#F2C45C}
   .ref-thumb{background:#222525}
+  .sticker-tile{background:#222525}
+  .sticker-pack-card{background:#222626}
+  .sticker-pack-remove-btn{background:#262222;border-color:#353A3B;color:#A9AEB2}
+  .sticker-pack-remove-btn:hover{background:#3A2323;color:#E68A8A;border-color:#5A3333}
   .ref-add-btn{background:#262222}
   .ref-add-btn:hover{background:#222626}
   .ref-upload-btn{background:#262222}

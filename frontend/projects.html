@@ -7,8 +7,8 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=19">
-  <link rel="stylesheet" href="/projects.css?v=22">
+  <link rel="stylesheet" href="/app.css?v=20">
+  <link rel="stylesheet" href="/projects.css?v=24">
 </head>
 <body>
 <div class="page">
@@ -76,6 +76,7 @@
       <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
       <button class="edit-tab" type="button" data-tab="team">👥 Команда</button>
       <button class="edit-tab secrets" type="button" data-tab="secrets">🔒 Секретики</button>
+      <button class="edit-tab" type="button" data-tab="stickers">🎟 Стикеры</button>
     </div>
 
     <div id="editReadonlyNotice" class="readonly-notice" hidden>Эти вкладки доступны только для просмотра — изменять их может только администратор проекта. Вам доступны только «Секретики».</div>
@@ -298,6 +299,19 @@
       </div>
     </div>
 
+    <div class="edit-panel" id="editTabStickers" hidden>
+      <div class="sticker-title">🎟 Стикеры — кастомные эмодзи клиента</div>
+      <p class="sticker-sub">Если у клиента есть собственные наборы Telegram-стикеров (кастомные эмодзи, зарегистрированные через @Stickers/StickersBot — например, фирменные плашки-буквы), привяжите их короткие имена здесь — можно привязать сразу несколько паков. После синхронизации стикеры можно вставлять прямо в текст поста (вкладка «Медиа» задачи, кнопка рядом с текстом) — вместо того чтобы копировать их из Telegram, что превращает их в обычные эмодзи-заглушки.</p>
+      <div id="stickerPacksList" class="sticker-packs-list"></div>
+      <div id="stickerPacksEmpty" class="sticker-empty" hidden>Паки пока не привязаны — укажите имя пака ниже и нажмите «Добавить».</div>
+      <label class="field-label" for="editStickerPackName">Добавить пак — короткое имя</label>
+      <div class="sticker-sync-row">
+        <input id="editStickerPackName" class="field-input" type="text" maxlength="120" placeholder="Например, logist_flg — из ссылки t.me/addemoji/logist_flg" autocomplete="off">
+        <button type="button" id="stickerSyncBtn" class="ref-add-btn">Добавить</button>
+      </div>
+      <div id="stickerSyncError" class="error-box" hidden></div>
+    </div>
+
     <div id="editError" class="error-box" hidden></div>
 
     <div class="sheet-actions">
@@ -346,7 +360,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=24"></script>
+<script src="/projects.js?v=26"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>
