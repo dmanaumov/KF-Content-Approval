@@ -242,6 +242,38 @@ function mediaFileUrl(m) {
     : `/api/files/${encodeURIComponent(boardId)}/${encodeURIComponent(m.fileId)}`;
 }
 
+// ЛЕНИВАЯ ЗАГРУЗКА ВИДЕО (найдено 2026-10-01 — жалоба "видео грузится ооочень
+// долго/рывками") — то же, что и в frontend/app.js (см. комментарий там
+// подробно). Вкладка «Медиа» карточки (renderMediaPane) рисует грид ИЗ ВСЕХ
+// фото/видео задачи разом через innerHTML — раньше каждый <video> в этом
+// гриде сразу получал preload="metadata" + реальный src, то есть у задачи с
+// 10-15 видео открытие вкладки «Медиа» (или режима «Изменить порядок») сразу
+// стреляло 10-15 параллельными запросами в наш Mattermost-прокси
+// (/api/files/...) — именно такую пачку таймаутов и поймали в логе бэкенда
+// 2026-10-01 09:10 (~20 .mov/.mp4 разом, все по 15с). Фикс — src не ставим
+// сразу, кладём в data-src, подгружаем по одному через IntersectionObserver,
+// когда миниатюра реально показывается на экране.
+const lazyVideoObserver = 'IntersectionObserver' in window
+  ? new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const video = entry.target;
+        lazyVideoObserver.unobserve(video);
+        const src = video.dataset.src;
+        if (src) { video.src = src; video.removeAttribute('data-src'); }
+      });
+    }, { rootMargin: '200px' })
+  : null;
+function observeLazyVideos(root) {
+  const scope = root || document;
+  const videos = scope.querySelectorAll ? scope.querySelectorAll('video[data-src]') : [];
+  if (lazyVideoObserver) {
+    videos.forEach((v) => lazyVideoObserver.observe(v));
+  } else {
+    videos.forEach((v) => { v.src = v.dataset.src; v.removeAttribute('data-src'); });
+  }
+}
+
 function mediaKindLabel(kind) {
   return kind === 'image' ? 'Фото' : kind === 'video' ? 'Видео' : 'Файл';
 }
@@ -2017,7 +2049,7 @@ function mediaThumbHtml(m, i) {
   const url = mediaFileUrl(m);
   let inner;
   if (m.kind === 'image') inner = `<img src="${url}" alt="" loading="lazy">`;
-  else if (m.kind === 'video') inner = `<video muted preload="metadata" src="${url}"></video>`;
+  else if (m.kind === 'video') inner = `<video muted preload="metadata" data-src="${url}"></video>`;
   else inner = `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:4px;text-align:center;font-size:10.5px;color:var(--muted)">${esc(m.name || 'Файл')}</div>`;
   const kindBadge = m.kind === 'video' ? '<span class="tm-media-kind">▶ видео</span>' : '';
   const linkBadge = m.source === 'disk' && m.shareUrl
@@ -2032,7 +2064,7 @@ function reorderRowHtml(m, i, total) {
   const thumb = m.kind === 'image'
     ? `<img src="${url}" alt="">`
     : m.kind === 'video'
-    ? `<video muted preload="metadata" src="${url}"></video>`
+    ? `<video muted preload="metadata" data-src="${url}"></video>`
     : '';
   return `<div class="tm-reorder-row">
     <div class="tm-reorder-thumb">${thumb}</div>
@@ -2267,7 +2299,7 @@ function renderPreviewPane(t) {
   const socialBadge = social ? `<span class="tm-preview-social" style="background:${esc(social.color)}">${esc(social.label)}</span>` : '';
   const mediaHtml = media
     ? media.kind === 'video'
-      ? `<video muted controls preload="metadata" src="${mediaFileUrl(media)}"></video>`
+      ? `<video muted controls preload="metadata" data-src="${mediaFileUrl(media)}"></video>`
       : `<img src="${mediaFileUrl(media)}" alt="">`
     : `<div class="tm-preview-empty" style="padding:60px 10px">Медиа не выбрано</div>`;
   const captionText = stripAiTag(t.caption || bare || '');
@@ -2292,6 +2324,7 @@ function renderModalBody(t) {
   else if (activeTab === 'client') html = renderClientPane(t);
   else if (activeTab === 'preview') html = renderPreviewPane(t);
   tmBody.innerHTML = html;
+  observeLazyVideos(tmBody);
 }
 
 // --- Обработчики кликов внутри модалки (делегирование по трём зонам) ---

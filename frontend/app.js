@@ -54,6 +54,45 @@ function plural(n, one, few, many) {
   return many;
 }
 
+// ЛЕНИВАЯ ЗАГРУЗКА ВИДЕО (найдено 2026-10-01 — жалоба "видео грузится ооочень
+// долго/рывками"): render() ниже перерисовывает ВЕСЬ видимый список карточек
+// разом (innerHTML целиком, без виртуализации) — раньше каждый <video> слайд
+// карусели сразу получал preload="metadata" + реальный src, то есть сколько
+// видео в списке — столько одновременных запросов улетало через наш
+// Mattermost-прокси (/api/files/...) в ту же секунду. У картинок с этим
+// справляется нативный loading="lazy", у <video> такого атрибута нет — а
+// пачка из 15-20 параллельных видео реально кладёт прокси (таймаут-шторм,
+// см. лог бэкенда 2026-10-01 09:10 — ~20 .mov/.mp4 подряд упали по
+// 15-секундному таймауту, именно это клиент и видел как "ошибку отмены
+// загрузки"). Фикс — тот же принцип, что и у lazy-картинок, только руками:
+// src кладём не сразу, а в data-src (см. mediaHtml), и подгружаем по одному
+// через IntersectionObserver, когда слайд реально подъезжает к вьюпорту —
+// слайды, скрытые горизонтальным скроллом карусели (overflow-x:auto),
+// IntersectionObserver и так не считает пересекающими вьюпорт, так что не
+// на экране видео не тронутся, пока до них не долистают.
+const lazyVideoObserver = 'IntersectionObserver' in window
+  ? new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const video = entry.target;
+        lazyVideoObserver.unobserve(video);
+        const src = video.dataset.src;
+        if (src) { video.src = src; video.removeAttribute('data-src'); }
+      });
+    }, { rootMargin: '200px' })
+  : null;
+function observeLazyVideos(root) {
+  const scope = root || document;
+  const videos = scope.querySelectorAll ? scope.querySelectorAll('video[data-src]') : [];
+  if (lazyVideoObserver) {
+    videos.forEach((v) => lazyVideoObserver.observe(v));
+  } else {
+    // Старый браузер без IntersectionObserver — лучше честно показать все
+    // видео сразу (как было раньше), чем молча оставить их без src навсегда.
+    videos.forEach((v) => { v.src = v.dataset.src; v.removeAttribute('data-src'); });
+  }
+}
+
 // The post text is written in Telegram's markdown (staff compose in Telegram,
 // then paste into the card description under "Для клиента"): **bold**, *italic*, __underline__,
 // ~/~~strikethrough~~, `code`, ```pre``` and [text](url). Without rendering
@@ -278,7 +317,9 @@ function mediaHtml(task, canReorder) {
         return `<div class="slide"><img src="${fileUrl}" alt="" loading="lazy"></div>`;
       }
       if (m.kind === 'video') {
-        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" src="${fileUrl}"></video></div></div>`;
+        // src намеренно НЕ ставим тут — см. observeLazyVideos() выше, грузим
+        // по одному через IntersectionObserver, а не все видео в списке сразу.
+        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}"></video></div></div>`;
       }
       // Unknown/generic file: for a disk link, send the client to the
       // original share page (Nextcloud's own preview UI) rather than our
@@ -778,6 +819,7 @@ function render() {
   const cards = visible.map(cardHtml).join('');
   document.getElementById('stack').innerHTML =
     mascot + (cards || (nothingToApprove ? '' : '<div class="empty">Здесь пока ничего нет.</div>'));
+  observeLazyVideos(document.getElementById('stack'));
 
   if (deepLinkTaskId) {
     const el = document.getElementById(`task-${deepLinkTaskId}`);
