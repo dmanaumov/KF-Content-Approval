@@ -618,6 +618,120 @@ function credTextareas() {
   return NET_KEYS.map((k) => document.querySelector(`[data-net-field="${k}"]`));
 }
 
+// Инструкции «как получить данные для автопостинга» — по прямому запросу
+// пользователя (2026-09-30): «стало много полей про интеграции... у каждой
+// из них надо добавить кнопку ИНСТРУКЦИЯ, и обязательно возможность
+// скопировать инструкцию для отправки клиенту». Текст написан ОТ ИМЕНИ
+// АГЕНТСТВА и АДРЕСОВАН КЛИЕНТУ — копируется и отправляется как есть, без
+// правок, поэтому без внутреннего жаргона и с конкретными шагами. Картинок
+// намеренно нет — живые скриншоты личных кабинетов соцсетей (Meta Business,
+// VK, Pinterest и т.п.) нельзя получить без логина в чужой аккаунт.
+// `title` — заголовок в попапе, `steps` — нумерованный список (и для показа,
+// и для копируемого текста — единый источник, чтобы не разойтись), `ask` —
+// последняя строка, что конкретно прислать в ответ.
+const CRED_INSTRUCTIONS = {
+  ig: {
+    title: 'Instagram — доступ для автопостинга',
+    steps: [
+      'Переведите аккаунт Instagram в тип «Бизнес» или «Автор»: Профиль → Настройки → Аккаунт → «Переключиться на профессиональный аккаунт».',
+      'Привяжите этот Instagram-аккаунт к странице Facebook (через Meta Business Suite или настройки Instagram → Аккаунт → Привязанные аккаунты).',
+      'Зайдите на developers.facebook.com и создайте приложение типа «Business».',
+      'В настройках приложения подключите продукт «Instagram Graph API» и привяжите вашу Facebook-страницу.',
+      'В Graph API Explorer (developers.facebook.com/tools/explorer) сгенерируйте токен доступа с правами instagram_basic, instagram_content_publish, pages_show_list, pages_read_engagement.',
+      'Обменяйте короткоживущий токен на долгоживущий (60 дней) — там же, через запрос обмена токена (fb_exchange_token).',
+      'Узнайте Instagram Business ID (IG User ID): запрос GET /me/accounts, затем GET /{page-id}?fields=instagram_business_account в том же Graph API Explorer.',
+    ],
+    ask: 'Access Token и IG User ID из шагов выше.',
+  },
+  tg: {
+    title: 'Telegram — доступ для автопостинга',
+    steps: [
+      'Откройте Telegram и найдите бота @BotFather.',
+      'Отправьте команду /newbot, задайте имя и username бота (username должен заканчиваться на "bot").',
+      'BotFather выдаст токен бота — сохраните его, это и есть ключ доступа.',
+      'Добавьте этого бота администратором в канал/группу, куда нужно публиковать посты, с правом публикации сообщений.',
+      'Узнайте Chat ID канала/группы — перешлите любое сообщение из него боту @JsonDumpBot (или аналогичному) и посмотрите поле "chat": {"id": ...}.',
+    ],
+    ask: 'Токен бота и Chat ID канала/группы.',
+  },
+  vk: {
+    title: 'ВКонтакте — доступ для автопостинга',
+    steps: [
+      'Откройте сообщество (группу), от имени которого нужно публиковать посты.',
+      'Перейдите в «Управление сообществом» → «Работа с API» → «Ключи доступа».',
+      'Создайте новый ключ доступа сообщества с правами «Управление сообществом» и «Стена».',
+      'Скопируйте полученный access_token и ID сообщества (число после дефиса в адресе группы, например -123456789).',
+    ],
+    ask: 'access_token сообщества и его ID.',
+  },
+  ok: {
+    title: 'Одноклассники — доступ для автопостинга',
+    steps: [
+      'Зарегистрируйте приложение на apiok.ru: «Мои приложения» → «Добавить приложение».',
+      'Получите application_id, application_key (public_key) и secret_key приложения.',
+      'Авторизуйте приложение под учётной записью администратора вашей группы и выдайте разрешение VALUABLE_ACCESS (публикация от имени группы).',
+      'Получите access_token и узнайте ID вашей группы (число в адресе страницы группы).',
+    ],
+    ask: 'application_id, application_key, access_token и ID группы.',
+  },
+  max: {
+    title: 'MAX — доступ для автопостинга',
+    steps: [
+      'Откройте приложение MAX и найдите раздел для разработчиков/ботов бизнеса (аналог @BotFather у Telegram) — точное название уточните у нас, платформа новая и быстро меняется.',
+      'Зарегистрируйте нового бота и получите токен доступа.',
+      'Добавьте бота администратором в канал/чат, куда нужно публиковать посты.',
+      'Узнайте ID канала/чата — через того же бота-помощника или метод API со списком чатов.',
+    ],
+    ask: 'Токен бота и ID канала/чата.',
+  },
+  pin: {
+    title: 'Pinterest — доступ для автопостинга',
+    steps: [
+      'Переведите аккаунт Pinterest в бизнес-тип: Настройки → Аккаунт → «Преобразовать в бизнес-аккаунт».',
+      'Зайдите на developers.pinterest.com и создайте приложение («Create app»).',
+      'Настройте OAuth-подключение приложения к вашему бизнес-аккаунту с правами boards:read, boards:write, pins:read, pins:write.',
+      'Получите Access Token на экране авторизации приложения.',
+      'Узнайте ID доски, на которую публиковать пины — он виден в адресе страницы доски в браузере, либо через API-метод списка досок.',
+    ],
+    ask: 'Access Token и ID доски.',
+  },
+  li: {
+    title: 'LinkedIn — доступ для автопостинга',
+    steps: [
+      'Решите, публикуем от личного профиля или от Company Page — для страницы компании нужны права администратора этой страницы.',
+      'Зайдите на developer.linkedin.com/apps и создайте приложение; если публикуем от имени страницы компании — привяжите приложение к ней.',
+      'В разделе «Products» подключите «Share on LinkedIn» (личный профиль) и/или «Community Management API» (страница компании).',
+      'Пройдите OAuth-авторизацию приложения под нужным профилем/страницей и получите Access Token с правами w_member_social (личный профиль) или w_organization_social (страница компании).',
+      'Узнайте author URN: для личного профиля — urn:li:person:{ID}, для страницы компании — urn:li:organization:{ID} (ID страницы виден в адресе её админ-панели).',
+    ],
+    ask: 'Access Token и author URN.',
+  },
+};
+
+function credInstructionPlainText(net) {
+  const info = CRED_INSTRUCTIONS[net];
+  if (!info) return '';
+  const lines = [info.title, ''];
+  info.steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+  lines.push('', `Пришлите нам: ${info.ask}`);
+  return lines.join('\n');
+}
+
+function openCredInstruction(net) {
+  const info = CRED_INSTRUCTIONS[net];
+  if (!info) return;
+  document.getElementById('credInstructionTitle').textContent = info.title;
+  document.getElementById('credInstructionBody').innerHTML =
+    `<ol class="cred-instruction-steps">${info.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>` +
+    `<p class="cred-instruction-ask"><b>Пришлите нам:</b> ${esc(info.ask)}</p>`;
+  document.getElementById('credInstructionModal').dataset.net = net;
+  document.getElementById('credInstructionModal').classList.add('show');
+}
+
+function closeCredInstruction() {
+  document.getElementById('credInstructionModal').classList.remove('show');
+}
+
 // --- Telegram "куда публикует бот" picker — sits on top of the tg
 // credentials textarea (data-net-field="tg"): the textarea stays the real
 // field saveEdit() reads/writes (same JSON contract the automation already
@@ -1415,6 +1529,7 @@ function switchEditTab(name) {
     b.classList.toggle('active', b.dataset.tab === name);
   });
   document.getElementById('editTabSettings').hidden = name !== 'settings';
+  document.getElementById('editTabIntegrations').hidden = name !== 'integrations';
   document.getElementById('editTabAi').hidden = name !== 'ai';
   document.getElementById('editTabCerberus').hidden = name !== 'cerberus';
   document.getElementById('editTabTeam').hidden = name !== 'team';
@@ -1423,6 +1538,7 @@ function switchEditTab(name) {
 
 function closeEdit() {
   document.getElementById('editModal').classList.remove('show');
+  closeCredInstruction(); // не оставляем «Инструкцию» висящей поверх закрытого попапа
   editingProjectId = null;
 }
 
@@ -1461,9 +1577,17 @@ function applyProjectPermissionUi(canManageProject) {
   document.getElementById('editReadonlyNotice').hidden = canManageProject;
   document.querySelectorAll(
     '#editTabSettings input, #editTabSettings textarea, #editTabSettings select, #editTabSettings button, ' +
+    '#editTabIntegrations input, #editTabIntegrations textarea, #editTabIntegrations select, #editTabIntegrations button, ' +
     '#editTabAi input, #editTabAi textarea, #editTabAi select, #editTabAi button, ' +
     '#editTabCerberus input, #editTabCerberus textarea, #editTabCerberus select, #editTabCerberus button'
-  ).forEach((el) => { el.disabled = !canManageProject; });
+  ).forEach((el) => {
+    // Кнопка «Инструкция» — не изменяет настройки проекта, только читает
+    // готовый текст для клиента, поэтому доступна даже тем, кому нельзя
+    // редактировать сами креды (иначе не сможет отправить клиенту то же
+    // самое, что видит администратор проекта).
+    if (el.dataset.action === 'open-cred-instruction') return;
+    el.disabled = !canManageProject;
+  });
   document.getElementById('secretsLogBtn').hidden = !canManageProject;
 }
 
@@ -1730,12 +1854,38 @@ document.getElementById('editModal').addEventListener('click', (e) => {
 });
 // Esc закрывает попап точно так же, как клик по фону (см. выше) — тот же
 // паттерн, что в team.js (#taskModal/#createModal) и app.js (lightbox).
+// Если сверху открыта «Инструкция» (credInstructionModal, см. её
+// собственный Esc-слушатель ниже) — уступаем ей: иначе Esc из попапа
+// инструкции заодно закрывал бы весь «Редактировать» позади него.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.getElementById('editModal').classList.contains('show')) closeEdit();
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('credInstructionModal').classList.contains('show')) return;
+  if (document.getElementById('editModal').classList.contains('show')) closeEdit();
 });
 document.querySelector('[data-action="save-edit"]').addEventListener('click', saveEdit);
 document.querySelectorAll('.edit-tab').forEach((b) => {
   b.addEventListener('click', () => switchEditTab(b.dataset.tab));
+});
+
+// Кнопки «Инструкция» — одна на каждую сеть во вкладке «Интеграции», см.
+// CRED_INSTRUCTIONS/openCredInstruction выше. Делегируем на .cred-networks —
+// проще, чем навешивать 7 отдельных слушателей, и не потеряется, если
+// список сетей когда-нибудь ещё вырастет.
+document.querySelector('.cred-networks').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="open-cred-instruction"]');
+  if (btn) openCredInstruction(btn.dataset.net);
+});
+document.querySelector('[data-action="close-cred-instruction"]').addEventListener('click', closeCredInstruction);
+document.querySelector('[data-action="copy-cred-instruction"]').addEventListener('click', async () => {
+  const net = document.getElementById('credInstructionModal').dataset.net;
+  await copyToClipboard(credInstructionPlainText(net));
+  toast('Инструкция скопирована — можно вставлять в чат с клиентом');
+});
+document.getElementById('credInstructionModal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeCredInstruction();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('credInstructionModal').classList.contains('show')) closeCredInstruction();
 });
 
 // Показывает CEO-иконки в шапке (ceoLink/botLink) только когда браузер уже

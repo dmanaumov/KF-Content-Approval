@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=19">
-  <link rel="stylesheet" href="/projects.css?v=21">
+  <link rel="stylesheet" href="/projects.css?v=22">
 </head>
 <body>
 <div class="page">
@@ -71,6 +71,7 @@
 
     <div class="edit-tabs">
       <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
+      <button class="edit-tab" type="button" data-tab="integrations">🔌 Интеграции</button>
       <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
       <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
       <button class="edit-tab" type="button" data-tab="team">👥 Команда</button>
@@ -132,16 +133,22 @@
         </div>
       </div>
 
+    </div>
+
+    <div class="edit-panel" id="editTabIntegrations" hidden>
       <div class="cred-intro">
-        Данные ниже нужны только будущей автоматизации публикаций — само приложение их не использует. Формат — на ваше усмотрение (JSON-объект), главное чтобы совпадал с тем, что настроит разработчик автоматизации.
+        Данные ниже нужны только будущей автоматизации публикаций — само приложение их не использует. Формат — на ваше усмотрение (JSON-объект), главное чтобы совпадал с тем, что настроит разработчик автоматизации. У каждой сети — кнопка «Инструкция»: готовый текст, как клиенту получить эти данные, можно сразу скопировать и отправить.
       </div>
       <div class="cred-networks">
         <div class="cred-net" data-net="ig">
           <div class="cred-net-head">
             <label><i class="net-dot" style="background:#C13584"></i>Instagram (IG)</label>
-            <button type="button" id="igValidateBtn" class="ig-validate-icon-btn" title="Проверить — обратиться к Instagram Graph API и убедиться, что Access Token/IG User ID рабочие" aria-label="Проверить настройки Instagram">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            </button>
+            <div class="cred-net-head-actions">
+              <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="ig" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция Instagram">📋 Инструкция</button>
+              <button type="button" id="igValidateBtn" class="ig-validate-icon-btn" title="Проверить — обратиться к Instagram Graph API и убедиться, что Access Token/IG User ID рабочие" aria-label="Проверить настройки Instagram">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              </button>
+            </div>
           </div>
           <div id="igPicker" class="ig-picker">
             <div class="ig-picker-field">
@@ -163,7 +170,10 @@
           <textarea data-net-field="ig" rows="3" placeholder="{}" hidden></textarea>
         </div>
         <div class="cred-net" data-net="tg">
-          <label><i class="net-dot" style="background:#229ED9"></i>Telegram (TG)</label>
+          <div class="cred-net-head">
+            <label><i class="net-dot" style="background:#229ED9"></i>Telegram (TG)</label>
+            <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="tg" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция Telegram">📋 Инструкция</button>
+          </div>
           <div id="tgPicker" class="tg-picker">
             <div id="tgBotField" class="tg-picker-field" hidden>
               <label class="field-label" for="tgBotSelect">Бот</label>
@@ -182,27 +192,41 @@
           <textarea data-net-field="tg" rows="3" placeholder='{"chatId": "..."}' hidden></textarea>
         </div>
         <div class="cred-net" data-net="vk">
-          <label><i class="net-dot" style="background:#0077FF"></i>ВКонтакте (VK)</label>
+          <div class="cred-net-head">
+            <label><i class="net-dot" style="background:#0077FF"></i>ВКонтакте (VK)</label>
+            <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="vk" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция ВКонтакте">📋 Инструкция</button>
+          </div>
           <textarea data-net-field="vk" rows="3" placeholder="{}"></textarea>
         </div>
         <div class="cred-net" data-net="ok">
-          <label><i class="net-dot" style="background:#EE8208"></i>Одноклассники (OK)</label>
+          <div class="cred-net-head">
+            <label><i class="net-dot" style="background:#EE8208"></i>Одноклассники (OK)</label>
+            <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="ok" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция Одноклассники">📋 Инструкция</button>
+          </div>
           <textarea data-net-field="ok" rows="3" placeholder="{}"></textarea>
         </div>
         <div class="cred-net" data-net="max">
-          <label><i class="net-dot" style="background:#7C3AED"></i>MAX</label>
+          <div class="cred-net-head">
+            <label><i class="net-dot" style="background:#7C3AED"></i>MAX</label>
+            <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="max" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция MAX">📋 Инструкция</button>
+          </div>
           <textarea data-net-field="max" rows="3" placeholder="{}"></textarea>
         </div>
         <div class="cred-net" data-net="pin">
-          <label><i class="net-dot" style="background:#E60023"></i>Pinterest (PIN)</label>
+          <div class="cred-net-head">
+            <label><i class="net-dot" style="background:#E60023"></i>Pinterest (PIN)</label>
+            <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="pin" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция Pinterest">📋 Инструкция</button>
+          </div>
           <textarea data-net-field="pin" rows="3" placeholder="{}"></textarea>
         </div>
         <div class="cred-net" data-net="li">
-          <label><i class="net-dot" style="background:#0A66C2"></i>LinkedIn (LI)</label>
+          <div class="cred-net-head">
+            <label><i class="net-dot" style="background:#0A66C2"></i>LinkedIn (LI)</label>
+            <button type="button" class="cred-instruction-btn" data-action="open-cred-instruction" data-net="li" title="Инструкция для клиента — как получить эти данные" aria-label="Инструкция LinkedIn">📋 Инструкция</button>
+          </div>
           <textarea data-net-field="li" rows="3" placeholder='{"accessToken": "...", "authorUrn": "urn:li:person:... или urn:li:organization:..."}'></textarea>
         </div>
       </div>
-
     </div>
 
     <div class="edit-panel ai" id="editTabAi" hidden>
@@ -304,9 +328,25 @@
   </div>
 </div>
 
+<div id="credInstructionModal" class="modal-wrap" hidden>
+  <div class="sheet cred-instruction-sheet">
+    <div class="edit-sheet-head">
+      <div>
+        <h3 id="credInstructionTitle">Инструкция</h3>
+        <p class="muted">Текст ниже написан для клиента — скопируйте и отправьте как есть, он пришлёт вам то, что нужно.</p>
+      </div>
+    </div>
+    <div id="credInstructionBody" class="cred-instruction-body"></div>
+    <div class="sheet-actions">
+      <button class="btn changes" data-action="close-cred-instruction">Закрыть</button>
+      <button class="btn approve" data-action="copy-cred-instruction">📋 Скопировать для клиента</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=23"></script>
+<script src="/projects.js?v=24"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>
