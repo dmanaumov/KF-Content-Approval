@@ -11,6 +11,7 @@ const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = requir
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile, extractDiskLinks, stripDiskLinks } = require('./diskEmbeds');
 const diskUpload = require('./diskUpload');
 const diskCache = require('./diskCache');
+const mmFileCache = require('./mattermostFileCache');
 const db = require('./db');
 const projectSettings = require('./projectSettings');
 const mediaOrder = require('./mediaOrder');
@@ -5577,14 +5578,52 @@ async function sendClientMessage(boardId, taskId, text, actorName, imageUrl) {
 // team+board), not core Mattermost file storage — see fetchFileStream in
 // mattermostClient.js — so boardId is required to build the right URL.
 app.get('/api/files/:boardId/:fileId', async (req, res) => {
+  const { boardId, fileId } = req.params;
+  // Local cache first (see mattermostFileCache.js) — added 2026-10-01 after
+  // confirming live (real board, this file's actual bytes) that attachments
+  // are tens of MB of un-transcoded source video served at well under 1
+  // MB/s from this host, so every repeat view/seek was re-paying the same
+  // 30-60s cost. A share's bytes never change once attached, so after the
+  // first full fetch every later request — including Range/seek — is
+  // served from local disk, same pattern as /api/disk-embed below.
+  let cached = await mmFileCache.lookup(boardId, fileId);
+  if (!cached) {
+    cached = await Promise.race([
+      mmFileCache.ensureCached(boardId, fileId),
+      new Promise((r) => setTimeout(() => r(null), config.mmFileCacheWaitMs)),
+    ]);
+  }
+  if (cached) {
+    return res.sendFile(
+      cached.file,
+      {
+        acceptRanges: true,
+        cacheControl: false,
+        lastModified: true,
+        etag: true,
+        headers: {
+          'Content-Type': cached.contentType || 'application/octet-stream',
+          'Cache-Control': 'public, max-age=604800, immutable',
+          'X-Mm-File-Cache': 'HIT',
+        },
+      },
+      (err) => {
+        if (err && !res.headersSent) res.status(err.status || 500).end();
+        else if (err && err.code !== 'ECONNABORTED' && err.code !== 'ECONNRESET') {
+          console.error('[api] file proxy cached send failed:', err.message);
+        }
+      }
+    );
+  }
   try {
-    const mmRes = await mm.fetchFileStream(req.params.boardId, req.params.fileId, req.headers.range);
+    const mmRes = await mm.fetchFileStream(boardId, fileId, req.headers.range);
     res.status(mmRes.status);
     for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control']) {
       const v = mmRes.headers.get(h);
       if (v) res.setHeader(h, v);
     }
     if (!res.hasHeader('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('X-Mm-File-Cache', 'MISS');
     // plain .pipe() does NOT forward a source-stream error to the
     // destination — if Mattermost's connection drops mid-body (this host
     // runs tight on memory, see project notes: OOM kills have already hit
@@ -5991,6 +6030,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }
   diskCache.init(); // cleans leftover .part files, never throws — see diskCache.js
+  mmFileCache.init(); // same, for Mattermost board attachments — see mattermostFileCache.js
   app.listen(config.port, () => {
     console.log(`KF Approval listening on :${config.port}`);
     if (!config.mattermostUrl || !config.mattermostToken) {

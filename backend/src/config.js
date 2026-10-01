@@ -166,6 +166,32 @@ module.exports = {
   // are dropped so a paused video can't pin a Nextcloud worker — see index.js.
   diskStreamIdleMs: parseInt(process.env.DISK_STREAM_IDLE_MS || '30000', 10),
 
+  // Local on-disk cache of Mattermost board attachments (backend/src/
+  // mattermostFileCache.js), same pattern as diskCache.js above but for
+  // /api/files/:boardId/:fileId. Added 2026-10-01: that route was proxying
+  // EVERY view/seek of EVERY photo/video straight through to Mattermost's
+  // Boards file storage on TeastyMenu-prod — the same memory-starved,
+  // multi-service host already documented as OOM-killed before (see
+  // claude/mattermost-boards-oom.md) and already shown to serve
+  // disk.kontentferma media at ~1-1.4 MB/s (claude/disk-kontentferma-
+  // slow-media.md) — so a 15-20MB video took exactly that many seconds,
+  // every single time it was opened, with nothing cached locally in
+  // between. Same fix as disk-embed: download once, serve every repeat
+  // view/seek from local disk. MM_FILE_CACHE_DIR shares the same
+  // persistent volume as DISK_CACHE_DIR (docker-compose.yml mounts
+  // /app/cache as one volume) — no deploy/infra change needed.
+  mmFileCacheEnabled: (process.env.MM_FILE_CACHE_ENABLED || 'true').toLowerCase() !== 'false',
+  mmFileCacheDir: process.env.MM_FILE_CACHE_DIR || '/app/cache/mattermost-files',
+  mmFileCacheMaxMb: parseInt(process.env.MM_FILE_CACHE_MAX_MB || '5120', 10),
+  mmFileCacheMaxFileMb: parseInt(process.env.MM_FILE_CACHE_MAX_FILE_MB || '500', 10),
+  mmFileCacheMaxConcurrent: parseInt(process.env.MM_FILE_CACHE_MAX_CONCURRENT || '2', 10),
+  mmFileCacheWaitMs: parseInt(process.env.MM_FILE_CACHE_WAIT_MS || '8000', 10),
+  mmFileCacheDownloadTimeoutMs: parseInt(process.env.MM_FILE_CACHE_DOWNLOAD_TIMEOUT_MS || '600000', 10),
+  // Passthrough (not-yet-cached, or too-big-to-cache) streams with no bytes
+  // moving for this long are dropped — same rationale as diskStreamIdleMs,
+  // a paused video must not pin a Mattermost connection/socket forever.
+  mmFileStreamIdleMs: parseInt(process.env.MM_FILE_STREAM_IDLE_MS || '30000', 10),
+
   // Real drag-and-drop / file-picker upload from the /team cabinet straight
   // to disk.kontentferma (see backend/src/diskUpload.js) — as opposed to the
   // existing "paste an already-created share link" fallback, which stays
