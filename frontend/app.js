@@ -54,43 +54,76 @@ function plural(n, one, few, many) {
   return many;
 }
 
-// ЛЕНИВАЯ ЗАГРУЗКА ВИДЕО (найдено 2026-10-01 — жалоба "видео грузится ооочень
-// долго/рывками"): render() ниже перерисовывает ВЕСЬ видимый список карточек
-// разом (innerHTML целиком, без виртуализации) — раньше каждый <video> слайд
-// карусели сразу получал preload="metadata" + реальный src, то есть сколько
-// видео в списке — столько одновременных запросов улетало через наш
-// Mattermost-прокси (/api/files/...) в ту же секунду. У картинок с этим
-// справляется нативный loading="lazy", у <video> такого атрибута нет — а
-// пачка из 15-20 параллельных видео реально кладёт прокси (таймаут-шторм,
-// см. лог бэкенда 2026-10-01 09:10 — ~20 .mov/.mp4 подряд упали по
-// 15-секундному таймауту, именно это клиент и видел как "ошибку отмены
-// загрузки"). Фикс — тот же принцип, что и у lazy-картинок, только руками:
-// src кладём не сразу, а в data-src (см. mediaHtml), и подгружаем по одному
-// через IntersectionObserver, когда слайд реально подъезжает к вьюпорту —
-// слайды, скрытые горизонтальным скроллом карусели (overflow-x:auto),
-// IntersectionObserver и так не считает пересекающими вьюпорт, так что не
-// на экране видео не тронутся, пока до них не долистают.
-const lazyVideoObserver = 'IntersectionObserver' in window
-  ? new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        const video = entry.target;
-        lazyVideoObserver.unobserve(video);
-        const src = video.dataset.src;
-        if (src) { video.src = src; video.removeAttribute('data-src'); }
-      });
-    }, { rootMargin: '200px' })
-  : null;
-function observeLazyVideos(root) {
+// ПРИОРИТЕТНАЯ ОЧЕРЕДЬ ЗАГРУЗКИ МЕДИА (2026-10-01).
+//
+// Предыдущая версия этого фикса (чисто IntersectionObserver — грузим, когда
+// слайд доскроллили) убрала таймаут-шторм (см. ниже), но по прямому
+// пожеланию пользователя оказалась недостаточно хороша: лента грузится
+// быстро, но потом каждое ещё не показанное фото/видео ждёшь с нуля в
+// моменте. Хотим середину: быстрый первый экран + медиа ПОДГРУЖАЕТСЯ
+// заранее, но управляемо — по приоритету, а не всё сразу.
+//
+// Схема, как попросили: сначала первые фото/видео ВСЕХ карточек активной
+// недели/фильтра, потом вторые у всех, потом третьи и т.д. (round-robin по
+// позиции слайда внутри карточки, а не по порядку самих карточек) — так
+// лента быстро становится "смотрибельной" целиком (у каждой карточки
+// появляется обложка), и только потом грузятся вторые/третьи фото каждой
+// карусели. Конкурентность всё равно ограничена MEDIA_QUEUE_CONCURRENCY —
+// это то, что защищает от прошлого шторма (напоминание — см. лог бэкенда
+// 2026-10-01 09:10: ~20 .mov/.mp4 разом в наш Mattermost-прокси
+// (/api/files/...), все упали по 15-секундному таймауту, клиент увидел это
+// как "ошибку отмены загрузки").
+//
+// mediaHtml ниже кладёт src не сразу, а в data-src + data-media-index=
+// "позиция слайда в карусели этой карточки" (0 = первое фото/видео). Ни
+// <img>, ни <video> тут больше не используют нативный loading="lazy" —
+// порядок загрузки теперь считаем сами, иначе браузерная эвристика
+// конкурировала бы с нашей собственной очередью непредсказуемым образом.
+//
+// Смена недели/фильтра: render() ниже зовёт primeMediaQueue() при КАЖДОЙ
+// перерисовке; т.к. render() целиком переписывает #stack через innerHTML,
+// старые элементы (и их data-src) просто исчезают из DOM. mediaQueueGeneration
+// — счётчик поколений: каждый primeMediaQueue() увеличивает его и держит
+// свою копию, так что обработчик очереди от ПРЕДЫДУЩЕЙ недели видит, что он
+// устарел, и останавливается сам, не тратя оставшиеся сетевые слоты на то,
+// что пользователь уже не смотрит.
+const MEDIA_QUEUE_CONCURRENCY = 4;
+let mediaQueueGeneration = 0;
+let mediaQueueActive = 0;
+
+function primeMediaQueue(root) {
+  mediaQueueGeneration++;
+  const myGeneration = mediaQueueGeneration;
   const scope = root || document;
-  const videos = scope.querySelectorAll ? scope.querySelectorAll('video[data-src]') : [];
-  if (lazyVideoObserver) {
-    videos.forEach((v) => lazyVideoObserver.observe(v));
-  } else {
-    // Старый браузер без IntersectionObserver — лучше честно показать все
-    // видео сразу (как было раньше), чем молча оставить их без src навсегда.
-    videos.forEach((v) => { v.src = v.dataset.src; v.removeAttribute('data-src'); });
+  const items = Array.from(scope.querySelectorAll ? scope.querySelectorAll('[data-src]') : []);
+  // Array.prototype.sort гарантированно стабилен (ES2019+) — элементы с
+  // одинаковым data-media-index остаются в исходном DOM-порядке (= порядок
+  // карточек в ленте), так что раунд 0 — это "первое фото каждой карточки
+  // сверху вниз", а не в случайном порядке.
+  items.sort((a, b) => (Number(a.dataset.mediaIndex) || 0) - (Number(b.dataset.mediaIndex) || 0));
+  let cursor = 0;
+  function pump() {
+    if (myGeneration !== mediaQueueGeneration) return; // отменено новой перерисовкой/сменой недели
+    while (mediaQueueActive < MEDIA_QUEUE_CONCURRENCY && cursor < items.length) {
+      const el = items[cursor++];
+      const src = el.dataset.src;
+      if (!src || !el.isConnected) continue;
+      mediaQueueActive++;
+      let settled = false;
+      const release = () => {
+        if (settled) return;
+        settled = true;
+        mediaQueueActive--;
+        pump();
+      };
+      el.addEventListener('load', release, { once: true });
+      el.addEventListener('error', release, { once: true });
+      if (el.tagName === 'VIDEO') el.addEventListener('loadeddata', release, { once: true });
+      el.removeAttribute('data-src');
+      el.src = src;
+    }
   }
+  pump();
 }
 
 // The post text is written in Telegram's markdown (staff compose in Telegram,
@@ -311,15 +344,16 @@ function mediaHtml(task, canReorder) {
     return '<div class="media"><div class="carousel"><div class="slide file-link"><div><b>Без вложений</b></div></div></div></div>';
   }
   const slides = task.media
-    .map((m) => {
+    .map((m, i) => {
       const fileUrl = mediaFileUrl(m);
       if (m.kind === 'image') {
-        return `<div class="slide"><img src="${fileUrl}" alt="" loading="lazy"></div>`;
+        // src намеренно НЕ ставим тут (и не loading="lazy" — см.
+        // primeMediaQueue() выше): порядок загрузки решает наша собственная
+        // приоритетная очередь по data-media-index, не браузерная эвристика.
+        return `<div class="slide"><img data-src="${fileUrl}" data-media-index="${i}" alt=""></div>`;
       }
       if (m.kind === 'video') {
-        // src намеренно НЕ ставим тут — см. observeLazyVideos() выше, грузим
-        // по одному через IntersectionObserver, а не все видео в списке сразу.
-        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}"></video></div></div>`;
+        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}" data-media-index="${i}"></video></div></div>`;
       }
       // Unknown/generic file: for a disk link, send the client to the
       // original share page (Nextcloud's own preview UI) rather than our
@@ -819,7 +853,7 @@ function render() {
   const cards = visible.map(cardHtml).join('');
   document.getElementById('stack').innerHTML =
     mascot + (cards || (nothingToApprove ? '' : '<div class="empty">Здесь пока ничего нет.</div>'));
-  observeLazyVideos(document.getElementById('stack'));
+  primeMediaQueue(document.getElementById('stack'));
 
   if (deepLinkTaskId) {
     const el = document.getElementById(`task-${deepLinkTaskId}`);
