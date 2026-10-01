@@ -457,8 +457,11 @@
 .create-tab.active{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(15,25,24,.1)}
 .create-tab-panel[hidden]{display:none}
 
-.bi-example-link{display:inline-block;margin:8px 0 2px;font-size:12.5px;color:var(--kf-coral);font-weight:750;text-decoration:none}
+.bi-links-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:8px 0 2px}
+.bi-example-link{display:inline-block;margin:0;font-size:12.5px;color:var(--kf-coral);font-weight:750;text-decoration:none}
 .bi-example-link:hover{text-decoration:underline}
+.bi-prompt-copy-btn{border:0;background:none;padding:0;cursor:pointer;font-family:inherit}
+.bi-prompt-copy-btn.copied{color:var(--accent)}
 .bi-hint{margin-top:2px}
 .bi-results{margin-top:14px;padding:11px 14px;border-radius:12px;background:#F6F7F7;font-size:12.5px;line-height:1.7;max-height:220px;overflow:auto}
 .bi-row-ok{color:#2E7D4F}

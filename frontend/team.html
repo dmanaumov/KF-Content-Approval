@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=20">
   <link rel="stylesheet" href="/projects.css?v=15">
-  <link rel="stylesheet" href="/team.css?v=33">
+  <link rel="stylesheet" href="/team.css?v=34">
 </head>
 <body>
 <div class="page">
@@ -229,8 +229,11 @@
 
           <label class="field-label" for="biFile">Файл контент-плана (JSON)</label>
           <input id="biFile" class="field-input" type="file" accept=".json,application/json" required>
-          <a id="biExampleLink" class="bi-example-link" href="/content-plan-example.json" download>⬇ Скачать пример файла</a>
-          <p class="create-subtitle bi-hint">Такой же формат удобно попросить у ИИ при генерации плана — просто приложите этот файл как образец в промт. Поле <code>date</code> обязательно: дата должна быть в будущем и не дальше чем через 2 месяца, иначе строка будет пропущена с ошибкой.</p>
+          <div class="bi-links-row">
+            <a id="biExampleLink" class="bi-example-link" href="/content-plan-example.json" download>⬇ Скачать пример файла</a>
+            <button type="button" id="biPromptCopyBtn" class="bi-example-link bi-prompt-copy-btn">📋 Скопировать промт для ИИ</button>
+          </div>
+          <p class="create-subtitle bi-hint">Промт выше — для ИИ, чтобы он сам превратил ваш контент-план (в любом виде) в нужный JSON. Поля <code>date</code> и <code>network</code> обязательны в каждой строке: дата должна быть в будущем и не дальше чем через 2 месяца, соцсеть — одна из ig/tg/vk/ok/max/pin/li; строка без них будет пропущена с ошибкой.</p>
 
           <div id="biError" class="error-box" hidden></div>
           <div id="biResults" class="bi-results" hidden></div>
@@ -336,7 +339,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=45"></script>
+<script src="/team.js?v=46"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

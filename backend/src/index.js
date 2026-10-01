@@ -2682,10 +2682,26 @@ app.post('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
 });
 
 // POST /api/team/tasks/bulk-import — body: { projectId, assigneeUserId?,
-// items: [{ date, network?, text?, keywords?, reference?, title? }, ...] }.
+// requireNetwork?, items: [{ date, network?, text?, keywords?, reference?,
+// title? }, ...] }.
 // `date` is now REQUIRED per row (added 2026-09-25, see
 // validateTeamPublishDate below — must be today..+2 months, Moscow time; a
 // row that fails gets its own per-row error, same as a missing title).
+//
+// `requireNetwork` (added 2026-10-01, direct request) — when true, `network`
+// becomes REQUIRED per row too, same "own per-row error, rest of batch
+// still proceeds" treatment as date/title. Without this flag (default
+// false), a row with no `network` falls through to createAutomationTask's
+// own auto-fill: silently uses the project's one configured network, or
+// errors only if the project has zero/several configured (see that
+// function's comment). The JSON-file "Пакетный" import tab (team.js,
+// submitBulkImportForm) sends `requireNetwork: true` — the user wants every
+// row in an uploaded content-plan file to state its network explicitly, not
+// rely on single-network auto-fill. The "Буфер обмена" clipboard-paste tab
+// (submitClipboardImportForm) does NOT send this flag and keeps the old
+// behavior unchanged — that tab already has its own explicit network
+// picker (one select applied to the whole pasted day), wasn't part of this
+// request, and didn't need touching.
 // "Пакетный импорт контент-плана" — the team member picks a project they
 // have access to and uploads a JSON file (parsed client-side; this route
 // gets the already-parsed array, not a file upload), or the frontend builds
@@ -2755,6 +2771,9 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
   if (!items || !items.length) {
     return res.status(400).json({ error: 'items_required', message: 'items обязателен и должен быть непустым массивом.' });
   }
+  // См. комментарий над роутом выше — только JSON-файловый импорт шлёт этот
+  // флаг, "Буфер обмена" его не шлёт и не затрагивается.
+  const requireNetwork = !!(req.body && req.body.requireNetwork);
   const MAX_ITEMS = 200;
   if (items.length > MAX_ITEMS) {
     return res.status(400).json({
@@ -2793,6 +2812,14 @@ app.post('/api/team/tasks/bulk-import', teamAuth.requireTeamAuth, async (req, re
     const dateError = validateTeamPublishDate(raw.date);
     if (dateError) {
       results.push({ row: rowNum, ok: false, error: dateError });
+      continue;
+    }
+    // Соцсеть — обязательна per-row ТОЛЬКО когда вызывающий явно попросил
+    // об этом флагом requireNetwork (см. комментарий над роутом). Без флага
+    // пустой network молча уходит в createAutomationTask, которая сама
+    // решает, подставить ли единственную настроенную у проекта сеть.
+    if (requireNetwork && !String(raw.network || '').trim()) {
+      results.push({ row: rowNum, ok: false, error: 'Соцсеть (network) обязательна — укажите одну из: ig, tg, vk, ok, max, pin, li.' });
       continue;
     }
     // Статус пакетно импортированной карточки — ВСЕГДА «Не начато», жёстко,

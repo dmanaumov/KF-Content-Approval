@@ -324,6 +324,7 @@ const biForm = document.getElementById('biForm');
 const biProject = document.getElementById('biProject');
 const biAssignee = document.getElementById('biAssignee');
 const biFile = document.getElementById('biFile');
+const biPromptCopyBtn = document.getElementById('biPromptCopyBtn');
 const biError = document.getElementById('biError');
 const biResults = document.getElementById('biResults');
 const biSubmit = document.getElementById('biSubmit');
@@ -1452,12 +1453,63 @@ async function submitCreateForm(e) {
 
 // --- «Импорт контент-плана» — пакетное создание карточек из JSON-файла
 // (POST /api/team/tasks/bulk-import, см. его комментарий в index.js). Одна
-// запись файла = { date?, network?, text?, keywords? } — без отдельного
+// запись файла = { date, network, text?, keywords? } — без отдельного
 // заголовка: бэкенд сам собирает его из keywords (если есть) или первых 60
 // символов text. Проект выбирается один раз на весь файл, в самих записях
 // его нет (см. GET /content-plan-example.json — статическая заготовка,
 // открывается прямо по ссылке «Скачать пример файла» под полем выбора
 // файла, ничего дополнительно готовить не нужно).
+//
+// И `date`, и `network` обязательны в каждой строке (по прямому запросу
+// пользователя, 2026-10-01 — до этого network был необязательным: бэкенд
+// подставлял сеть молча, если у проекта настроена ровно одна, см. комментарий
+// у createAutomationTask в index.js). Для ИМЕННО этого способа импорта
+// (вкладка «Пакетный») строгая проверка включается флагом `requireNetwork:
+// true` в теле запроса — см. submitBulkImportForm ниже — вкладка «Буфер
+// обмена» (submitClipboardImportForm) этот флаг не шлёт и продолжает
+// работать как раньше (там уже есть собственный явный выбор сети одним
+// select'ом на весь вставленный день).
+// Промт для ИИ — по прямому запросу пользователя, 2026-10-01: «рядом с
+// файлом примера получить промт, который работник скопировал бы для ИИ,
+// чтобы трансформировать свой контент-план в наш формат с учётом
+// обязательных полей и нюансов». Содержит сам целевой формат (чтобы работник
+// не зависел от того, приложится ли файл-пример в тот же чат с ИИ), обе
+// обязательные проверки (дата/сеть — держим текст синхронно с
+// validateTeamPublishDate и SOCIAL_MAP ниже, если они поменяются) и явное
+// требование вернуть ТОЛЬКО JSON без markdown-обёртки — иначе из ответа ИИ
+// придётся вручную выковыривать ```-блок перед тем, как сохранить файл.
+const BULK_IMPORT_AI_PROMPT = `Преобразуй мой контент-план (вставлю/приложу его ниже) в JSON-массив для импорта в нашу систему. Строго следуй формату.
+
+Каждый элемент массива — объект с полями:
+- "date" (ОБЯЗАТЕЛЬНО) — дата публикации в формате YYYY-MM-DD. Дата должна быть в будущем относительно сегодняшнего дня и не дальше, чем через 2 месяца. Если в моём плане даты относительные ("через неделю" и т.п.) или выходят за этот диапазон — посчитай корректную дату сам, а то, что не уверен/пришлось скорректировать, перечисли ПОСЛЕ json отдельным списком.
+- "network" (ОБЯЗАТЕЛЬНО) — одна из: "ig" (Instagram), "tg" (Telegram), "vk" (ВКонтакте), "ok" (Одноклассники), "max" (MAX), "pin" (Pinterest), "li" (LinkedIn). Определи по контексту исходного плана (по названию колонки/платформы/эмодзи). Если для какой-то строки сеть не очевидна — не угадывай молча, перечисли такие строки отдельно после JSON.
+- "text" (необязательно) — готовый текст поста, если он есть в плане.
+- "keywords" (необязательно) — ключевые слова/идея/мысли поста, если готового текста ещё нет.
+- "reference" (необязательно) — ссылка на референс/пример визуала, если есть.
+- "title" (необязательно) — только если в плане есть явный заголовок, ОТДЕЛЬНЫЙ от текста поста. Если отдельного заголовка нет — не добавляй это поле вообще, у нас заголовок соберётся сам из keywords или начала text.
+
+Правила вывода:
+1. В ответе — ТОЛЬКО сам JSON-массив: без markdown-обёртки, без \`\`\`, без пояснений внутри него, без комментариев, без висячих запятых, строки в двойных кавычках. Ответ должен открываться "[" и ничего не быть перед ним.
+2. Всё, что нужно уточнить у меня (неоднозначная сеть, скорректированная дата и т.п.) — пиши ПОСЛЕ JSON-блока отдельным списком, не внутри самого JSON.
+3. Один элемент массива = один пост на одну дату на одну сеть. Если один день публикуется сразу в несколько сетей — сделай несколько отдельных объектов с одинаковой date и разными network.
+
+Пример нужного формата (для ориентира, значения не копировать):
+[{"date": "2026-10-05", "network": "ig", "text": "...", "keywords": "...", "reference": ""}]
+
+Мой контент-план:
+`;
+
+function copyBulkImportPrompt() {
+  navigator.clipboard.writeText(BULK_IMPORT_AI_PROMPT).catch(() => {});
+  const original = biPromptCopyBtn.textContent;
+  biPromptCopyBtn.classList.add('copied');
+  biPromptCopyBtn.textContent = '✓ Промт скопирован';
+  setTimeout(() => {
+    biPromptCopyBtn.classList.remove('copied');
+    biPromptCopyBtn.textContent = original;
+  }, 1800);
+}
+
 async function populateBulkImportProjectSelect() {
   await populateProjectSelectInto(biProject);
   if (projectFilterId && teamProjects && teamProjects.some((p) => p.id === projectFilterId)) {
@@ -1578,7 +1630,7 @@ async function submitBulkImportForm(e) {
   }
 
   try {
-    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, assigneeUserId: assigneeUserId || undefined, items } });
+    const data = await teamApi('/tasks/bulk-import', { method: 'POST', body: { projectId, assigneeUserId: assigneeUserId || undefined, items, requireNetwork: true } });
     renderBulkImportResults(data);
     if (data.created) {
       toast(`Импортировано постов: ${data.created}${data.failed ? `, ошибок: ${data.failed}` : ''}`);
@@ -3018,6 +3070,7 @@ createTabBtnImport.addEventListener('click', () => setCreateTab('import'));
 createTabBtnClipboard.addEventListener('click', () => setCreateTab('clipboard'));
 
 biForm.addEventListener('submit', submitBulkImportForm);
+biPromptCopyBtn.addEventListener('click', copyBulkImportPrompt);
 cpParseBtn.addEventListener('click', handleCpParseClick);
 cpForm.addEventListener('submit', submitClipboardImportForm);
 
