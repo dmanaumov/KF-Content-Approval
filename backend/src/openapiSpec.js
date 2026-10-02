@@ -722,6 +722,117 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/cerberus-feedback': {
+        get: {
+          summary: 'Получить ПОЛНЫЙ перечень замечаний «Цербер» по всем карточкам (для дообучения/оценки)',
+          description:
+            'Возвращает каждое замечание, записанное «Цербер» методом POST /api/automation/tasks/{taskId}/team-comment ' +
+            '(authorId "cerberus"), по ВСЕМ карточкам борда — оценённые и ещё не оценённые. Для каждого замечания отдаёт ' +
+            'контекст поста (проект, дата публикации, текст поста, ключевые слова, заголовок, ссылка) и, если уже выставлена, ' +
+            'оценку команды (rating/note/ratedByUserId/ratedByName/ratedAt). Предназначен для внешней интеграции — ' +
+            'my.kontentferma.com сам строит UI оценки и зовёт этот эндпоинт за списком, а POST ниже — чтобы записать оценку. ' +
+            'Необязательный параметр ?projectId= сужает список до одного проекта (id как в GET /api/automation/projects).',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'projectId', in: 'query', required: false, schema: { type: 'string' }, description: 'ограничить список одним проектом' }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      items: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            commentId: { type: 'string', description: 'id строки task_team_comments — передавать в POST ниже' },
+                            taskId: { type: 'string' },
+                            text: { type: 'string', description: 'текст замечания «Цербер»' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                            projectId: { type: 'string', nullable: true },
+                            projectLabel: { type: 'string', nullable: true },
+                            title: { type: 'string', nullable: true },
+                            publishDate: { type: 'string', nullable: true, description: 'YYYY-MM-DD' },
+                            caption: { type: 'string', nullable: true, description: 'текст поста (тело карточки)' },
+                            keywords: { type: 'string', nullable: true },
+                            url: { type: 'string', nullable: true, description: 'ссылка на опубликованный пост, если есть' },
+                            rating: { type: 'string', nullable: true, enum: ['good', 'partial', 'bad', null] },
+                            note: { type: 'string' },
+                            ratedByUserId: { type: 'string' },
+                            ratedByName: { type: 'string' },
+                            ratedAt: { type: 'string', format: 'date-time', nullable: true },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Сбой чтения из БД', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+        post: {
+          summary: 'Выставить/заменить оценку команды на ОДНО замечание «Цербер»',
+          description:
+            'Записывает (или перезаписывает — последняя оценка побеждает, без усреднения) оценку на одно замечание «Цербер», ' +
+            'найденное через GET выше по полю commentId. rating — ровно одно из good|partial|bad ("уместно и в тему" / ' +
+            'частично / нет — выбор шкалы сделан на нашей стороне; если нужна другая шкала, скажите). commentId, не ' +
+            'принадлежащий этому борду или не являющийся замечанием «Цербер», отклоняется с 404.',
+          security: [{ automationApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['commentId', 'rating'],
+                  properties: {
+                    commentId: { type: 'string' },
+                    rating: { type: 'string', enum: ['good', 'partial', 'bad'] },
+                    note: { type: 'string', description: 'необязательный комментарий оценщика' },
+                    ratedByUserId: { type: 'string', description: 'id оценщика в my.kontentferma.com (свободный текст)' },
+                    ratedByName: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      feedback: {
+                        type: 'object',
+                        properties: {
+                          commentId: { type: 'string' },
+                          taskId: { type: 'string' },
+                          rating: { type: 'string', enum: ['good', 'partial', 'bad'] },
+                          note: { type: 'string' },
+                          ratedByUserId: { type: 'string' },
+                          ratedByName: { type: 'string' },
+                          ratedAt: { type: 'string', format: 'date-time' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'commentId или rating некорректны/отсутствуют', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            404: { description: 'Замечание не найдено на этом борде', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            502: { description: 'Сбой записи в БД', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
       '/api/automation/tasks/{taskId}/media-link': {
         post: {
           summary: 'Прикрепить уже готовую ссылку disk.kontentferma к карточке',

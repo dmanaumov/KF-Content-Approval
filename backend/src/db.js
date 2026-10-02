@@ -333,6 +333,36 @@ async function initSchema() {
     ALTER TABLE task_team_comments
       ADD COLUMN IF NOT EXISTS image_url text NOT NULL DEFAULT '';
   `);
+  // Human feedback on ONE «Цербер» remark (a task_team_comments row with
+  // author_id='cerberus' — see CERBERUS_AUTHOR_ID in index.js) — added
+  // 2026-10-02 by direct request: "у нас есть Цербер, который срабатывает,
+  // НО у меня нет обратной связи насколько уместно и в тему... мне это надо
+  // для дообучения Цербера". One row per rated comment (PK on comment_id,
+  // upsert on re-rate — last rating wins, no multi-rater averaging), FK
+  // CASCADE so a deleted comment takes its rating with it. Deliberately NOT
+  // storing project_id here — "which project did this fire in" is always
+  // resolved live from the board (buildTasks) when listing, same as
+  // everywhere else in this app that treats "project" as a Mattermost card
+  // property rather than a persisted FK. board_id IS kept (unlike
+  // project_id) only to validate a comment_id belongs to the right board
+  // before writing — see teamComments.setCerberusFeedback.
+  //
+  // Exposed via the automation API (requireAutomationAuth), NOT the /team
+  // staff session — the user is building the rating UI itself, in a
+  // separate portal (my.kontentferma.com), and calls these endpoints with
+  // AUTOMATION_API_KEY rather than a teamAuth session. See
+  // GET/POST /api/automation/cerberus-feedback in index.js.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cerberus_feedback (
+      comment_id bigint PRIMARY KEY REFERENCES task_team_comments(id) ON DELETE CASCADE,
+      board_id text NOT NULL,
+      rating text NOT NULL CHECK (rating IN ('good','partial','bad')),
+      note text NOT NULL DEFAULT '',
+      rated_by_user_id text NOT NULL DEFAULT '',
+      rated_by_name text NOT NULL DEFAULT '',
+      rated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
   // Who actually clicked "Запланировать публикацию" in the /team cabinet.
   // Mattermost's own block.createdBy is USELESS for this: this app talks to
   // Mattermost as ONE shared service account (MATTERMOST_LOGIN_ID or

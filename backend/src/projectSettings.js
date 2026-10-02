@@ -424,6 +424,18 @@ async function updatePlanningDates(boardId, projectId, { startDate, paidThroughD
   );
 }
 
+// Только правила «Цербера» проекта (cerberus_markdown), ничего больше на строке
+// не трогаем — для портала my.kontentferma.com (раздел «Цербер», доступ CEO/зам),
+// через POST /api/automation/projects/:projectId/cerberus. Пустая строка = Цербер
+// для проекта выключен (как и в попапе «Редактировать» на /projects).
+async function updateCerberusMarkdown(boardId, projectId, markdown) {
+  await ensureRow(boardId, projectId);
+  await db.requirePool().query(
+    `UPDATE project_settings SET cerberus_markdown = $3, updated_at = now() WHERE board_id = $1 AND project_id = $2`,
+    [boardId, projectId, textOrEmpty(markdown)]
+  );
+}
+
 // Merge-upsert ONE network's credentials for a project, without touching any
 // other field on the row (other networks, isAiProject, prompts, ...) and
 // without a read-modify-write race — a single atomic UPDATE via Postgres
@@ -630,6 +642,7 @@ module.exports = {
   updateSecrets,
   getSecretsLog,
   updatePlanningDates,
+  updateCerberusMarkdown,
   upsertNetworkCredentials,
   listExpiringCredentials,
   listArchivedProjectIds,

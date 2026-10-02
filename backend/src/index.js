@@ -4265,6 +4265,8 @@ async function getAutomationProjects(boardId) {
         startDate: settings.startDate,
         paidThroughDate: settings.paidThroughDate,
         configuredNetworks: projectSettings.configuredNetworksOf(settings.socialCredentials),
+        // Есть ли у проекта правила «Цербера» (для my.kontentferma.com → раздел «Цербер»).
+        cerberusProtected: !!String(settings.cerberusMarkdown || '').trim(),
       };
     })
   );
@@ -5057,6 +5059,29 @@ app.post('/api/automation/projects/:projectId/settings', requireAutomationAuth, 
   }
 });
 
+// POST /api/automation/projects/:projectId/cerberus — body: { markdown }.
+// Меняет ТОЛЬКО правила «Цербера» проекта (cerberus_markdown); '' выключает
+// Цербер для проекта. Добавлено 2026-10-02 для портала my.kontentferma.com
+// (раздел «Цербер»: CEO и зам правят правила там, а не в попапе /projects).
+// Прочитать текущие правила — GET /api/automation/projects/:projectId/settings
+// (поле cerberusMarkdown).
+app.post('/api/automation/projects/:projectId/cerberus', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const id = resolveAutomationProjectId(board, req.params.projectId);
+    const markdown = String((req.body && req.body.markdown) || '');
+    if (markdown.length > 100000) throw badRequest('cerberus_too_long', 'Правила Цербера слишком длинные (максимум 100 000 символов).');
+    await projectSettings.updateCerberusMarkdown(boardId, id, markdown);
+    const settings = await getAutomationProjectSettings(boardId, id);
+    res.json({ projectId: id, cerberusMarkdown: settings.cerberusMarkdown });
+  } catch (err) {
+    console.error('[api] automation cerberus update failed:', err.message);
+    res.status(err.httpStatus || 400).json({ error: err.code || 'cerberus_update_failed', message: err.message });
+  }
+});
+
 // GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
 // status is required — see getAutomationTasks above for the two shapes it
 // accepts. project and date are both optional narrowing.
@@ -5281,6 +5306,107 @@ app.post('/api/automation/tasks/:taskId/team-comment', requireAutomationAuth, as
   } catch (err) {
     console.error('[api] automation team-comment failed:', err.message);
     res.status(502).json({ error: 'team_comment_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/cerberus-feedback — the FULL list of every «Цербер»
+// review remark ever recorded on this board (not scoped to one task —
+// cerberus_feedback/task_team_comments have no notion of "current status",
+// so a comment on an archived card is still returned), rated or not, each
+// one carrying the context a human rater needs to judge "насколько уместно и
+// в тему" without having to separately look up the card. Added 2026-10-02
+// per direct request — the user is building the actual rating UI in a
+// SEPARATE portal (my.kontentferma.com), not here, so this + the POST below
+// are the entire surface that portal needs: this to fetch what to show/rate,
+// POST to record a rating.
+//
+// Optional ?projectId=<id> narrows to one project (same ids as GET
+// /api/automation/projects). Response shape, one entry per Цербер remark:
+//   { commentId, taskId, text, createdAt,
+//     projectId, projectLabel, title, publishDate, caption, keywords, url,
+//     rating: 'good'|'partial'|'bad'|null, note, ratedByUserId, ratedByName, ratedAt }
+// rating/note/ratedBy*/ratedAt are null/''/null until POSTed below — the
+// caller is expected to page through everything with rating:null to find
+// what's still unrated. `text` is the Цербер remark itself; `caption`/
+// `keywords`/`title` are the POST's context (the actual post it fired on) —
+// exactly the four columns asked for: project, date, comment, context(post)
+// (team's rating is the `rating`/`note` pair once set).
+//
+// Project is deliberately NOT a stored column anywhere in this feature (see
+// db.js's comment on cerberus_feedback) — resolved live here via buildTasks,
+// same as every other place in this app that treats "project" as a
+// Mattermost card property rather than a persisted FK.
+app.get('/api/automation/cerberus-feedback', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const projectId = String(req.query.projectId || '').trim() || null;
+  try {
+    const [{ board, cards, blocks }, comments] = await Promise.all([
+      loadBoard(boardId, { fresh: true }),
+      teamComments.listAllCerberusComments(boardId),
+    ]);
+    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const taskById = new Map(tasks.map((t) => [String(t.id), t]));
+    let items = comments.map((c) => {
+      const t = taskById.get(String(c.taskId)) || null;
+      return {
+        commentId: c.commentId,
+        taskId: c.taskId,
+        text: c.text,
+        createdAt: c.createdAt,
+        projectId: t ? t.projectId : null,
+        projectLabel: t ? t.projectLabel : null,
+        title: t ? t.title : null,
+        publishDate: t ? t.publishDate : null,
+        caption: t ? t.caption : null,
+        keywords: t ? t.keywords : null,
+        url: t ? t.url : null,
+        rating: c.rating,
+        note: c.note,
+        ratedByUserId: c.ratedByUserId,
+        ratedByName: c.ratedByName,
+        ratedAt: c.ratedAt,
+      };
+    });
+    if (projectId) items = items.filter((i) => String(i.projectId || '') === projectId);
+    res.json({ items });
+  } catch (err) {
+    console.error('[api] automation cerberus-feedback list failed:', err.message);
+    res.status(502).json({ error: 'cerberus_feedback_unavailable', message: err.message });
+  }
+});
+
+// POST /api/automation/cerberus-feedback — body: { commentId, rating, note?,
+// ratedByUserId?, ratedByName? }. Adds/replaces the ONE rating on a single
+// «Цербер» remark (commentId from the GET above) — last write wins, no
+// multi-rater averaging. `rating` must be exactly one of 'good' | 'partial'
+// | 'bad' ("уместно и в тему" / частично / нет — this three-way split is this
+// app's own design choice, not specified verbatim by the user; my-portal
+// should send/expect exactly these three strings, flag if a 5-point or
+// different scale is actually wanted). `ratedByUserId`/`ratedByName` are
+// free text recorded as-is — my-portal has its own accounts, not this app's,
+// so nothing here is validated against a user table. Rejects a commentId
+// that doesn't exist on this board or wasn't authored by Цербер (can't rate
+// a human team-chat message this way).
+app.post('/api/automation/cerberus-feedback', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const commentId = String((req.body && req.body.commentId) || '').trim();
+  const rating = String((req.body && req.body.rating) || '').trim();
+  const note = String((req.body && req.body.note) || '');
+  const ratedByUserId = String((req.body && req.body.ratedByUserId) || '');
+  const ratedByName = String((req.body && req.body.ratedByName) || '');
+  const ALLOWED_RATINGS = ['good', 'partial', 'bad'];
+  if (!commentId) return res.status(400).json({ error: 'comment_id_required', message: 'commentId обязателен.' });
+  if (!ALLOWED_RATINGS.includes(rating)) {
+    return res.status(400).json({ error: 'invalid_rating', message: `rating обязателен — один из: ${ALLOWED_RATINGS.join(', ')}.` });
+  }
+  try {
+    const feedback = await teamComments.setCerberusFeedback(boardId, commentId, rating, note, { id: ratedByUserId, name: ratedByName });
+    res.json({ feedback });
+  } catch (err) {
+    console.error('[api] automation cerberus-feedback write failed:', err.message);
+    res.status(err.message && err.message.includes('не найдено') ? 404 : 502).json({ error: 'cerberus_feedback_write_failed', message: err.message });
   }
 });
 
