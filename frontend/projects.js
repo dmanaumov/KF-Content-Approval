@@ -1541,6 +1541,12 @@ function switchEditTab(name) {
   document.getElementById('editTabTeam').hidden = name !== 'team';
   document.getElementById('editTabSecrets').hidden = name !== 'secrets';
   document.getElementById('editTabStickers').hidden = name !== 'stickers';
+  // Редизайн 2026-10-02: .edit-sheet теперь сам скроллится (шапка/вкладки и
+  // низ — sticky внутри него, см. .edit-sheet-top/-bottom в projects.css) —
+  // сбрасываем прокрутку при каждом переключении, иначе после скролла вниз
+  // в длинной вкладке новая вкладка открывалась бы не с начала.
+  const sheet = document.querySelector('#editModal .edit-sheet');
+  if (sheet) sheet.scrollTop = 0;
 }
 
 // --- Стикеры (кастомные эмодзи клиента, вкладка «Стикеры») ---------------

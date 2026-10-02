@@ -61,26 +61,35 @@
 
 <div id="editModal" class="modal-wrap">
   <div class="sheet edit-sheet">
-    <div class="edit-sheet-head">
-      <div>
-        <h3>Настройки проекта</h3>
-        <p id="editProjectName"></p>
+    <!-- edit-sheet-top/-bottom: редизайн 2026-10-02 (прямой запрос — попап
+         "бросало по экрану" при переключении вкладок). Шапка+вкладки и
+         низ (ошибка+кнопки) теперь sticky внутри единого скролл-контейнера
+         .edit-sheet (см. его комментарий в projects.css) — только контент
+         самой вкладки скроллится между ними, так что высота/позиция
+         попапа больше не меняется от вкладки к вкладке. -->
+    <div class="edit-sheet-top">
+      <div class="edit-sheet-head">
+        <div>
+          <h3>Настройки проекта</h3>
+          <p id="editProjectName"></p>
+        </div>
+        <div class="proj-mmid" id="editMmid" title="ID проекта в Mattermost">MM ID: <code id="editMmidValue"></code></div>
       </div>
-      <div class="proj-mmid" id="editMmid" title="ID проекта в Mattermost">MM ID: <code id="editMmidValue"></code></div>
+
+      <div class="edit-tabs">
+        <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
+        <button class="edit-tab" type="button" data-tab="integrations">🔌 Интеграции</button>
+        <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
+        <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
+        <button class="edit-tab" type="button" data-tab="team">👥 Команда</button>
+        <button class="edit-tab secrets" type="button" data-tab="secrets">🔒 Секретики</button>
+        <button class="edit-tab" type="button" data-tab="stickers">🎟 Стикеры</button>
+      </div>
+
+      <div id="editReadonlyNotice" class="readonly-notice" hidden>Эти вкладки доступны только для просмотра — изменять их может только администратор проекта. Вам доступны только «Секретики».</div>
     </div>
 
-    <div class="edit-tabs">
-      <button class="edit-tab active" type="button" data-tab="settings">Настройки</button>
-      <button class="edit-tab" type="button" data-tab="integrations">🔌 Интеграции</button>
-      <button class="edit-tab ai" type="button" data-tab="ai"><img class="edit-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ настройки</button>
-      <button class="edit-tab cerberus" type="button" data-tab="cerberus">Цербер</button>
-      <button class="edit-tab" type="button" data-tab="team">👥 Команда</button>
-      <button class="edit-tab secrets" type="button" data-tab="secrets">🔒 Секретики</button>
-      <button class="edit-tab" type="button" data-tab="stickers">🎟 Стикеры</button>
-    </div>
-
-    <div id="editReadonlyNotice" class="readonly-notice" hidden>Эти вкладки доступны только для просмотра — изменять их может только администратор проекта. Вам доступны только «Секретики».</div>
-
+    <div class="edit-sheet-body">
     <div class="edit-panel" id="editTabSettings">
 
       <label class="field-label" for="editLogoUrl">Ссылка на лого клиента (для кабинета)</label>
@@ -312,11 +321,15 @@
       <div id="stickerSyncError" class="error-box" hidden></div>
     </div>
 
-    <div id="editError" class="error-box" hidden></div>
+    </div>
 
-    <div class="sheet-actions">
-      <button class="btn changes" data-action="close-edit">Отмена</button>
-      <button class="btn approve" data-action="save-edit">Сохранить</button>
+    <div class="edit-sheet-bottom">
+      <div id="editError" class="error-box" hidden></div>
+
+      <div class="sheet-actions">
+        <button class="btn changes" data-action="close-edit">Отмена</button>
+        <button class="btn approve" data-action="save-edit">Сохранить</button>
+      </div>
     </div>
   </div>
 </div>

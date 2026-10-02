@@ -2040,7 +2040,12 @@ app.post('/api/projects/:projectId/sticker-packs', staffAuth, async (req, res) =
   if (!(await staffCanOpenProject(req, req.params.projectId))) {
     return res.status(403).json({ error: 'not_allowed', message: 'Нет доступа к этому проекту.' });
   }
-  const packName = String((req.body && req.body.packName) || '').trim();
+  // normalizePackName — принимает и короткое имя, и полную ссылку
+  // StickersBot (addstickers/addemoji) целиком, см. её комментарий в
+  // telegramStickers.js. Нормализуем ЗДЕСЬ (а не только внутри
+  // fetchStickerSet) — иначе в project_sticker_packs.pack_name сохранилась
+  // бы вставленная целиком ссылка, а не короткое имя.
+  const packName = telegramStickers.normalizePackName((req.body && req.body.packName) || '');
   if (!packName) {
     return res.status(400).json({ error: 'invalid_pack_name', message: 'Укажите короткое имя стикерпака.' });
   }

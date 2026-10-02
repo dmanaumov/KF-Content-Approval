@@ -60,13 +60,28 @@ async function callApi(method, params) {
   return body.result;
 }
 
+// Accepts either a bare short name OR the full StickersBot link (with or
+// without https://, addstickers OR addemoji, trailing slash/query string —
+// whatever a copy-paste off the "Получить ссылку" button in Telegram
+// happens to include). Added 2026-10-02 after a live bug report: pasting
+// the full link "https://t.me/addemoji/<name>" into the «короткое имя»
+// field sent the ENTIRE URL to Telegram's getStickerSet as `name`, which
+// always answers "Bad Request: STICKERSET_INVALID" for that — the Bot API
+// only ever accepts the bare short name, never the link around it.
+function normalizePackName(input) {
+  const raw = String(input || '').trim();
+  const linkMatch = raw.match(/t\.me\/(?:addstickers|addemoji)\/([A-Za-z0-9_]+)/i);
+  if (linkMatch) return linkMatch[1];
+  return raw.replace(/^@/, '').split(/[?#]/)[0].replace(/\/+$/, '');
+}
+
 // Returns { title, stickers: [{ customEmojiId, emoji, fileId, fileUniqueId, thumbFileId }] }.
 // Only custom-emoji stickers carry custom_emoji_id — a short name that turns
 // out to be a REGULAR sticker pack (not a custom-emoji pack, e.g. added via
 // addstickers instead of addemoji) is filtered down to an empty list rather
 // than erroring, since there is nothing usable in a post's text either way.
 async function fetchStickerSet(shortName) {
-  const name = String(shortName || '').trim();
+  const name = normalizePackName(shortName);
   if (!name) throw new Error('Не указано имя стикерпака.');
   const result = await callApi('getStickerSet', { name });
   const stickers = (result.stickers || [])
@@ -154,4 +169,4 @@ function ensureThumbCached(customEmojiId, thumbFileId) {
   return p;
 }
 
-module.exports = { fetchStickerSet, resolveFileUrl, lookupThumb, ensureThumbCached };
+module.exports = { fetchStickerSet, resolveFileUrl, lookupThumb, ensureThumbCached, normalizePackName };
