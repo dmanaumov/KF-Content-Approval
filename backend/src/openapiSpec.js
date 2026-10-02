@@ -728,9 +728,10 @@ function buildOpenApiSpec() {
           description:
             'Возвращает каждое замечание, записанное «Цербер» методом POST /api/automation/tasks/{taskId}/team-comment ' +
             '(authorId "cerberus"), по ВСЕМ карточкам борда — оценённые и ещё не оценённые. Для каждого замечания отдаёт ' +
-            'контекст поста (проект, дата публикации, текст поста, ключевые слова, заголовок, ссылка) и, если уже выставлена, ' +
-            'оценку команды (rating/note/ratedByUserId/ratedByName/ratedAt). Предназначен для внешней интеграции — ' +
-            'my.kontentferma.com сам строит UI оценки и зовёт этот эндпоинт за списком, а POST ниже — чтобы записать оценку. ' +
+            'контекст поста (проект/клиент, дата публикации, соцсеть, текст поста, ключевые слова, тема, ссылка на ' +
+            'опубликованный пост и внутренняя ссылка на карточку) и, если уже выставлена, оценку команды ' +
+            '(rating/note/ratedByUserId/ratedByName/ratedAt). Предназначен для внешней интеграции — my.kontentferma.com ' +
+            'сам строит UI оценки и зовёт этот эндпоинт за списком, а POST ниже — чтобы записать оценку. ' +
             'Необязательный параметр ?projectId= сужает список до одного проекта (id как в GET /api/automation/projects).',
           security: [{ automationApiKey: [] }],
           parameters: [{ name: 'projectId', in: 'query', required: false, schema: { type: 'string' }, description: 'ограничить список одним проектом' }],
@@ -752,12 +753,14 @@ function buildOpenApiSpec() {
                             text: { type: 'string', description: 'текст замечания «Цербер»' },
                             createdAt: { type: 'string', format: 'date-time' },
                             projectId: { type: 'string', nullable: true },
-                            projectLabel: { type: 'string', nullable: true },
-                            title: { type: 'string', nullable: true },
+                            projectLabel: { type: 'string', nullable: true, description: 'клиент/проект' },
+                            title: { type: 'string', nullable: true, description: 'тема поста (без префикса соцсети — см. network)' },
+                            network: { type: 'string', nullable: true, enum: ['ig', 'tg', 'vk', 'ok', 'max', 'pin', 'li', null], description: 'соцсеть поста' },
                             publishDate: { type: 'string', nullable: true, description: 'YYYY-MM-DD' },
-                            caption: { type: 'string', nullable: true, description: 'текст поста (тело карточки)' },
+                            caption: { type: 'string', nullable: true, description: 'сам текст поста (тело карточки)' },
                             keywords: { type: 'string', nullable: true },
-                            url: { type: 'string', nullable: true, description: 'ссылка на опубликованный пост, если есть' },
+                            url: { type: 'string', nullable: true, description: 'ссылка на ЖИВОЙ опубликованный пост — null, если пост ещё не опубликован' },
+                            internalUrl: { type: 'string', nullable: true, description: 'внутренняя ссылка — открывает карточку в /team, работает независимо от статуса публикации' },
                             rating: { type: 'string', nullable: true, enum: ['good', 'partial', 'bad', null] },
                             note: { type: 'string' },
                             ratedByUserId: { type: 'string' },

@@ -5310,17 +5310,38 @@ app.post('/api/automation/tasks/:taskId/team-comment', requireAutomationAuth, as
 // are the entire surface that portal needs: this to fetch what to show/rate,
 // POST to record a rating.
 //
+// EXTENDED 2026-10-02 after the user's first live test — "мне не хватает
+// самого поста": "ссылка на пост (внутренняя) / тема поста / дата / клиент /
+// соцсеть / сам текст поста / комменты Цербера / оценка команды". Of those,
+// projectLabel (клиент), publishDate (дата), caption (сам текст поста) and
+// text (комменты Цербера) already existed — the two genuinely NEW fields
+// are `internalUrl` and `network`; `title` (тема поста) is now stripped of
+// its network prefix to actually read as a clean topic (the prefix is what
+// `network` now carries on its own, same convention GET /api/automation/
+// tasks already uses — see SOCIAL_PREFIX_RE above).
+//
+// `internalUrl` deliberately does NOT use config.publicBaseUrl or similar —
+// this app has no such setting (every other absolute link it builds, e.g.
+// the .ics feed in GET /api/links/:token/calendar.ics, reads the request's
+// own proto/host instead) — so this does the same: whatever domain/proto
+// this request actually arrived on is what the link is built from. Points
+// at config.teamCabinetPath (deliberately-obscured-but-configurable path,
+// see its comment in config.js) — fine here because my-portal is the
+// user's OWN integration behind AUTOMATION_API_KEY, not a public surface.
+//
 // Optional ?projectId=<id> narrows to one project (same ids as GET
 // /api/automation/projects). Response shape, one entry per Цербер remark:
 //   { commentId, taskId, text, createdAt,
-//     projectId, projectLabel, title, publishDate, caption, keywords, url,
+//     projectId, projectLabel, title, network, publishDate, caption,
+//     keywords, url, internalUrl,
 //     rating: 'good'|'partial'|'bad'|null, note, ratedByUserId, ratedByName, ratedAt }
 // rating/note/ratedBy*/ratedAt are null/''/null until POSTed below — the
 // caller is expected to page through everything with rating:null to find
 // what's still unrated. `text` is the Цербер remark itself; `caption`/
-// `keywords`/`title` are the POST's context (the actual post it fired on) —
-// exactly the four columns asked for: project, date, comment, context(post)
-// (team's rating is the `rating`/`note` pair once set).
+// `keywords`/`title`/`network`/`url`/`internalUrl` are the POST's context
+// (the actual post it fired on) — `url` is the LIVE PUBLISHED link (null
+// until published), `internalUrl` always works and opens the card in /team
+// regardless of publish state (team's rating is the `rating`/`note` pair).
 //
 // Project is deliberately NOT a stored column anywhere in this feature (see
 // db.js's comment on cerberus_feedback) — resolved live here via buildTasks,
@@ -5330,6 +5351,12 @@ app.get('/api/automation/cerberus-feedback', requireAutomationAuth, async (req, 
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   const projectId = String(req.query.projectId || '').trim() || null;
+  // Same "build the absolute URL from the request itself" approach as the
+  // calendarFeed .ics route above — this app has no dedicated own-domain
+  // config var, so the incoming request is the only source of truth for it.
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host = req.get('host');
+  const internalBase = host ? `${proto}://${host}` : '';
   try {
     const [{ board, cards, blocks }, comments] = await Promise.all([
       loadBoard(boardId, { fresh: true }),
@@ -5339,6 +5366,7 @@ app.get('/api/automation/cerberus-feedback', requireAutomationAuth, async (req, 
     const taskById = new Map(tasks.map((t) => [String(t.id), t]));
     let items = comments.map((c) => {
       const t = taskById.get(String(c.taskId)) || null;
+      const networkMatch = t ? String(t.title || '').match(SOCIAL_PREFIX_RE) : null;
       return {
         commentId: c.commentId,
         taskId: c.taskId,
@@ -5346,11 +5374,13 @@ app.get('/api/automation/cerberus-feedback', requireAutomationAuth, async (req, 
         createdAt: c.createdAt,
         projectId: t ? t.projectId : null,
         projectLabel: t ? t.projectLabel : null,
-        title: t ? t.title : null,
+        title: t ? String(t.title || '').replace(SOCIAL_PREFIX_RE, '') : null,
+        network: networkMatch ? networkMatch[1].toLowerCase() : null,
         publishDate: t ? t.publishDate : null,
         caption: t ? t.caption : null,
         keywords: t ? t.keywords : null,
         url: t ? t.url : null,
+        internalUrl: internalBase ? `${internalBase}${config.teamCabinetPath}?task=${encodeURIComponent(c.taskId)}` : null,
         rating: c.rating,
         note: c.note,
         ratedByUserId: c.ratedByUserId,
