@@ -127,4 +127,44 @@ async function setCerberusFeedback(boardId, commentId, rating, note, ratedBy) {
   };
 }
 
-module.exports = { listComments, addComment, listAllCerberusComments, setCerberusFeedback };
+// --- «Где сработал Цербер» badge (frontend/team.js task list + calendar) --
+//
+// Added 2026-10-02 per direct request: "сейчас ищу посты где работал
+// цербер, но не могу их вычленить в общем объеме... добавим пиктограмку-
+// значок как в админке [projects.js's .cerberus-badge, "Защищено Цербером"]
+// на посты, где была сработка цербера". Two shapes on purpose: the LIST
+// (GET /api/team/tasks) needs every task_id with a remark in ONE query, the
+// single-task refetch after a write (refetchTeamTask in index.js) only
+// needs a yes/no for the one card it already has — no reason to pull the
+// whole board's list just to answer that.
+
+// Every distinct task_id with at least one «Цербер» remark on this board.
+async function listCerberusTaskIds(boardId) {
+  if (!db.pool) return [];
+  const { rows } = await db.pool.query(
+    `SELECT DISTINCT task_id FROM task_team_comments WHERE board_id = $1 AND author_id = 'cerberus'`,
+    [boardId]
+  );
+  return rows.map((r) => r.task_id);
+}
+
+// Yes/no for ONE card — cheap indexed lookup (task_team_comments is indexed
+// on (board_id, task_id), see db.js), used where pulling the whole board's
+// list would be wasteful.
+async function hasCerberusComment(boardId, taskId) {
+  if (!db.pool) return false;
+  const { rows } = await db.pool.query(
+    `SELECT 1 FROM task_team_comments WHERE board_id = $1 AND task_id = $2 AND author_id = 'cerberus' LIMIT 1`,
+    [boardId, taskId]
+  );
+  return rows.length > 0;
+}
+
+module.exports = {
+  listComments,
+  addComment,
+  listAllCerberusComments,
+  setCerberusFeedback,
+  listCerberusTaskIds,
+  hasCerberusComment,
+};

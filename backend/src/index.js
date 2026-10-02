@@ -2405,6 +2405,14 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     }
     await resolveDiskMediaKinds(mine);
     await mediaOrder.applyStoredOrder(boardId, mine);
+    // cerberusFired — пиктограмма-значок «сработка Цербера» в списке/
+    // календаре (frontend/team.js), тот же визуальный язык, что у значка
+    // «Защищено Цербером» в /projects (.cerberus-badge в projects.css).
+    // Добавлено 2026-10-02 по прямому запросу: "ищу посты где работал
+    // цербер, но не могу их вычленить в общем объеме". Один запрос на весь
+    // список (teamComments.listCerberusTaskIds), а не по карточке — дешевле.
+    const cerberusTaskIds = new Set(await teamComments.listCerberusTaskIds(boardId));
+    for (const t of mine) t.cerberusFired = cerberusTaskIds.has(t.id);
     analytics.note('team', { actor: req.teamSession.user.username || '', actorName: [req.teamSession.user.first_name, req.teamSession.user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
     // statusOptions: every raw option on "Статус" — powers the card's status
     // picker (frontend/team.js), which lets team members move a card into
@@ -2470,6 +2478,12 @@ async function refetchTeamTask(boardId, taskId) {
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   await resolveDiskMediaKinds([updated]);
   await mediaOrder.applyStoredOrder(boardId, [updated]);
+  // cerberusFired — see GET /api/team/tasks' comment on the same field. Kept
+  // in sync here too: the frontend does a full `currentTasks[i] = updated`
+  // replace after every write (see team.js), so if this were omitted the
+  // badge would silently disappear from a card the moment anything else on
+  // it was edited, until the next full list reload.
+  updated.cerberusFired = await teamComments.hasCerberusComment(boardId, taskId);
   return updated;
 }
 
@@ -2579,6 +2593,7 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
     }
     await resolveDiskMediaKinds([task]);
     await mediaOrder.applyStoredOrder(boardId, [task]);
+    task.cerberusFired = await teamComments.hasCerberusComment(boardId, taskId); // см. GET /api/team/tasks выше
     res.json({ task });
   } catch (err) {
     console.error('[api] team single task failed:', err.message);
@@ -4265,8 +4280,6 @@ async function getAutomationProjects(boardId) {
         startDate: settings.startDate,
         paidThroughDate: settings.paidThroughDate,
         configuredNetworks: projectSettings.configuredNetworksOf(settings.socialCredentials),
-        // Есть ли у проекта правила «Цербера» (для my.kontentferma.com → раздел «Цербер»).
-        cerberusProtected: !!String(settings.cerberusMarkdown || '').trim(),
       };
     })
   );
@@ -5056,29 +5069,6 @@ app.post('/api/automation/projects/:projectId/settings', requireAutomationAuth, 
   } catch (err) {
     console.error('[api] automation project settings update failed:', err.message);
     res.status(err.httpStatus || 400).json({ error: err.code || 'invalid_planning_dates', message: err.message });
-  }
-});
-
-// POST /api/automation/projects/:projectId/cerberus — body: { markdown }.
-// Меняет ТОЛЬКО правила «Цербера» проекта (cerberus_markdown); '' выключает
-// Цербер для проекта. Добавлено 2026-10-02 для портала my.kontentferma.com
-// (раздел «Цербер»: CEO и зам правят правила там, а не в попапе /projects).
-// Прочитать текущие правила — GET /api/automation/projects/:projectId/settings
-// (поле cerberusMarkdown).
-app.post('/api/automation/projects/:projectId/cerberus', requireAutomationAuth, async (req, res) => {
-  const boardId = requireStaffBoardId(res);
-  if (!boardId) return;
-  try {
-    const { board } = await loadBoard(boardId);
-    const id = resolveAutomationProjectId(board, req.params.projectId);
-    const markdown = String((req.body && req.body.markdown) || '');
-    if (markdown.length > 100000) throw badRequest('cerberus_too_long', 'Правила Цербера слишком длинные (максимум 100 000 символов).');
-    await projectSettings.updateCerberusMarkdown(boardId, id, markdown);
-    const settings = await getAutomationProjectSettings(boardId, id);
-    res.json({ projectId: id, cerberusMarkdown: settings.cerberusMarkdown });
-  } catch (err) {
-    console.error('[api] automation cerberus update failed:', err.message);
-    res.status(err.httpStatus || 400).json({ error: err.code || 'cerberus_update_failed', message: err.message });
   }
 });
 

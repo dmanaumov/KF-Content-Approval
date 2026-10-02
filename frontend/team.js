@@ -472,6 +472,23 @@ function byDeadline(a, b) {
   return a.publishDate.localeCompare(b.publishDate);
 }
 
+// Значок «сработал Цербер» — тот же визуальный язык, что у «Защищено
+// Цербером» в /projects (.cerberus-badge, см. projects.css — загружен и на
+// этой странице, см. team.html, так что готовый стиль/тултип/тёмная тема
+// подхватываются без дублирования CSS). task.cerberusFired выставляется
+// backend'ом (GET /api/team/tasks, GET /api/team/tasks/:taskId,
+// refetchTeamTask — см. их комментарии в index.js) по наличию хотя бы
+// одного замечания «от лица» Цербер в task_team_comments для этой карточки.
+// Добавлено 2026-10-02 по прямому запросу: "ищу посты где работал цербер,
+// но не могу их вычленить в общем объеме... добавим пиктограмку-значок как
+// в админке на посты, где была сработка цербера".
+function cerberusBadgeHtml(task) {
+  if (!task.cerberusFired) return '';
+  return `<span class="cerberus-badge" data-tip="Было замечание Цербера — см. вкладку «Команда»">
+    <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor"><path d="M12 3c-1.6 0-2.7 1.3-2.9 2.7C7.6 6.3 6 8 5.6 10c-1.8.4-2.6 1.8-2.6 3 0 1.6 1.3 2.5 2.5 2.5.3 1 1 1.8 1.9 2.2-.1.4-.2.9-.2 1.3 0 1.1.9 2 2 2 .8 0 1.5-.5 1.8-1.2.3.1.6.2 1 .2s.7-.1 1-.2c.3.7 1 1.2 1.8 1.2 1.1 0 2-.9 2-2 0-.4-.1-.9-.2-1.3.9-.4 1.6-1.2 1.9-2.2 1.2 0 2.5-.9 2.5-2.5 0-1.2-.8-2.6-2.6-3-.4-2-2-3.7-3.5-4.3C14.7 4.3 13.6 3 12 3z"/><circle cx="9.3" cy="11.5" r="1" fill="#fff"/><circle cx="14.7" cy="11.5" r="1" fill="#fff"/></svg>
+  </span>`;
+}
+
 function statusBadgeHtml(task) {
   const label = (task.statusLabel || '').trim();
   if (!label) return '';
@@ -509,7 +526,7 @@ function taskRowHtml(task) {
     <div class="team-task-top">
       <div>
         ${task.projectLabel ? `<div class="team-task-project">${esc(task.projectLabel)}</div>` : ''}
-        <div class="team-task-title">${socialBadge}${esc(displayTitle)}</div>
+        <div class="team-task-title">${socialBadge}${esc(displayTitle)}${cerberusBadgeHtml(task)}</div>
       </div>
     </div>
     <div class="team-task-bottom">
@@ -763,6 +780,7 @@ function renderTeamCalendarGrid() {
           t.statusLabel || '',
           title,
           (t.keywords || '').trim(),
+          t.cerberusFired ? '🐾 Было замечание Цербера' : '',
         ].filter(Boolean);
         // Режим выбора (selectMode) — маленький чекбокс перед маркером
         // статуса + подсветка всей кнопки классом .selected; drag выключен
@@ -772,7 +790,7 @@ function renderTeamCalendarGrid() {
           ? `<span class="cal-post-check${selectedTaskIds.has(t.id) ? ' checked' : ''}" aria-hidden="true"></span>`
           : '';
         const selectedCls = selectMode && selectedTaskIds.has(t.id) ? ' selected' : '';
-        return `<button type="button" class="cal-post${selectedCls}" draggable="${selectMode ? 'false' : 'true'}" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${checkboxHtml}${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}</span></span></button>`;
+        return `<button type="button" class="cal-post${selectedCls}" draggable="${selectMode ? 'false' : 'true'}" data-task-id="${esc(t.id)}" title="${esc(tipLines.join('\n'))}">${checkboxHtml}${teamCalMarkerHtml(t)}<span class="cal-post-body"><span class="cal-post-title">${socialBadge}${esc(title)}${cerberusBadgeHtml(t)}</span></span></button>`;
       })
       .join('');
     const cls = `cal-day${inMonth ? '' : ' other-month'}${dateStr === todayStr ? ' today' : ''}`;
@@ -1953,7 +1971,7 @@ function renderModalHead(t) {
         <button type="button" class="tm-mini-btn" data-action="save-title" aria-label="Сохранить">✓</button>
         <button type="button" class="tm-mini-btn" data-action="cancel-title" aria-label="Отмена">✕</button>
       </div>`
-    : `<div class="tm-title">${esc(titleDisplay)}</div>
+    : `<div class="tm-title">${cerberusBadgeHtml(t)}${esc(titleDisplay)}</div>
        <button type="button" class="tm-title-edit-btn" data-action="edit-title" aria-label="Изменить название" title="Изменить название">✎</button>`;
   tmHead.innerHTML = `
     <div class="tm-head-row">
