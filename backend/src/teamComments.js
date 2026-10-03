@@ -12,13 +12,22 @@
 
 const db = require('./db');
 
+// LEFT JOIN cerberus_feedback — большинство строк (человеческие сообщения)
+// просто получат rating=null (у них никогда не может быть строки в
+// cerberus_feedback, см. setCerberusFeedback: туда пишут только для
+// author_id='cerberus'). Нужно, чтобы вкладка «Команда» (frontend/team.js)
+// могла показать специалисту, как уже оценено замечание Цербера — и дать
+// кнопки «Согласен/Отчасти/Не согласен» прямо под ним (добавлено
+// 2026-10-03, см. комментарий у POST .../cerberus-feedback в index.js).
 async function listComments(boardId, taskId) {
   if (!db.pool) return [];
   const { rows } = await db.pool.query(
-    `SELECT id, author_id, author_name, text, image_url, created_at
-     FROM task_team_comments
-     WHERE board_id = $1 AND task_id = $2
-     ORDER BY created_at ASC`,
+    `SELECT c.id, c.author_id, c.author_name, c.text, c.image_url, c.created_at,
+            f.rating, f.note AS feedback_note, f.rated_by_name, f.rated_at
+       FROM task_team_comments c
+       LEFT JOIN cerberus_feedback f ON f.comment_id = c.id
+      WHERE c.board_id = $1 AND c.task_id = $2
+      ORDER BY c.created_at ASC`,
     [boardId, taskId]
   );
   return rows.map(rowToComment);
@@ -46,6 +55,13 @@ function rowToComment(r) {
     text: r.text,
     imageUrl: r.image_url || '',
     createdAt: r.created_at,
+    // null для обычных сообщений команды — заполнено только у замечаний
+    // Цербера (author_id='cerberus'), и только после того, как кто-то
+    // нажал «Согласен/Отчасти/Не согласен» (см. выше).
+    cerberusRating: r.rating || null,
+    cerberusNote: r.feedback_note || '',
+    cerberusRatedByName: r.rated_by_name || '',
+    cerberusRatedAt: r.rated_at || null,
   };
 }
 
@@ -160,6 +176,51 @@ async function hasCerberusComment(boardId, taskId) {
   return rows.length > 0;
 }
 
+// --- «Пропускать при дальнейшей обработке» (API-флаг для n8n) -------------
+//
+// Добавлено 2026-10-03 по запросу: "если [специалист] не согласен [с
+// замечанием Цербера], то при дальнейшей обработке цербера мы пропускаем
+// этот пост". Пользователь явно попросил ТОЛЬКО отдать признак через API —
+// саму логику "что значит пропустить" и когда её проверять решает сценарий
+// n8n на его стороне, этот код не знает и не обязан знать, когда и как
+// часто Цербер перепроверяет карточки.
+//
+// Признак = "есть хотя бы одно замечание Цербера на этой карточке с
+// rating='bad'" (rating='bad' — это и есть «не согласен», см. кнопки в
+// frontend/team.js и ШКАЛА в kf-cerberus-feedback-api.md, без отдельного
+// булева поля — проще, и совпадает с уже существующей трёхвариантной
+// шкалой good/partial/bad). Та же пара форм, что и у «сработал Цербер»
+// выше: list — для GET /api/automation/tasks (одним запросом на весь
+// список), has — для GET /api/automation/tasks/:taskId (одна карточка).
+
+// Все task_id на этом борде, где хоть одно замечание Цербера оценено как
+// 'bad' — то есть команда с ним не согласна.
+async function listCerberusSkipTaskIds(boardId) {
+  if (!db.pool) return [];
+  const { rows } = await db.pool.query(
+    `SELECT DISTINCT c.task_id
+       FROM task_team_comments c
+       JOIN cerberus_feedback f ON f.comment_id = c.id
+      WHERE c.board_id = $1 AND c.author_id = 'cerberus' AND f.rating = 'bad'`,
+    [boardId]
+  );
+  return rows.map((r) => r.task_id);
+}
+
+// Да/нет для ОДНОЙ карточки — см. hasCerberusComment выше, тот же принцип.
+async function hasCerberusDisagree(boardId, taskId) {
+  if (!db.pool) return false;
+  const { rows } = await db.pool.query(
+    `SELECT 1
+       FROM task_team_comments c
+       JOIN cerberus_feedback f ON f.comment_id = c.id
+      WHERE c.board_id = $1 AND c.task_id = $2 AND c.author_id = 'cerberus' AND f.rating = 'bad'
+      LIMIT 1`,
+    [boardId, taskId]
+  );
+  return rows.length > 0;
+}
+
 module.exports = {
   listComments,
   addComment,
@@ -167,4 +228,6 @@ module.exports = {
   setCerberusFeedback,
   listCerberusTaskIds,
   hasCerberusComment,
+  listCerberusSkipTaskIds,
+  hasCerberusDisagree,
 };

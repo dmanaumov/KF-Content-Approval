@@ -292,6 +292,23 @@
 .tm-chat-msg-text{font-size:13px;line-height:1.45;white-space:pre-wrap}
 .tm-chat-msg-time{font-size:9.5px;color:var(--muted);margin-top:3px}
 .tm-chat-msg.system{background:transparent;align-self:center;max-width:100%;text-align:center;color:var(--muted);font-size:11px;padding:2px 0}
+
+/* Оценка замечания Цербера специалистом («Согласен/Отчасти/Не согласен»,
+   см. cerberusFeedbackHtml() в team.js) — показывается только под
+   сообщениями самого Цербера, прямо под текстом замечания. Цвета кнопок
+   намеренно светофорные (зелёный/жёлтый/красный) — быстро читаются даже
+   не вникая в подпись. .tm-cerberus-fb-btn.active.bad дополнительно
+   подсвечен: это и есть признак "пост пропустят при следующей обработке",
+   должно быть заметно, а не теряться среди остальных кнопок. */
+.tm-cerberus-feedback{margin-top:8px;padding-top:8px;border-top:1px dashed #F3C76A}
+.tm-cerberus-feedback-label{font-size:11px;font-weight:700;color:#7A4D00;margin-bottom:6px}
+.tm-cerberus-feedback-btns{display:flex;gap:6px;flex-wrap:wrap}
+.tm-cerberus-fb-btn{font-size:11.5px;font-weight:700;border:1px solid var(--line);border-radius:9px;padding:5px 10px;background:var(--card);color:var(--ink);cursor:pointer}
+.tm-cerberus-fb-btn:disabled{opacity:.6;cursor:default}
+.tm-cerberus-fb-btn.active.good{background:#E3F3E9;border-color:#9FCDB3;color:#1F6B44}
+.tm-cerberus-fb-btn.active.partial{background:#FFF1D6;border-color:#F3C76A;color:#7A4D00}
+.tm-cerberus-fb-btn.active.bad{background:#FFE8E2;border-color:#F0C4BF;color:#C94F2E}
+.tm-cerberus-feedback-status{font-size:10.5px;color:var(--muted);margin-top:6px}
 .tm-chat-compose{display:flex;flex-direction:column;gap:8px}
 .tm-chat-compose-row{display:flex;gap:8px;align-items:flex-end}
 .tm-chat-compose textarea{flex:1;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;font-size:13px;resize:none;min-height:40px;max-height:120px;outline:none;background:var(--card);color:var(--ink)}
@@ -575,6 +592,11 @@
   .tm-chat-msg{background:#222626}
   .tm-chat-msg.mine{background:#1E2927}
   .tm-chat-msg-author.cerberus{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
+  .tm-cerberus-feedback{border-top-color:#8A6D2A}
+  .tm-cerberus-feedback-label{color:#F2C45C}
+  .tm-cerberus-fb-btn.active.good{background:#1C2E22;border-color:#3FA98F;color:#7FD3AE}
+  .tm-cerberus-fb-btn.active.partial{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
+  .tm-cerberus-fb-btn.active.bad{background:#2E1D19;border-color:#4E302C;color:#E68A6B}
   .tm-chat-attach{background:#262222}
   .tm-chat-attach:active{background:#222525}
   .tm-chat-pending-img{background:#222525}

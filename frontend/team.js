@@ -2366,6 +2366,41 @@ function pendingImageHtml(pending, scope) {
   </div>`;
 }
 
+// Блок «Согласен/Отчасти/Не согласен» под ОДНИМ замечанием Цербера —
+// добавлено 2026-10-03 по прямому запросу: "нам надо чтобы член команды дал
+// обратную связь - согласен с замечанием или нет! Если не согласен, то при
+// дальнейшей обработке цербера мы пропускаем этот пост" + "подчеркни, что
+// нам важно мнение специалиста" (отсюда формулировка подписи ниже — это не
+// формальность, реальный повод подчеркнуть команде, что их оценка влияет на
+// то, пойдёт ли карточка в обработку снова).
+//
+// Показывается ТОЛЬКО под сообщениями Цербера (c.authorId === 'cerberus' —
+// это и есть тот самый authorId, который setCerberusFeedback на бэкенде
+// проверяет перед записью, см. teamComments.js). Три кнопки пишут сразу, без
+// отдельного «Сохранить» — оценка нужна сразу после сработки, не требует
+// обдумывания текста (в отличие от my.kontentferma.com, где есть поле для
+// комментария — см. kf-cerberus-feedback-api.md). Повторный клик меняет
+// оценку (UPSERT на бэкенде) — текущая подсвечена.
+function cerberusFeedbackHtml(c) {
+  if (c.authorId !== 'cerberus') return '';
+  const btn = (rating, emoji, label) =>
+    `<button type="button" class="tm-cerberus-fb-btn${c.cerberusRating === rating ? ` active ${rating}` : ''}" data-action="cerberus-feedback" data-rating="${rating}" data-comment-id="${esc(c.id)}">${emoji} ${label}</button>`;
+  const status = c.cerberusRating
+    ? `<div class="tm-cerberus-feedback-status">Оценено${c.cerberusRatedByName ? ' — ' + esc(c.cerberusRatedByName) : ''}${
+        c.cerberusRating === 'bad' ? ' · этот пост пропустят при следующей проверке Цербером' : ''
+      }</div>`
+    : '';
+  return `<div class="tm-cerberus-feedback">
+    <div class="tm-cerberus-feedback-label">Нам важно ваше мнение как специалиста — согласны с замечанием?</div>
+    <div class="tm-cerberus-feedback-btns">
+      ${btn('good', '👍', 'Согласен')}
+      ${btn('partial', '🤔', 'Отчасти')}
+      ${btn('bad', '👎', 'Не согласен')}
+    </div>
+    ${status}
+  </div>`;
+}
+
 function renderTeamPane(t) {
   const list = teamCommentsCache[t.id];
   if (!list) {
@@ -2380,6 +2415,7 @@ function renderTeamPane(t) {
             ${c.text ? `<div class="tm-chat-msg-text">${esc(c.text)}</div>` : ''}
             ${chatMsgImageHtml(c.imageUrl)}
             <div class="tm-chat-msg-time">${formatDateTime(c.createdAt)}</div>
+            ${cerberusFeedbackHtml(c)}
           </div>`;
         })
         .join('')
@@ -2728,6 +2764,21 @@ tmBody.addEventListener('click', async (e) => {
   }
   if (action === 'toggle-sticker-picker') {
     toggleStickerPicker(t);
+    return;
+  }
+  if (action === 'cerberus-feedback') {
+    const commentId = btn.dataset.commentId;
+    const rating = btn.dataset.rating;
+    const group = btn.closest('.tm-cerberus-feedback');
+    if (group) group.querySelectorAll('.tm-cerberus-fb-btn').forEach((b) => (b.disabled = true));
+    try {
+      await teamApi(`/tasks/${encodeURIComponent(t.id)}/cerberus-feedback/${encodeURIComponent(commentId)}`, { method: 'POST', body: { rating } });
+      await loadTeamComments(t.id); // перерисует вкладку «Команда» с уже сохранённой оценкой
+      toast('Оценка сохранена');
+    } catch (err) {
+      toast('Не удалось сохранить оценку: ' + err.message);
+      if (group) group.querySelectorAll('.tm-cerberus-fb-btn').forEach((b) => (b.disabled = false));
+    }
     return;
   }
   if (action === 'insert-sticker') {

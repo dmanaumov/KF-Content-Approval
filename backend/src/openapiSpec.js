@@ -97,6 +97,14 @@ function buildOpenApiSpec() {
             projectId: { type: 'string', nullable: true },
             projectLabel: { type: 'string', nullable: true },
             url: { type: 'string', description: 'ссылка на опубликованный пост, если уже проставлена' },
+            cerberusSkip: {
+              type: 'boolean',
+              description:
+                'true — специалист не согласился хотя бы с одним замечанием Цербера по этой карточке ' +
+                '(поставил оценку "bad" прямо в /team или через POST /api/automation/cerberus-feedback). ' +
+                'Решение, что делать с этим флагом при следующей обработке (пропустить карточку целиком, ' +
+                'не поднимать её снова и т.п.) — на стороне автоматизации, этот API только отдаёт признак.',
+            },
           },
         },
         Error: {

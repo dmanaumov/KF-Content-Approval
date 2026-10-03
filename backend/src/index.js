@@ -3340,6 +3340,44 @@ app.post('/api/team/tasks/:taskId/comments', teamAuth.requireTeamAuth, requireTe
   }
 });
 
+// POST /api/team/tasks/:taskId/cerberus-feedback/:commentId — body:
+// { rating: 'good'|'partial'|'bad', note?: string }. Специалист оценивает
+// ОДНО конкретное замечание Цербера прямо в карточке, во вкладке «Команда»
+// (кнопки под его сообщением — см. renderTeamPane/cerberusFeedbackHtml в
+// frontend/team.js). Добавлено 2026-10-03 по запросу: "нам надо чтобы член
+// команды дал обратную связь - согласен с замечанием или нет! Если не
+// согласен, то при дальнейшей обработке цербера мы пропускаем этот пост".
+//
+// Пишет в ту же таблицу cerberus_feedback, что и уже существующий
+// requireAutomationAuth-роут ниже (POST /api/automation/cerberus-feedback,
+// см. kf-cerberus-feedback-api.md) — тот был сделан для my.kontentferma.com,
+// этот — для оценки прямо тут; оба легитимны и пишут в одно место
+// (setCerberusFeedback — обычный UPSERT, последняя оценка побеждает,
+// независимо от того, откуда она пришла). `rating:'bad'` ("не согласен") —
+// это и есть признак "пропустить пост", см. teamComments.hasCerberusDisagree/
+// listCerberusSkipTaskIds и cerberusSkip в GET /api/automation/tasks(/:id)
+// ниже — n8n сам решает, что делать с этим флагом при следующей обработке.
+app.post('/api/team/tasks/:taskId/cerberus-feedback/:commentId', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const rating = String((req.body && req.body.rating) || '');
+  if (!['good', 'partial', 'bad'].includes(rating)) {
+    return res.status(400).json({ error: 'rating_invalid', message: 'rating должен быть good, partial или bad.' });
+  }
+  const note = String((req.body && req.body.note) || '').trim();
+  try {
+    const user = req.teamSession.user;
+    const feedback = await teamComments.setCerberusFeedback(boardId, req.params.commentId, rating, note, {
+      id: user.id,
+      name: teamActorName(req),
+    });
+    res.json({ feedback });
+  } catch (err) {
+    console.error('[api] team cerberus feedback failed:', err.message);
+    res.status(404).json({ error: 'cerberus_feedback_failed', message: err.message });
+  }
+});
+
 // POST /api/team/tasks/:taskId/client-message — body: { text }. Sends a
 // message to the CLIENT (see sendClientMessage) — separate from
 // /comments above, which is the internal team-only chat. Available any
@@ -4546,6 +4584,14 @@ async function getAutomationTasks(boardId, { project, status, date } = {}) {
   await resolveDiskMediaKinds(matched);
   await mediaOrder.applyStoredOrder(boardId, matched);
 
+  // cerberusSkip — команда нажала «Не согласен» хотя бы на одном замечании
+  // Цербера по этой карточке (см. POST /api/team/tasks/:taskId/
+  // cerberus-feedback/:commentId выше). Один запрос на весь список — тот же
+  // приём, что и cerberusFired в GET /api/team/tasks (listCerberusTaskIds).
+  // Что делать с этим флагом при следующей обработке — решает сам n8n,
+  // здесь только отдаём признак.
+  const skipTaskIds = new Set(await teamComments.listCerberusSkipTaskIds(boardId));
+
   const settingsCache = new Map();
   const result = [];
   for (const t of matched) {
@@ -4558,6 +4604,7 @@ async function getAutomationTasks(boardId, { project, status, date } = {}) {
       ...t,
       network: networkMatch ? networkMatch[1].toLowerCase() : null,
       recommendedPublishTime: settings.publishTimeMsk || null,
+      cerberusSkip: skipTaskIds.has(t.id),
     });
   }
   return result;
@@ -4584,10 +4631,14 @@ async function getAutomationTaskById(boardId, taskId) {
   await mediaOrder.applyStoredOrder(boardId, [task]);
   const settings = await projectSettings.getSettings(boardId, task.projectId);
   const networkMatch = String(task.title || '').match(SOCIAL_PREFIX_RE);
+  // cerberusSkip — см. комментарий в getAutomationTasks выше, тот же флаг,
+  // здесь дешёвый одноразовый lookup для одной карточки.
+  const cerberusSkip = await teamComments.hasCerberusDisagree(boardId, taskId);
   return {
     ...task,
     network: networkMatch ? networkMatch[1].toLowerCase() : null,
     recommendedPublishTime: settings.publishTimeMsk || null,
+    cerberusSkip,
   };
 }
 
