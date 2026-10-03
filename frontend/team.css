@@ -270,6 +270,18 @@
 .tm-sticker-empty{font-size:12px;color:var(--muted);text-align:center;padding:4px}
 .tm-sticker-inline{width:1.1em;height:1.1em;vertical-align:-0.2em;object-fit:contain}
 
+/* Живой предпросмотр текста поста прямо под textarea (см. renderTextPane()
+   в team.js) — textarea всегда хранит маркеры [[sticker:id:emoji]] как
+   читаемый сырой текст (это нормально и ожидаемо при редактировании), но
+   без этого блока единственный способ увидеть, что стикер и правда
+   отрисуется картинкой — переключиться на вкладку «Предпросмотр». Этот
+   блок обновляется на каждый input (включая Ctrl+V и клик по стикеру из
+   пикера — см. updateCaptionLivePreview() в team.js), поэтому после вставки
+   готового поста с маркерами стикеров сразу видно результат, не уходя со
+   вкладки «Текст». */
+.tm-caption-live-preview{margin-top:8px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);font-size:12.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.tm-caption-live-preview-empty{color:var(--muted);font-style:italic}
+
 /* Чаты (команда / клиент) */
 .tm-chat{display:flex;flex-direction:column;gap:10px}
 .tm-chat-empty{color:var(--muted);font-size:12.5px;text-align:center;padding:18px 0}

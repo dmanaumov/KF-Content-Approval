@@ -2282,6 +2282,22 @@ function insertSticker(customEmojiId, emoji) {
   ta.focus();
   ta.setSelectionRange(caret, caret);
   document.getElementById('tmStickerPicker').hidden = true;
+  updateCaptionLivePreview();
+}
+
+// Живой предпросмотр textarea #tmCaptionInput прямо во вкладке «Текст» (см.
+// комментарий у .tm-caption-live-preview в team.css — зачем он нужен).
+// Вызывается: (1) сразу при открытии вкладки «Текст» (renderTextPane), (2)
+// на каждый input в textarea — делегировано на tmBody, покрывает и ручной
+// ввод, и Ctrl+V/контекстное «Вставить» (вставка вставляет текст, браузер
+// сам генерирует input-событие), (3) из insertSticker() выше — программная
+// правка textarea.value там input не генерирует, обновляем явно.
+function updateCaptionLivePreview() {
+  const ta = document.getElementById('tmCaptionInput');
+  const box = document.getElementById('tmCaptionLivePreview');
+  if (!ta || !box) return;
+  const text = ta.value;
+  box.innerHTML = text ? captionWithStickers(text) : '<span class="tm-caption-live-preview-empty">Текст пока пуст</span>';
 }
 
 // Экранирует текст и заменяет маркеры [[sticker:id:emoji]] на маленькую
@@ -2300,6 +2316,8 @@ function renderTextPane(t) {
   let html = `<div>
     <div class="tm-field-label">Текст поста</div>
     <textarea class="tm-textarea" id="tmCaptionInput" spellcheck="true">${esc(t.caption || '')}</textarea>
+    <div class="tm-field-label" style="margin-top:8px">Предпросмотр (так будет выглядеть стикер)</div>
+    <div class="tm-caption-live-preview" id="tmCaptionLivePreview">${t.caption ? captionWithStickers(t.caption) : '<span class="tm-caption-live-preview-empty">Текст пока пуст</span>'}</div>
     <div class="tm-save-row" style="margin-top:8px">
       <button type="button" class="btn changes" data-action="save-caption">Сохранить текст</button>
       <button type="button" class="btn changes" data-action="toggle-sticker-picker">🎟 Стикер</button>
@@ -2607,6 +2625,13 @@ tmTabbar.addEventListener('click', (e) => {
     toast('ИИ-генератор пока без провайдера — подключим, как только выберем сервис вместе с Дмитрием.');
     return;
   }
+});
+
+// Живой предпросмотр текста поста (см. updateCaptionLivePreview выше) —
+// 'input' покрывает и обычный ввод, и вставку из буфера (Ctrl+V/контекстное
+// меню «Вставить»): оба генерируют input-событие на textarea.
+tmBody.addEventListener('input', (e) => {
+  if (e.target && e.target.id === 'tmCaptionInput') updateCaptionLivePreview();
 });
 
 tmBody.addEventListener('click', async (e) => {
