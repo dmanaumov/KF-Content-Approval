@@ -21,6 +21,7 @@ const calendarFeed = require('./calendarFeed');
 const taskCreators = require('./taskCreators');
 const projectAccess = require('./projectAccess');
 const teamComments = require('./teamComments');
+const socialStats = require('./socialStats');
 const teamAuth = require('./teamAuth');
 const analytics = require('./analytics');
 const botStore = require('./botStore');
@@ -4642,6 +4643,119 @@ async function getAutomationTaskById(boardId, taskId) {
   };
 }
 
+// Опрашивает VK (просмотры/лайки/репосты/комментарии по каждому
+// опубликованному посту + число подписчиков паблика) и Telegram (только
+// число подписчиков — Bot API не отдаёт просмотры канала, см.
+// backend/src/socialStats.js и claude/kf-social-stats-tracking.md в
+// проекте "Мои IT дела") для ВСЕХ проектов борда разом. Добавлено
+// 2026-10-03, дёргается POST /api/automation/social-stats/run ниже —
+// расписание ("раз в неделю для подписчиков", как просил Дмитрий) настраивает
+// сама автоматизация (n8n), этот backend только выполняет один опрос по
+// команде и копит историю (social_post_stats/social_channel_stats —
+// APPEND-ONLY, см. db.js).
+//
+// Один вызов getAutomationTasks на ВЕСЬ борд (а не по проекту в цикле) —
+// дешевле: loadBoard грузится один раз, а не по разу на проект.
+async function runSocialStatsPoll(boardId) {
+  const published = await getAutomationTasks(boardId, { status: 'published' });
+  const summary = {
+    vk: { projects: 0, posts: 0, channels: 0, errors: [] },
+    tg: { projects: 0, channels: 0, errors: [] },
+  };
+
+  // --- VK: просмотры/реакции по постам + подписчики паблика ---
+  const vkByProject = new Map();
+  for (const t of published) {
+    if (t.network !== 'vk' || !t.url || !t.projectId) continue;
+    if (!vkByProject.has(t.projectId)) vkByProject.set(t.projectId, []);
+    vkByProject.get(t.projectId).push(t);
+  }
+  for (const [projectId, tasks] of vkByProject) {
+    let accessToken;
+    try {
+      const creds = await getAutomationProjectCredentials(boardId, projectId, 'vk');
+      accessToken = socialStats.pickField(creds, ['accessToken', 'access_token', 'token']);
+    } catch (err) {
+      summary.vk.errors.push(`проект ${projectId}: ${err.message}`);
+      continue;
+    }
+    if (!accessToken) {
+      summary.vk.errors.push(`проект ${projectId}: нет accessToken в socialCredentials.vk — пропущен`);
+      continue;
+    }
+    summary.vk.projects++;
+    const parsed = tasks.map((t) => ({ task: t, ids: socialStats.parseVkWallUrl(t.url) })).filter((x) => x.ids);
+    for (let i = 0; i < parsed.length; i += 100) {
+      const chunk = parsed.slice(i, i + 100);
+      let stats;
+      try {
+        stats = await socialStats.fetchVkPostsStats(accessToken, chunk.map((x) => x.ids));
+      } catch (err) {
+        summary.vk.errors.push(`проект ${projectId}: wall.getById — ${err.message}`);
+        continue;
+      }
+      for (const x of chunk) {
+        const s = stats.get(`${x.ids.ownerId}_${x.ids.postId}`);
+        if (!s) continue;
+        try {
+          await socialStats.recordPostStats(boardId, x.task.id, 'vk', s);
+          summary.vk.posts++;
+        } catch (err) {
+          summary.vk.errors.push(`задача ${x.task.id}: запись в БД — ${err.message}`);
+        }
+      }
+    }
+    const anyOwnerId = parsed[0] && parsed[0].ids.ownerId;
+    if (anyOwnerId) {
+      try {
+        const members = await socialStats.fetchVkGroupMembers(accessToken, anyOwnerId);
+        if (members != null) {
+          await socialStats.recordChannelStats(boardId, projectId, 'vk', members);
+          summary.vk.channels++;
+        }
+      } catch (err) {
+        summary.vk.errors.push(`проект ${projectId}: подписчики — ${err.message}`);
+      }
+    }
+  }
+
+  // --- Telegram: подписчики канала (просмотры в Bot API недоступны) ---
+  const tgByProject = new Map();
+  for (const t of published) {
+    if (t.network !== 'tg' || !t.url || !t.projectId) continue;
+    if (!tgByProject.has(t.projectId)) tgByProject.set(t.projectId, t); // достаточно любого одного поста — узнать @username
+  }
+  for (const [projectId, task] of tgByProject) {
+    let botToken;
+    try {
+      const creds = await getAutomationProjectCredentials(boardId, projectId, 'tg');
+      botToken = socialStats.pickField(creds, ['botToken', 'bot_token', 'token']);
+    } catch (err) {
+      summary.tg.errors.push(`проект ${projectId}: ${err.message}`);
+      continue;
+    }
+    if (!botToken) {
+      summary.tg.errors.push(`проект ${projectId}: нет botToken в socialCredentials.tg — пропущен`);
+      continue;
+    }
+    const parsed = socialStats.parseTelegramPublicUrl(task.url);
+    if (!parsed) {
+      summary.tg.errors.push(`проект ${projectId}: ссылка "${task.url}" не похожа на публичный канал (t.me/<имя>/<id>) — пропущен`);
+      continue;
+    }
+    summary.tg.projects++;
+    try {
+      const count = await socialStats.fetchTelegramMemberCount(botToken, parsed.username);
+      await socialStats.recordChannelStats(boardId, projectId, 'tg', count);
+      summary.tg.channels++;
+    } catch (err) {
+      summary.tg.errors.push(`проект ${projectId}: ${err.message}`);
+    }
+  }
+
+  return summary;
+}
+
 // True once `paidThroughDate` (YYYY-MM-DD, project_settings.paid_through_date)
 // has fully passed in Moscow time — i.e. after 23:59:59 MSK on that date, not
 // the instant UTC midnight ticks over, so a project paid through "today"
@@ -5483,6 +5597,58 @@ app.post('/api/automation/cerberus-feedback', requireAutomationAuth, async (req,
   } catch (err) {
     console.error('[api] automation cerberus-feedback write failed:', err.message);
     res.status(err.message && err.message.includes('не найдено') ? 404 : 502).json({ error: 'cerberus_feedback_write_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/social-stats/run — один проход опроса VK/Telegram
+// по ВСЕМ проектам борда разом (см. runSocialStatsPoll выше и
+// backend/src/socialStats.js). Без тела запроса. Вызывается по
+// расписанию из n8n — периодичность решает сама автоматизация (Дмитрий
+// просил "раз в неделю" для подписчиков, просмотры постов можно опрашивать
+// чаще — это снаружи, не здесь). Отвечает сводкой — сколько проектов/постов
+// реально удалось опросить и список ошибок по тем, что пропущены (нет
+// accessToken/botToken в кредах, не распознанная ссылка и т.п.) — ни одна
+// ошибка одного проекта не прерывает опрос остальных.
+app.post('/api/automation/social-stats/run', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const summary = await runSocialStatsPoll(boardId);
+    res.json(summary);
+  } catch (err) {
+    console.error('[api] social stats poll failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'social_stats_poll_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/social-stats/channel?projectId=&network=<vk|tg> — журнал
+// числа подписчиков во времени (каждая строка — один опрос, см.
+// social_channel_stats в db.js). Оба query-параметра опциональны —
+// сужают, не обязательны.
+app.get('/api/automation/social-stats/channel', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const items = await socialStats.listChannelStats(boardId, String(req.query.projectId || '').trim() || null, String(req.query.network || '').trim() || null);
+    res.json({ items });
+  } catch (err) {
+    console.error('[api] social channel stats read failed:', err.message);
+    res.status(500).json({ error: 'channel_stats_failed', message: err.message });
+  }
+});
+
+// GET /api/automation/social-stats/post/:taskId — журнал просмотров/реакций
+// ОДНОГО поста во времени (сейчас только для network='vk' — см. комментарий
+// в socialStats.js про Telegram).
+app.get('/api/automation/social-stats/post/:taskId', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const items = await socialStats.listPostStats(boardId, req.params.taskId);
+    res.json({ items });
+  } catch (err) {
+    console.error('[api] social post stats read failed:', err.message);
+    res.status(500).json({ error: 'post_stats_failed', message: err.message });
   }
 });
 

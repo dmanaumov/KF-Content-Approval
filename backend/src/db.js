@@ -363,6 +363,42 @@ async function initSchema() {
       rated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  // Статистика по соцсетям (backend/src/socialStats.js) — добавлено
+  // 2026-10-03: "нам нужна статистика для дальнейшего формирования
+  // отчетов... можем ли раз в неделю проверять и логировать количество
+  // подписчиков в канале?". Два отдельных журнала, оба APPEND-ONLY (каждый
+  // опрос — новая строка, НЕ upsert) — для отчётов важна история точек во
+  // времени, а не только последнее значение. Без FK на task_team_comments/
+  // карточки — карточка может быть архивной/удалённой, журнал статистики
+  // всё равно должен остаться читаемым. board_id/task_id/project_id — как
+  // везде в этом файле, не денормализация "на будущее", а ровно то, что
+  // нужно для фильтрации при чтении (см. socialStats.listPostStats/
+  // listChannelStats).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_post_stats (
+      id bigserial PRIMARY KEY,
+      board_id text NOT NULL,
+      task_id text NOT NULL,
+      network text NOT NULL,
+      views integer,
+      likes integer,
+      comments integer,
+      reposts integer,
+      fetched_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_post_stats_task_idx ON social_post_stats (board_id, task_id, fetched_at DESC);`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_channel_stats (
+      id bigserial PRIMARY KEY,
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      network text NOT NULL,
+      subscriber_count integer NOT NULL,
+      fetched_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_channel_stats_idx ON social_channel_stats (board_id, project_id, network, fetched_at DESC);`);
   // Who actually clicked "Запланировать публикацию" in the /team cabinet.
   // Mattermost's own block.createdBy is USELESS for this: this app talks to
   // Mattermost as ONE shared service account (MATTERMOST_LOGIN_ID or

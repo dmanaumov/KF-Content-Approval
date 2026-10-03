@@ -844,6 +844,129 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/automation/social-stats/run': {
+        post: {
+          summary: 'Опросить VK/Telegram по всем проектам борда и записать статистику',
+          description:
+            'Один проход: для каждого проекта с опубликованными VK-постами — просмотры/лайки/репосты/комментарии по ' +
+            'каждому посту (VK wall.getById) + число подписчиков паблика (VK groups.getById); для каждого проекта с ' +
+            'опубликованными Telegram-постами — число подписчиков канала (Bot API getChatMemberCount; просмотры ' +
+            'постов Bot API не отдаёт вообще, см. claude/kf-social-stats-tracking.md). Переиспользует те же per-project ' +
+            'publishing credentials, что уже настроены для публикации (accessToken у vk, botToken у tg — ' +
+            'см. POST /api/automation/projects/{projectId}/credentials) — отдельно настраивать для статистики нечего. ' +
+            'Без тела запроса. Периодичность вызова (например, раз в неделю для подписчиков) решает вызывающая ' +
+            'автоматизация — сам этот backend ничего по расписанию не делает. Ошибка одного проекта (нет токена, ' +
+            'ссылка не распознана) не прерывает опрос остальных — попадает в errors в ответе.',
+          security: [{ automationApiKey: [] }],
+          responses: {
+            200: {
+              description: 'OK — сводка по прошедшему опросу',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      vk: {
+                        type: 'object',
+                        properties: {
+                          projects: { type: 'integer', description: 'сколько проектов с VK-кредами реально опрошено' },
+                          posts: { type: 'integer', description: 'сколько постов получили новую строку статистики' },
+                          channels: { type: 'integer', description: 'сколько пабликов получили новую строку подписчиков' },
+                          errors: { type: 'array', items: { type: 'string' } },
+                        },
+                      },
+                      tg: {
+                        type: 'object',
+                        properties: {
+                          projects: { type: 'integer' },
+                          channels: { type: 'integer' },
+                          errors: { type: 'array', items: { type: 'string' } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+            502: { description: 'Сбой чтения карточек борда', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/automation/social-stats/channel': {
+        get: {
+          summary: 'Журнал числа подписчиков во времени',
+          description: 'Каждая строка — один опрос POST .../social-stats/run. Оба параметра опциональны.',
+          security: [{ automationApiKey: [] }],
+          parameters: [
+            { name: 'projectId', in: 'query', required: false, schema: { type: 'string' } },
+            { name: 'network', in: 'query', required: false, schema: { type: 'string', enum: ['vk', 'tg'] } },
+          ],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      items: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            projectId: { type: 'string' },
+                            network: { type: 'string', enum: ['vk', 'tg'] },
+                            subscriberCount: { type: 'integer' },
+                            fetchedAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
+      '/api/automation/social-stats/post/{taskId}': {
+        get: {
+          summary: 'Журнал просмотров/реакций ОДНОГО поста во времени (пока только VK)',
+          security: [{ automationApiKey: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      items: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            network: { type: 'string' },
+                            views: { type: 'integer', nullable: true },
+                            likes: { type: 'integer', nullable: true },
+                            comments: { type: 'integer', nullable: true },
+                            reposts: { type: 'integer', nullable: true },
+                            fetchedAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
       '/api/automation/tasks/{taskId}/media-link': {
         post: {
           summary: 'Прикрепить уже готовую ссылку disk.kontentferma к карточке',
