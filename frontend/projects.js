@@ -725,11 +725,13 @@ function openCredInstruction(net) {
     `<ol class="cred-instruction-steps">${info.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>` +
     `<p class="cred-instruction-ask"><b>Пришлите нам:</b> ${esc(info.ask)}</p>`;
   document.getElementById('credInstructionModal').dataset.net = net;
+  document.getElementById('credInstructionModal').hidden = false;
   document.getElementById('credInstructionModal').classList.add('show');
 }
 
 function closeCredInstruction() {
   document.getElementById('credInstructionModal').classList.remove('show');
+  document.getElementById('credInstructionModal').hidden = true;
 }
 
 // --- Telegram "куда публикует бот" picker — sits on top of the tg
