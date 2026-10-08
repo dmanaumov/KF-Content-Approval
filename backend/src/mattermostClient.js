@@ -162,6 +162,10 @@ function fetchWithTimeout(url, opts = {}, ms = config.requestTimeoutMs) {
 // container restart re-logs in from scratch, which is fine since login is
 // cheap and happens lazily on first request.
 let session = { token: null };
+const loginListeners = [];
+function onLogin(cb) {
+  loginListeners.push(cb);
+}
 
 // Pulls the session token out of a Set-Cookie: MMAUTHTOKEN=<token>; ... header.
 // The agency's own working n8n login flow has a node literally named "Extract
@@ -201,6 +205,9 @@ async function login() {
     );
   }
   session = { token };
+  for (const cb of loginListeners) {
+    try { cb(); } catch (e) {}
+  }
   if (config.debug) {
     console.log(
       `[mattermost:debug] login() → session token acquired (source: ${res.headers.get('token') ? 'Token header' : 'MMAUTHTOKEN cookie'})`
@@ -254,10 +261,36 @@ async function loginAs(loginId, password) {
   return { token, user };
 }
 
+// Single-flight login (2026-10-08). Incident 12:42 UTC: listCards fires 5
+// page requests in parallel; when the session token was invalid, every one of
+// them got a 401 and called login() on its own — 5 simultaneous logins, twice
+// in a row (10 x "request aborted ... users/login" in our log). Each login
+// also creates a NEW Mattermost session for this account, and Mattermost was
+// already revoking the oldest one on every login ("Session revoked; user's
+// number of sessions were over the maxSessionsLimit") — so a login burst
+// can knock out a session someone else (n8n, a person's browser on the same
+// account) is still using, which then 401s and logs in again: ping-pong.
+// Now: concurrent callers share ONE in-flight login, and a forced re-login
+// right after a fresh one (another request already refreshed the token
+// while this one was waiting on its 401) just reuses that fresh token.
+let loginInFlight = null;
+let lastLoginAt = 0;
+const RELOGIN_REUSE_WINDOW_MS = 10000;
+
 async function getBearerToken({ forceRelogin = false } = {}) {
   if (!usingSessionLogin()) return config.mattermostToken;
-  if (forceRelogin || !session.token) await login();
-  return session.token;
+  if (loginInFlight) return loginInFlight;
+  const fresh = session.token && Date.now() - lastLoginAt < RELOGIN_REUSE_WINDOW_MS;
+  if (session.token && (!forceRelogin || fresh)) return session.token;
+  loginInFlight = login()
+    .then((token) => {
+      lastLoginAt = Date.now();
+      return token;
+    })
+    .finally(() => {
+      loginInFlight = null;
+    });
+  return loginInFlight;
 }
 
 async function authHeaders(extra, opts) {
@@ -967,6 +1000,34 @@ async function getUsersByIdsAsUser(token, ids) {
   return coreFetchAsUser(token, '/users/ids', { method: 'POST', body: JSON.stringify(uniqueIds) }, 'getUsersByIdsAsUser');
 }
 
+// --- Own-session housekeeping (see sessionJanitor.js) ---------------------
+// Both calls act on the account KF Approval itself logs in with — a user is
+// always allowed to list and revoke its OWN sessions, no admin rights needed.
+let ownUserId = null;
+async function getOwnUserId() {
+  if (ownUserId) return ownUserId;
+  const res = await mmFetch(`${config.mattermostUrl}/api/v4/users/me`, {}, 'getOwnUserId');
+  const me = await asJsonOrThrow(res, 'getOwnUserId');
+  ownUserId = me && me.id;
+  return ownUserId;
+}
+
+async function listOwnSessions() {
+  const userId = await getOwnUserId();
+  const res = await mmFetch(`${config.mattermostUrl}/api/v4/users/${userId}/sessions`, {}, 'listOwnSessions');
+  const data = await asJsonOrThrow(res, 'listOwnSessions');
+  return { userId, sessions: Array.isArray(data) ? data : [] };
+}
+
+async function revokeOwnSession(userId, sessionId) {
+  const res = await mmFetch(
+    `${config.mattermostUrl}/api/v4/users/${userId}/sessions/revoke`,
+    { method: 'POST', body: JSON.stringify({ session_id: sessionId }) },
+    'revokeOwnSession'
+  );
+  await asJsonOrThrow(res, 'revokeOwnSession');
+}
+
 module.exports = {
   listTeamBoards,
   getBoard,
@@ -989,4 +1050,8 @@ module.exports = {
   createChannelPostAsUser,
   markChannelViewedAsUser,
   getUsersByIdsAsUser,
+  listOwnSessions,
+  revokeOwnSession,
+  onLogin,
+  usingSessionLogin,
 };

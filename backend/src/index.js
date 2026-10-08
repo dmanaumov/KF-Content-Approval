@@ -11,6 +11,7 @@ const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = requir
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile, extractDiskLinks, stripDiskLinks } = require('./diskEmbeds');
 const diskUpload = require('./diskUpload');
 const diskCache = require('./diskCache');
+const sessionJanitor = require('./sessionJanitor');
 const mmFileCache = require('./mattermostFileCache');
 const telegramStickers = require('./telegramStickers');
 const stickerPacks = require('./stickerPacks');
@@ -6526,6 +6527,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }
   diskCache.init(); // cleans leftover .part files, never throws — see diskCache.js
+  sessionJanitor.start(); // trims stale Mattermost sessions on our own account — see sessionJanitor.js
   mmFileCache.init(); // same, for Mattermost board attachments — see mattermostFileCache.js
   app.listen(config.port, () => {
     console.log(`KF Approval listening on :${config.port}`);

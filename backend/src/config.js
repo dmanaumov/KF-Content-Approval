@@ -267,6 +267,22 @@ module.exports = {
   // on while calibrating taskMapper.js against your real board.
   debug: (process.env.DEBUG_MATTERMOST || 'false').toLowerCase() === 'true',
 
+  // Automatic cleanup of this app's OWN Mattermost sessions (sessionJanitor.js).
+  // Only used with login/password auth. Runs every MM_SESSION_JANITOR_INTERVAL_MIN
+  // and shortly after each fresh login; does nothing until the account has more
+  // than MM_SESSION_MAX sessions. Then revokes, oldest-idle first:
+  //   - API/script sessions (no browser/app behind them — this app's own old
+  //     logins, n8n, curl...) idle longer than MM_SESSION_API_IDLE_MIN;
+  //   - real browser/desktop/mobile sessions only if idle longer than
+  //     MM_SESSION_HUMAN_IDLE_HOURS (so a person sharing this account isn't
+  //     logged out of an app they're actually using).
+  sessionJanitorEnabled: (process.env.MM_SESSION_JANITOR_ENABLED || 'true').toLowerCase() !== 'false',
+  sessionJanitorIntervalMin: parseInt(process.env.MM_SESSION_JANITOR_INTERVAL_MIN || '10', 10),
+  sessionMax: parseInt(process.env.MM_SESSION_MAX || '50', 10),
+  sessionApiIdleMin: parseInt(process.env.MM_SESSION_API_IDLE_MIN || '30', 10),
+  sessionHumanIdleHours: parseInt(process.env.MM_SESSION_HUMAN_IDLE_HOURS || '168', 10),
+  sessionRevokeMaxPerRun: parseInt(process.env.MM_SESSION_REVOKE_MAX_PER_RUN || '300', 10),
+
   // Postgres connection string. Required for: the rotatable client link
   // store, the internal staff page's per-project logo/social-credentials
   // editor, and the n8n publishing automation (reads project_settings
