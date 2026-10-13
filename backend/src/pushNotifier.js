@@ -126,6 +126,44 @@ async function subscriptionsForProject(boardId, projectId) {
   return rows;
 }
 
+// Сколько устройств подписано на push по каждому проекту доски — один
+// GROUP BY-запрос на всю доску. Агентский список /api/projects показывает
+// это значком рядом с каждым проектом (см. GET /api/projects), поэтому
+// делать запрос на проект было бы N+1.
+async function countsByProject(boardId) {
+  const db = require('./db');
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    `SELECT project_id, count(*)::int AS count FROM push_subscriptions WHERE board_id = $1 GROUP BY project_id`,
+    [boardId]
+  );
+  const counts = new Map();
+  for (const r of rows) counts.set(r.project_id, r.count);
+  return counts;
+}
+
+// Полный срез подписок (для CEO-вкладки «Оповещения») — проект за проектом,
+// с датами подключения и последней фактической отправки. Без p256dh/auth:
+// они нужны только для самой рассылки, в интерфейсе это мусор.
+async function listForCEO(boardId, { projectId } = {}) {
+  const db = require('./db');
+  const pool = db.requirePool();
+  const params = [];
+  let where = 'WHERE board_id = $1';
+  params.push(boardId);
+  if (projectId) {
+    params.push(projectId);
+    where += ` AND project_id = $${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `SELECT endpoint, project_id, user_agent, created_at, updated_at, last_sent_at
+     FROM push_subscriptions ${where}
+     ORDER BY updated_at DESC`,
+    params
+  );
+  return rows;
+}
+
 // Отправка одному устройству с разбором типовых ошибок пуш-сервиса:
 //   404/410 — подписка больше не существует (браузер отписался/удалил сайт)
 //   → удаляем её из БД, чтобы не долбить мёртвый endpoint на каждом триггере.
@@ -172,4 +210,4 @@ function notifyProject({ boardId, projectId, title, body, url }) {
     });
 }
 
-module.exports = { init, getPublicKey, subscribe, unsubscribe, subscriptionsForProject, notifyProject };
+module.exports = { init, getPublicKey, subscribe, unsubscribe, subscriptionsForProject, notifyProject, countsByProject, listForCEO };

@@ -637,6 +637,13 @@ async function initSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS tool_accounts_login_idx
       ON tool_accounts (lower(login));
   `);
+  // 2026-10-13 — колонка для списка "SaaS" в общей админке (прямой запрос
+  // пользователя: "дата последнего входа"). Проставляется в
+  // toolAuth.createSession() — тот же момент, что и на /api/tool/login, и
+  // на авто-логин сразу после регистрации по приглашению.
+  await pool.query(`
+    ALTER TABLE tool_accounts ADD COLUMN IF NOT EXISTS last_login_at timestamptz;
+  `);
   // tool_invites — ссылка-приглашение, выпускается из внутренней страницы
   // проектов (POST /api/tool-invites, staffAuth). token — часть URL
   // (/invite/:token), code_hash — отдельный одноразовый код, который админ

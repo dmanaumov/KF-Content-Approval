@@ -312,6 +312,14 @@ function render(filterText) {
         const netRow = netChips ? `<div class="proj-net-row">${netChips}</div>` : '';
         const membersRow = membersHtml(o.members);
         const managerRow = !o.isArchived ? managerLineHtml(o.projectManager) : '';
+        // Оповещения клиента по проекту: сколько устройств подписано на Web
+        // Push и сколько TG-чатов на TG-напоминания (см. GET /api/projects,
+        // сервер отдаёт pushSubscribers/tgSubscribers). Значки-счётчики с
+        // тултипом — быстрый взгляд «клиент вообще пользуется уведомлениями?».
+        const notifyBits = [];
+        if ((o.pushSubscribers || 0) > 0) notifyBits.push(`<span class="proj-notify-bit" data-tip="${o.pushSubscribers} ${plural(o.pushSubscribers, 'устройство', 'устройства', 'устройств')} на Web Push уведомлениях">🔔 ${o.pushSubscribers}</span>`);
+        if ((o.tgSubscribers || 0) > 0) notifyBits.push(`<span class="proj-notify-bit" data-tip="${o.tgSubscribers} ${plural(o.tgSubscribers, 'чат', 'чата', 'чатов')} подписано на TG-напоминания">✈️ ${o.tgSubscribers}</span>`);
+        const notifyRow = notifyBits.length ? `<div class="proj-notify-row">${notifyBits.join('')}</div>` : '';
         return `<div class="proj-card${aiClass}${archivedClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>
@@ -327,6 +335,7 @@ function render(filterText) {
                 <input class="proj-link" type="text" readonly value="${esc(link)}" onclick="this.select()">
               </div>
               ${netRow}
+              ${notifyRow}
               ${managerRow}
               ${membersRow}
             </div>
@@ -448,13 +457,39 @@ async function regenerateLink(projectId, label) {
 document.getElementById('search').addEventListener('input', (e) => render(e.target.value));
 document.getElementById('showArchived').addEventListener('change', () => render(document.getElementById('search').value));
 
+// Показывает либо обычный список проектов (smm/ai), либо панель "SaaS" —
+// у неё своя шапка действий (переключатель режима, фильтр), общий поиск
+// проектов/архив-чекбокс там не к месту.
+function showTabPanel(tab) {
+  const isSaas = tab === 'saas';
+  document.getElementById('searchRow').hidden = isSaas;
+  document.getElementById('list').hidden = isSaas;
+  document.getElementById('saasPanel').hidden = !isSaas;
+  if (isSaas) {
+    document.getElementById('kpiBanner').hidden = true;
+    loadSaasList();
+  } else {
+    // Возвращаемся на smm/ai — пересчитываем баннер заново (он на паузе,
+    // пока скрывали его для вкладки SaaS выше).
+    renderKpiBanner();
+  }
+}
+
 document.getElementById('projTabs').addEventListener('click', (e) => {
   const btn = e.target.closest('.proj-tab');
   if (!btn || btn.dataset.tab === activeTab) return;
   activeTab = btn.dataset.tab;
-  localStorage.setItem('kf-proj-tab', activeTab);
-  render(document.getElementById('search').value);
+  if (activeTab !== 'saas') localStorage.setItem('kf-proj-tab', activeTab);
+  document.querySelectorAll('.proj-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === activeTab));
+  showTabPanel(activeTab);
+  if (activeTab !== 'saas') render(document.getElementById('search').value);
 });
+
+// Старый адрес {staffProjectsPath}/invites теперь просто редиректит сюда с
+// ?tab=saas (см. index.js) — на загрузке сразу открываем нужную закладку.
+if (new URLSearchParams(location.search).get('tab') === 'saas') {
+  activeTab = 'saas';
+}
 
 document.getElementById('kpiBanner').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-scroll]');
@@ -514,21 +549,269 @@ document.getElementById('list').addEventListener('click', async (e) => {
   }
 });
 
+// --- Закладка "SaaS" (2026-10-13, перенесена из отдельной invites.html) --
+// Переключатель "Просто/С ИИ", результат создания/пересылки/сброса (общий
+// результат-блок #saasResult), фильтр + таблица приглашений/аккаунтов.
+let saasInvites = [];
+let saasFilter = 'all';
+let saasLoaded = false;
+const saasReissueCache = new Map(); // inviteId -> {inviteUrl, code} — чтобы не перевыпускать код повторно при клике на второй значок той же строки
+
+function openTelegramShare(url, text) {
+  window.open(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+}
+function openEmailShare(subject, body) {
+  location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function renderSaasLinkResult(inviteUrl, code) {
+  const el = document.getElementById('saasResult');
+  el.hidden = false;
+  el.className = 'saas-result';
+  el.innerHTML = `
+    <p><strong>Ссылка</strong> (отправьте как угодно):<br><code>${esc(inviteUrl)}</code></p>
+    <div class="saas-share-row">
+      <button class="icon-btn" type="button" data-share="tg-link" data-tip="Переслать ссылку в Telegram" aria-label="Telegram">✈</button>
+      <button class="icon-btn" type="button" data-share="email-link" data-tip="Переслать ссылку на email" aria-label="Email">✉</button>
+      <button class="icon-btn" type="button" data-share="copy-link" data-tip="Скопировать ссылку" aria-label="Скопировать ссылку">📋</button>
+    </div>
+    <p><strong>Код</strong> (отправьте ОТДЕЛЬНЫМ сообщением, другим каналом):<br><span class="saas-code">${esc(code)}</span></p>
+    <div class="saas-share-row">
+      <button class="icon-btn" type="button" data-share="copy-code" data-tip="Скопировать код" aria-label="Скопировать код">📋</button>
+    </div>
+    <p style="color:var(--muted);font-size:12px">Код показывается только сейчас — если потерять, значок ✈/✉/📋 у приглашения в списке ниже перевыпустит новый.</p>
+  `;
+  el.dataset.inviteUrl = inviteUrl;
+  el.dataset.code = code;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderSaasPasswordResult(login, password) {
+  const el = document.getElementById('saasResult');
+  el.hidden = false;
+  el.className = 'saas-result';
+  el.innerHTML = `
+    <p><strong>Новый пароль</strong> для <code>${esc(login)}</code> (передайте пользователю сами, ОТДЕЛЬНЫМ каналом):<br><span class="saas-code">${esc(password)}</span></p>
+    <div class="saas-share-row">
+      <button class="icon-btn" type="button" data-share="copy-password" data-tip="Скопировать пароль" aria-label="Скопировать пароль">📋</button>
+    </div>
+    <p style="color:var(--muted);font-size:12px">Пароль показывается только сейчас — если потерять, нужно будет сбросить ещё раз. Все предыдущие сессии этого аккаунта завершены.</p>
+  `;
+  el.dataset.password = password;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderSaasError(message) {
+  const el = document.getElementById('saasResult');
+  el.hidden = false;
+  el.className = 'saas-result error';
+  el.textContent = message || 'Что-то пошло не так.';
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+document.getElementById('saasResult').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-share]');
+  if (!btn) return;
+  const el = document.getElementById('saasResult');
+  const url = el.dataset.inviteUrl;
+  const code = el.dataset.code;
+  const password = el.dataset.password;
+  try {
+    switch (btn.dataset.share) {
+      case 'copy-link': await copyToClipboard(url); toast('Ссылка скопирована'); break;
+      case 'copy-code': await copyToClipboard(code); toast('Код скопирован'); break;
+      case 'copy-password': await copyToClipboard(password); toast('Пароль скопирован'); break;
+      case 'tg-link': openTelegramShare(url, 'Ссылка на регистрацию в SaaS-кабинете Контент Фермы'); break;
+      case 'email-link': openEmailShare('Доступ в SaaS-кабинет Контент Фермы', `Ссылка на регистрацию:\n${url}`); break;
+    }
+  } catch (err) {
+    toast('Не удалось скопировать — выделите текст вручную');
+  }
+});
+
+async function getOrReissue(inviteId) {
+  if (saasReissueCache.has(inviteId)) return saasReissueCache.get(inviteId);
+  const res = await fetch(`/api/tool-invites/${encodeURIComponent(inviteId)}/reissue-code`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || data.error || 'Не удалось перевыпустить код.');
+  const result = { inviteUrl: data.inviteUrl, code: data.code };
+  saasReissueCache.set(inviteId, result);
+  return result;
+}
+
+function renderSaasRows() {
+  const needle = (document.getElementById('saasSearch').value || '').trim().toLowerCase();
+  const filtered = saasInvites.filter((inv) => {
+    if (saasFilter !== 'all' && inv.mode !== saasFilter) return false;
+    if (!needle) return true;
+    const hay = `${inv.used_by_login || ''} ${inv.used_by_display_name || ''}`.toLowerCase();
+    return hay.includes(needle);
+  });
+  document.getElementById('tabCountSaas').textContent = String(saasInvites.length);
+  const rowsHtml = filtered
+    .map((inv) => {
+      const used = !!inv.used_at;
+      const statusHtml = used
+        ? `<span class="saas-badge used">Использовано${inv.used_by_login ? ' — ' + esc(inv.used_by_login) : ''}</span>${inv.used_by_is_disabled ? ' <span class="saas-badge pending">Отключён</span>' : ''}`
+        : `<span class="saas-badge pending">Ожидает</span>`;
+      const lastLogin = inv.used_by_last_login_at ? fmtLogDate(inv.used_by_last_login_at) : '—';
+      const lastPayment = '—'; // оплата self-serve аккаунтов пока не ведётся — колонка зарезервирована
+      let actions = '';
+      if (used && inv.used_by_account_id) {
+        actions = `
+          <button class="icon-btn" type="button" data-reset-account="${esc(inv.used_by_account_id)}" data-login="${esc(inv.used_by_login || '')}" data-tip="Сбросить пароль" aria-label="Сбросить пароль">🔑</button>
+          <button class="icon-btn danger" type="button" data-del-account="${esc(inv.used_by_account_id)}" data-login="${esc(inv.used_by_login || '')}" data-tip="Удалить аккаунт безвозвратно" aria-label="Удалить аккаунт">🗑</button>`;
+      } else if (!used) {
+        actions = `
+          <button class="icon-btn" type="button" data-resend="tg" data-invite-id="${esc(inv.id)}" data-tip="Переслать ссылку в Telegram" aria-label="Переслать в Telegram">✈</button>
+          <button class="icon-btn" type="button" data-resend="email" data-invite-id="${esc(inv.id)}" data-tip="Переслать ссылку на email" aria-label="Переслать на email">✉</button>
+          <button class="icon-btn" type="button" data-resend="copy" data-invite-id="${esc(inv.id)}" data-tip="Скопировать ссылку" aria-label="Скопировать ссылку">📋</button>
+          <button class="icon-btn danger" type="button" data-del-invite="${esc(inv.id)}" data-tip="Удалить приглашение" aria-label="Удалить приглашение">🗑</button>`;
+      }
+      return `<tr>
+        <td>${fmtLogDate(inv.created_at)}</td>
+        <td>${inv.mode === 'ai' ? 'С ИИ' : 'Просто'}</td>
+        <td>${statusHtml}</td>
+        <td>${lastLogin}</td>
+        <td>${lastPayment}</td>
+        <td class="saas-row-actions">${actions}</td>
+      </tr>`;
+    })
+    .join('');
+  document.getElementById('saasRows').innerHTML =
+    rowsHtml || `<tr><td colspan="6" class="saas-empty">${needle || saasFilter !== 'all' ? 'Ничего не найдено.' : 'Пока нет приглашений.'}</td></tr>`;
+}
+
+async function loadSaasList() {
+  try {
+    const res = await fetch('/api/tool-invites');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
+    saasInvites = data.invites || [];
+    saasLoaded = true;
+    renderSaasRows();
+  } catch (err) {
+    document.getElementById('saasRows').innerHTML = `<tr><td colspan="6" class="saas-empty">Не удалось загрузить список: ${esc(err.message)}</td></tr>`;
+  }
+}
+
+document.getElementById('saasModeToggle').addEventListener('change', () => {
+  // Просто CSS-реакция на :checked — обработчик нужен только чтобы клавиатура
+  // (space/enter) тоже триггерила change, ничего больше делать не надо.
+});
+
+document.getElementById('saasCreateBtn').addEventListener('click', async () => {
+  const mode = document.getElementById('saasModeToggle').checked ? 'ai' : 'tool';
+  const btn = document.getElementById('saasCreateBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/tool-invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || 'Не удалось создать приглашение.');
+    renderSaasLinkResult(data.inviteUrl, data.code);
+    loadSaasList();
+  } catch (err) {
+    renderSaasError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('saasSearch').addEventListener('input', renderSaasRows);
+document.getElementById('saasModeFilter').addEventListener('click', (e) => {
+  const seg = e.target.closest('.saas-seg');
+  if (!seg) return;
+  saasFilter = seg.dataset.filter;
+  document.querySelectorAll('.saas-seg').forEach((b) => b.classList.toggle('active', b === seg));
+  renderSaasRows();
+});
+
+document.getElementById('saasRows').addEventListener('click', async (e) => {
+  const resendBtn = e.target.closest('[data-resend]');
+  if (resendBtn) {
+    const inviteId = resendBtn.dataset.inviteId;
+    resendBtn.disabled = true;
+    try {
+      const { inviteUrl, code } = await getOrReissue(inviteId);
+      const kind = resendBtn.dataset.resend;
+      if (kind === 'tg') openTelegramShare(inviteUrl, 'Ссылка на регистрацию в SaaS-кабинете Контент Фермы');
+      else if (kind === 'email') openEmailShare('Доступ в SaaS-кабинет Контент Фермы', `Ссылка на регистрацию:\n${inviteUrl}`);
+      else if (kind === 'copy') { await copyToClipboard(inviteUrl); toast('Ссылка скопирована'); }
+      renderSaasLinkResult(inviteUrl, code);
+      loadSaasList();
+    } catch (err) {
+      toast(err.message || 'Не удалось перевыпустить код.');
+    } finally {
+      resendBtn.disabled = false;
+    }
+    return;
+  }
+  const resetBtn = e.target.closest('[data-reset-account]');
+  if (resetBtn) {
+    const login = resetBtn.dataset.login;
+    if (!confirm(`Сбросить пароль для ${login || 'этого аккаунта'}? Старый пароль перестанет работать, пользователя разлогинит.`)) return;
+    resetBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/tool-accounts/${encodeURIComponent(resetBtn.dataset.resetAccount)}/reset-password`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Не удалось сбросить пароль.');
+      renderSaasPasswordResult(data.login, data.password);
+    } catch (err) {
+      renderSaasError(err.message);
+    } finally {
+      resetBtn.disabled = false;
+    }
+    return;
+  }
+  const delInviteBtn = e.target.closest('[data-del-invite]');
+  if (delInviteBtn) {
+    if (!confirm('Удалить это приглашение? Ссылка и код перестанут работать.')) return;
+    delInviteBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/tool-invites/${encodeURIComponent(delInviteBtn.dataset.delInvite)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Не удалось удалить приглашение.');
+      toast('Приглашение удалено');
+      loadSaasList();
+    } catch (err) {
+      toast(err.message);
+      delInviteBtn.disabled = false;
+    }
+    return;
+  }
+  const delAccountBtn = e.target.closest('[data-del-account]');
+  if (delAccountBtn) {
+    const login = delAccountBtn.dataset.login;
+    if (!confirm(`Удалить аккаунт ${login || ''} безвозвратно? Пропадут все его проекты и задачи — восстановить будет нельзя.`)) return;
+    delAccountBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/tool-accounts/${encodeURIComponent(delAccountBtn.dataset.delAccount)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Не удалось удалить аккаунт.');
+      toast('Аккаунт удалён');
+      loadSaasList();
+    } catch (err) {
+      toast(err.message);
+      delAccountBtn.disabled = false;
+    }
+  }
+});
+
 // --- Создание проекта (admin/ceo) --------------------------------------
 // Показываем/прячем кнопки, доступные только с полными правами (canManage
 // приходит в GET /api/projects из staffScope.full — backend сам режет, тут
 // только UX: менеджеру кнопок просто не рисуем).
 function updateManageUi() {
   document.getElementById('createProjectBtn').hidden = !canManage;
-  // Ссылка-приглашение на самостоятельное создание SaaS-проекта (POST
-  // /api/tool-invites) — тот же гейт, что и у «Создать проект» (backend
-  // пускает туда тоже только admin/ceo, см. index.js). Страница её выпуска
-  // — {staffProjectsPath}/invites; путь считаем от текущего расположения
-  // этой страницы (а не хардкодим /admin), чтобы работать и если
-  // STAFF_PROJECTS_PATH сконфигурирован иначе.
-  const inviteBtn = document.getElementById('inviteLinkBtn');
-  inviteBtn.hidden = !canManage;
-  inviteBtn.href = location.pathname.replace(/\/$/, '') + '/invites';
+  // Закладка "SaaS" (2026-10-13 — раньше была отдельной страницей/кнопкой
+  // "🔗 Пригласить в SaaS", перенесена сюда третьей закладкой) — тот же гейт,
+  // что и у «Создать проект» (backend тоже пускает только admin/ceo, см.
+  // index.js).
+  document.getElementById('saasTabBtn').hidden = !canManage;
 }
 
 const createModal = document.getElementById('createModal');
@@ -2044,3 +2327,6 @@ async function revealCeoLinksIfOwner() {
 revealCeoLinksIfOwner();
 
 load();
+// ?tab=saas (редирект со старого {staffProjectsPath}/invites, см. выше) —
+// открываем закладку сразу, не дожидаясь клика.
+if (activeTab === 'saas') showTabPanel('saas');

@@ -732,6 +732,54 @@
    app.css (грузится и здесь, и в кабинете команды). */
 .staff-links{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 
+/* Вкладка "SaaS" (2026-10-13, перенесена сюда из отдельной invites.html —
+   см. её комментарий в projects.html) — третий .proj-tab, свой синий акцент
+   (чтобы не путать с зелёным "активно"/фиолетовым "ИИ"), плюс всё содержимое
+   самой вкладки: переключатель режима, результат создания/пересылки/сброса,
+   строка фильтра и таблица аккаунтов. */
+.proj-tab.saas.active{background:#2B6CB0;border-color:#2B6CB0;color:#fff}
+
+.saas-panel{display:flex;flex-direction:column;gap:16px}
+.saas-create-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+
+/* Переключатель "Просто/С ИИ" — iOS-style ползунок вместо select (прямой
+   запрос пользователя: "или чекбокс, или переключатель-ползунок"). Чекбокс
+   остаётся настоящим input (доступность/клавиатура), просто визуально
+   спрятан — ровно тот же приём, что и .archive-toggle-check чуть выше. */
+.saas-toggle{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.saas-toggle-label{font-size:13px;font-weight:800;color:var(--muted);transition:color .15s}
+.saas-toggle-label.off{color:var(--ink)}
+.saas-toggle input:checked ~ .saas-toggle-label.off{color:var(--muted)}
+.saas-toggle-switch{position:relative;display:inline-flex}
+.saas-toggle-switch input{position:absolute;opacity:0;width:1px;height:1px}
+.saas-toggle-track{display:inline-flex;align-items:center;width:44px;height:24px;border-radius:999px;background:var(--line);transition:background .15s;flex:0 0 auto}
+.saas-toggle-thumb{width:18px;height:18px;margin:3px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .15s}
+.saas-toggle input:checked + .saas-toggle-track{background:var(--ai)}
+.saas-toggle input:checked + .saas-toggle-track .saas-toggle-thumb{transform:translateX(20px)}
+.saas-toggle input:focus-visible + .saas-toggle-track{box-shadow:0 0 0 2px var(--accent)}
+
+.saas-result{background:#E1F3E5;border-radius:14px;padding:16px;font-size:14px}
+.saas-result p{margin:6px 0}
+.saas-result code{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;word-break:break-all}
+.saas-result .saas-code{font-size:22px;font-weight:800;letter-spacing:.06em}
+.saas-result.error{background:#FBE0E0}
+.saas-share-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
+.saas-share-row .icon-btn{background:var(--accent);border-color:var(--accent)}
+
+.saas-filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.saas-segmented{display:inline-flex;border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px;background:#fff}
+.saas-seg{border:0;background:transparent;color:var(--muted);font-size:12.5px;font-weight:800;padding:7px 12px;border-radius:9px;cursor:pointer;font-family:inherit}
+.saas-seg.active{background:var(--accent);color:#fff}
+
+.saas-table{width:100%;border-collapse:collapse;font-size:13px}
+.saas-table th,.saas-table td{text-align:left;padding:9px 7px;border-bottom:1px solid var(--line);vertical-align:middle}
+.saas-table th{color:var(--muted);font-weight:800;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em}
+.saas-badge{font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.saas-badge.pending{background:#FFF3C9;color:#755600}
+.saas-badge.used{background:#E1F3E5;color:#216A39}
+.saas-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.saas-empty{color:var(--muted);text-align:center;padding:18px 0}
+
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#12181A;
@@ -786,4 +834,8 @@
   .team-readonly-notice{background:#332A17;border-color:#5C4A1E;color:#F2C45C}
   .team-row{background:#222626}
   .team-remove-btn{background:#262222}
+  .saas-result{background:#213626}
+  .saas-result code{background:#12181A}
+  .saas-segmented{background:#1B2320}
+  .saas-toggle-track{background:#2A3532}
 }

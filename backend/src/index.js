@@ -752,6 +752,21 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         return [];
       }),
     ]);
+    // Подписки на оповещения (push + TG) по проектам — значки в списке:
+    // сколько устройств подписано на Web Push и сколько TG-чатов на каждый
+    // проект. Один GROUP BY-запрос на весь борд, не N+1 по проектам.
+    // Не фатально, если БД недоступна (подписки лежат в Postgres) — значки
+    // просто не покажутся, список проектов продолжит работать.
+    const [pushSubCounts, tgSubCounts] = await Promise.all([
+      pushNotifier.countsByProject(boardId).catch((err) => {
+        console.warn('[api] GET projects: push subscription counts failed:', err.message);
+        return new Map();
+      }),
+      tgSubs.countsByProject(boardId).catch((err) => {
+        console.warn('[api] GET projects: tg subscription counts failed:', err.message);
+        return new Map();
+      }),
+    ]);
     const usersById = new Map(teamUsers.map((u) => [u.id, u]));
     const usersByUsername = new Map(teamUsers.map((u) => [u.username, u]));
     const grantsByProject = new Map();
@@ -832,7 +847,7 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // staffIsProjectManager в index.js), только подписью на карточке.
         const managerUser = managerUsername ? usersByUsername.get(managerUsername) : null;
         const projectManager = managerUser ? { id: managerUser.id, name: managerUser.name } : null;
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members, projectManager };
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members, projectManager, pushSubscribers: pushSubCounts.get(o.id) || 0, tgSubscribers: tgSubCounts.get(o.id) || 0 };
       })
     );
     // Project-access scoping (2026-09-20, заменяет старое «Менеджер
@@ -1305,6 +1320,46 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
   } catch (err) {
     console.error('[api] ceo overview failed:', err.message);
     res.status(500).json({ error: 'ceo_unavailable', message: err.message });
+  }
+});
+
+// GET /api/ceo/notifications?project=<projectId> — какие ПРОЕКТЫ какими
+// способами оповещения пользуются, по каждой подписке (Web Push +
+// Telegram). Значки в агентском /projects — это только количества
+// (pushSubscribers/tgSubscribers на проект); сюда — детальный срез с датами
+// (когда подключились, когда последнее уведомление ушло), чтобы видеть
+// живой/мёртвый канал, а не только «сколько». projectLabel добавляется на
+// фронтенде по загруженным проектам (CEO-вкладка знает свои optionLabel'ы),
+// здесь — только счётчики и сырые rows, чтобы не тащить имя в источник.
+app.get('/api/ceo/notifications', teamAuth.requireCeoAuth, async (req, res) => {
+  const projectId = String((req.query && req.query.project) || '').trim();
+  const boardId = config.mattermostBoardId;
+  try {
+    const [push, tg] = await Promise.all([
+      pushNotifier.listForCEO(boardId, { projectId: projectId || undefined }),
+      tgSubs.listForCEO(boardId, { projectId: projectId || undefined }),
+    ]);
+    res.json({
+      push: push.map((r) => ({
+        channel: 'push',
+        projectId: r.project_id,
+        endpoint: r.endpoint,
+        userAgent: r.user_agent,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        lastSentAt: r.last_sent_at,
+      })),
+      tg: tg.map((r) => ({
+        channel: 'tg',
+        projectId: r.project_id,
+        chatId: r.chat_id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[api] ceo notifications failed:', err.message);
+    res.status(500).json({ error: 'notifications_unavailable', message: err.message });
   }
 });
 
@@ -6506,6 +6561,66 @@ app.post('/api/tool-accounts/:accountId/reset-password', staffAuth, async (req, 
   }
 });
 
+// DELETE /api/tool-accounts/:accountId — "Удалить" в SaaS-списке общей
+// админки (прямой запрос пользователя 2026-10-13), admin/CEO only. Полностью
+// и безвозвратно зачищает аккаунт и всё, что он создал (задачи, проекты,
+// само приглашение) — см. toolAuth.deleteAccount.
+app.delete('/api/tool-accounts/:accountId', staffAuth, async (req, res) => {
+  if (!req.staffScope || !req.staffScope.full) {
+    return res.status(403).json({ error: 'admin_only', message: 'Удалить аккаунт может только админ/CEO.' });
+  }
+  try {
+    const result = await toolAuth.deleteAccount(req.params.accountId);
+    if (!result) return res.status(404).json({ error: 'account_not_found' });
+    res.json({ ok: true, login: result.login });
+  } catch (err) {
+    console.error('[api] delete tool account failed:', err.message);
+    res.status(502).json({ error: 'delete_account_failed', message: err.message });
+  }
+});
+
+// DELETE /api/tool-invites/:id — "Удалить" в SaaS-списке для ещё не
+// погашенного приглашения (прямой запрос пользователя 2026-10-13), admin/CEO
+// only. Для уже погашенного приглашения фронт вместо этого вызывает
+// DELETE /api/tool-accounts/:id (см. выше) — там своя зачистка.
+app.delete('/api/tool-invites/:id', staffAuth, async (req, res) => {
+  if (!req.staffScope || !req.staffScope.full) {
+    return res.status(403).json({ error: 'admin_only', message: 'Удалить приглашение может только админ/CEO.' });
+  }
+  try {
+    const ok = await toolInvites.deleteInvite(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'invite_not_found_or_used' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] delete tool invite failed:', err.message);
+    res.status(502).json({ error: 'delete_invite_failed', message: err.message });
+  }
+});
+
+// POST /api/tool-invites/:id/reissue-code — "Направить повторно" в
+// SaaS-списке (прямой запрос пользователя 2026-10-13): для ещё не
+// погашенного приглашения выписывает новый код (старый код не восстановить —
+// хранится только хэш), чтобы можно было переслать ссылку+код заново, не
+// создавая новое приглашение. admin/CEO only, как и выпуск приглашений.
+app.post('/api/tool-invites/:id/reissue-code', staffAuth, async (req, res) => {
+  if (!req.staffScope || !req.staffScope.full) {
+    return res.status(403).json({ error: 'admin_only', message: 'Переслать приглашение может только админ/CEO.' });
+  }
+  try {
+    const result = await toolInvites.reissueCode(req.params.id);
+    if (!result) return res.status(404).json({ error: 'invite_not_found_or_used', message: 'Приглашение не найдено или уже использовано.' });
+    res.json({
+      token: result.token,
+      code: result.code,
+      mode: result.mode,
+      inviteUrl: `${req.protocol}://${req.get('host')}/invite/${result.token}`,
+    });
+  } catch (err) {
+    console.error('[api] reissue tool invite code failed:', err.message);
+    res.status(502).json({ error: 'reissue_failed', message: err.message });
+  }
+});
+
 // GET /api/invite/:token — public; lets the /invite page render the right
 // copy (mode) and whether the link is still redeemable, WITHOUT the code.
 app.get('/api/invite/:token', async (req, res) => {
@@ -7007,19 +7122,22 @@ app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.joi
 app.get(config.teamCabinetPath, (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
 
 // --- Self-serve "tool only" SaaS pages (invite-link project creation) -----
-// See the big API block above (search "tool-invites"/"toolAuth"). Three
-// static pages, each doing its own client-side auth check the same way
-// /team + team.js already does:
+// See the big API block above (search "tool-invites"/"toolAuth"). Static
+// pages, each doing its own client-side auth check the same way /team +
+// team.js already does:
 //   /invite/:token — registration page, reads GET /api/invite/:token for
 //     copy, posts to /redeem with the one-time code.
 //   /tool          — the new cabinet itself (login form OR task list),
 //     checks GET /api/tool/me on load.
-//   {staffProjectsPath}/invites — admin-only page to issue invite links
-//     (staffAuth gate here; admin/CEO-only is re-checked inside
-//     POST /api/tool-invites itself).
 app.get('/invite/:token', (req, res) => res.sendFile(path.join(frontendDir, 'invite.html')));
 app.get('/tool', (req, res) => res.sendFile(path.join(frontendDir, 'tool.html')));
-app.get(`${config.staffProjectsPath}/invites`, staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'invites.html')));
+// {staffProjectsPath}/invites раньше была отдельной страницей
+// (invites.html) — 2026-10-13, по прямому запросу пользователя, выпуск
+// приглашений/список SaaS-аккаунтов переехал ВНУТРЬ projects.html третьей
+// закладкой ("SaaS", см. .proj-tab[data-tab="saas"] в projects.html/.js),
+// чтобы не быть "оторванным окном". Старый адрес просто ведёт на ту же
+// закладку — не ломаем ничьи сохранённые ссылки.
+app.get(`${config.staffProjectsPath}/invites`, staffAuth, (req, res) => res.redirect(`${config.staffProjectsPath}?tab=saas`));
 
 // On a brand-new deploy, the "db" container and this "app" container start
 // at roughly the same time — docker-compose's plain `depends_on: [db]`

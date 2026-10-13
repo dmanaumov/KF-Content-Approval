@@ -29,11 +29,12 @@
   .tool-hero h2{font-size:17px;font-weight:800;margin:0 0 4px}
   .tool-hero p{font-size:13px;color:var(--muted);margin:0;line-height:1.5}
   .tool-section-title{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin:0}
-  .tool-tut{margin-bottom:20px}
-  .tool-tut summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:4px 2px;margin-bottom:4px}
-  .tool-tut summary::-webkit-details-marker{display:none}
-  .tool-tut summary .chev{display:inline-block;transition:transform .15s;color:var(--muted);font-size:11px}
-  .tool-tut[open] summary .chev{transform:rotate(90deg)}
+  /* 2026-10-13 — по прямому запросу пользователя ("знакомство показываем
+     попапом при первом входе") туториал больше не <details> на странице, а
+     попап поверх кабинета: .modal-wrap/.sheet — те же классы, что и у
+     попапов клиентского кабинета (app.css, см. feedbackModal/calSubModal в
+     app.js) — открывается/закрывается через classList 'show', как и там. */
+  .tut-sheet{max-height:85vh;overflow-y:auto}
   .tut-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:10px}
   @media(min-width:680px){.tut-grid{grid-template-columns:1fr 1fr}}
   .tut-card{padding:16px}
@@ -93,21 +94,54 @@
         <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
         <div class="client-brand"><strong>Личный кабинет</strong></div>
         <div class="head-right">
+          <button id="helpBtn" class="tool-back" title="Помощь" aria-label="Помощь">❓ Помощь</button>
           <button id="logoutBtn" class="tool-back">Выйти</button>
         </div>
       </div>
     </header>
 
-    <div class="card tool-hero">
-      <div class="tool-mascot"><img src="/mascot.png" alt=""></div>
-      <div>
-        <h2>Привет! Я кот Василий 🐾</h2>
-        <p>Буду рядом, пока вы ведёте контент своих клиентов в этом инструменте. Коротко — как здесь всё устроено.</p>
-      </div>
+    <div id="clientsSection" hidden>
+      <div class="tool-section-title" style="margin:0 2px 10px">Мои клиенты</div>
+      <div class="card" id="clientsList"></div>
     </div>
 
-    <details class="tool-tut" id="tutDetails" open>
-      <summary><span class="chev">▸</span><span class="tool-section-title">Как это работает</span></summary>
+    <div id="projectSection" hidden>
+      <button id="backToClients" class="tool-back" hidden>← Мои клиенты</button>
+      <div class="tool-project-head" id="projectHeader"></div>
+      <button id="addTaskBtn" class="btn approve" style="width:100%;margin-bottom:16px">+ Новая задача</button>
+
+      <div id="taskForm" hidden class="card fp-box" style="margin-bottom:16px">
+        <label class="field-label" for="taskTitle">Заголовок</label>
+        <input id="taskTitle" class="field-input" type="text" placeholder="например, «Пост про акцию»">
+        <label class="field-label" for="taskCaption">Текст поста</label>
+        <textarea id="taskCaption" class="field-input" style="min-height:90px;resize:vertical;font:inherit"></textarea>
+        <label class="field-label" for="taskStatus">Статус</label>
+        <select id="taskStatus" class="field-input"></select>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button id="taskSave" class="btn approve" style="flex:1">Сохранить</button>
+          <button id="taskCancel" class="btn" style="flex:1;background:var(--line)">Отмена</button>
+        </div>
+        <div id="taskFormError" class="error-box" style="margin-top:12px" hidden></div>
+      </div>
+
+      <div id="taskList"></div>
+      <div id="taskEmpty" class="team-empty" hidden>Пока нет ни одной задачи — добавьте первую.</div>
+    </div>
+  </div>
+
+  <!-- Знакомство/туториал — попап при первом входе (а не всегда открытый
+       блок на странице) + кнопка "Помощь" в шапке открывает его снова в
+       любой момент. .modal-wrap/.sheet — см. комментарий у .tut-sheet выше. -->
+  <div id="tutModal" class="modal-wrap">
+    <div class="sheet tut-sheet">
+      <div class="card tool-hero" style="margin-bottom:16px">
+        <div class="tool-mascot"><img src="/mascot.png" alt=""></div>
+        <div>
+          <h2>Привет! Я кот Василий 🐾</h2>
+          <p>Буду рядом, пока вы ведёте контент своих клиентов в этом инструменте. Коротко — как здесь всё устроено.</p>
+        </div>
+      </div>
+      <div class="tool-section-title" style="margin:0 0 4px">Как это работает</div>
       <div class="tut-grid">
         <div class="card tut-card wide">
           <h3>Карточки и статусы</h3>
@@ -143,34 +177,9 @@
           <p>У клиента нет доступа в этот кабинет — только личная ссылка на согласование для его проекта.</p>
         </div>
       </div>
-    </details>
-
-    <div id="clientsSection" hidden>
-      <div class="tool-section-title" style="margin:0 2px 10px">Мои клиенты</div>
-      <div class="card" id="clientsList"></div>
-    </div>
-
-    <div id="projectSection" hidden>
-      <button id="backToClients" class="tool-back" hidden>← Мои клиенты</button>
-      <div class="tool-project-head" id="projectHeader"></div>
-      <button id="addTaskBtn" class="btn approve" style="width:100%;margin-bottom:16px">+ Новая задача</button>
-
-      <div id="taskForm" hidden class="card fp-box" style="margin-bottom:16px">
-        <label class="field-label" for="taskTitle">Заголовок</label>
-        <input id="taskTitle" class="field-input" type="text" placeholder="например, «Пост про акцию»">
-        <label class="field-label" for="taskCaption">Текст поста</label>
-        <textarea id="taskCaption" class="field-input" style="min-height:90px;resize:vertical;font:inherit"></textarea>
-        <label class="field-label" for="taskStatus">Статус</label>
-        <select id="taskStatus" class="field-input"></select>
-        <div style="display:flex;gap:8px;margin-top:14px">
-          <button id="taskSave" class="btn approve" style="flex:1">Сохранить</button>
-          <button id="taskCancel" class="btn" style="flex:1;background:var(--line)">Отмена</button>
-        </div>
-        <div id="taskFormError" class="error-box" style="margin-top:12px" hidden></div>
+      <div class="sheet-actions" style="grid-template-columns:1fr">
+        <button id="tutCloseBtn" class="btn approve">Понятно, начать работу</button>
       </div>
-
-      <div id="taskList"></div>
-      <div id="taskEmpty" class="team-empty" hidden>Пока нет ни одной задачи — добавьте первую.</div>
     </div>
   </div>
 </div>
@@ -315,10 +324,24 @@
     document.getElementById('clientsList').innerHTML = allProjects.map(clientRowHtml).join('');
   }
 
+  // Знакомство попапом — только при ПЕРВОМ входе (прямой запрос пользователя
+  // 2026-10-13); дальше его можно открыть снова кнопкой "Помощь" в шапке.
+  var TUT_SEEN_KEY = 'kf-tool-tut-seen';
+  function openTutModal() { document.getElementById('tutModal').classList.add('show'); }
+  function closeTutModal() {
+    document.getElementById('tutModal').classList.remove('show');
+    try { localStorage.setItem(TUT_SEEN_KEY, '1'); } catch (e) { /* приватный режим — не критично */ }
+  }
+  document.getElementById('helpBtn').addEventListener('click', openTutModal);
+  document.getElementById('tutCloseBtn').addEventListener('click', closeTutModal);
+
   function showCabinet(projects) {
     show('toolState', false);
     show('loginApp', false);
     show('cabinetApp', true);
+    var seen = true;
+    try { seen = !!localStorage.getItem(TUT_SEEN_KEY); } catch (e) { /* приватный режим — просто не покажем попап снова и снова */ }
+    if (!seen) openTutModal();
     allProjects = projects || [];
     if (!allProjects.length) {
       show('projectSection', true);

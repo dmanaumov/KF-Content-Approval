@@ -44,11 +44,11 @@
     <div id="projTabs" class="proj-tabs">
       <button type="button" class="proj-tab" data-tab="smm">SMM проекты<span class="proj-tab-count" id="tabCountSmm"></span></button>
       <button type="button" class="proj-tab ai" data-tab="ai"><img class="proj-tab-ai-avatar" src="/ai-avatar.png" alt="">ИИ проекты<span class="proj-tab-count" id="tabCountAi"></span></button>
+      <button type="button" id="saasTabBtn" class="proj-tab saas" data-tab="saas" hidden>SaaS<span class="proj-tab-count" id="tabCountSaas"></span></button>
     </div>
-    <div class="proj-search-row">
+    <div id="searchRow" class="proj-search-row">
       <input id="search" class="proj-search" type="text" placeholder="Поиск по названию клиента…">
       <button id="createProjectBtn" type="button" class="btn approve" hidden>＋ Создать проект</button>
-      <a id="inviteLinkBtn" class="btn changes" href="#" hidden style="text-decoration:none;display:inline-flex;align-items:center">🔗 Пригласить в SaaS</a>
       <label class="archive-toggle-check" for="showArchived">
         <input id="showArchived" type="checkbox">
         <span>Архивные проекты</span>
@@ -57,6 +57,44 @@
 
     <div id="loading" class="loading">Загружаем список проектов из Mattermost…</div>
     <main id="list" class="proj-list"></main>
+
+    <!-- Вкладка "SaaS" — 2026-10-13, по прямому запросу пользователя
+         перенесено сюда ИЗ отдельной страницы invites.html (осталась только
+         как редирект на эту вкладку, см. index.js), "на одном уровне" с
+         SMM/ИИ проектами, а не отдельным "оторванным окном". -->
+    <section id="saasPanel" class="saas-panel" hidden>
+      <div class="saas-create-row">
+        <label class="saas-toggle" for="saasModeToggle">
+          <span class="saas-toggle-label off">Просто</span>
+          <span class="saas-toggle-switch">
+            <input id="saasModeToggle" type="checkbox">
+            <span class="saas-toggle-track"><span class="saas-toggle-thumb"></span></span>
+          </span>
+          <span class="saas-toggle-label on">С ИИ</span>
+        </label>
+        <button id="saasCreateBtn" type="button" class="btn approve">Создать ссылку</button>
+      </div>
+
+      <div id="saasResult" hidden class="saas-result"></div>
+
+      <div class="saas-filter-row">
+        <input id="saasSearch" class="proj-search" type="text" placeholder="Поиск по логину/имени…">
+        <div id="saasModeFilter" class="saas-segmented">
+          <button type="button" class="saas-seg active" data-filter="all">Все</button>
+          <button type="button" class="saas-seg" data-filter="tool">Просто</button>
+          <button type="button" class="saas-seg" data-filter="ai">С ИИ</button>
+        </div>
+      </div>
+
+      <table class="saas-table">
+        <thead>
+          <tr>
+            <th>Создано</th><th>Режим</th><th>Статус</th><th>Посл. вход</th><th>Оплата до</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="saasRows"></tbody>
+      </table>
+    </section>
   </div>
 </div>
 

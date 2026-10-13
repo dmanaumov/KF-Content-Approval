@@ -98,10 +98,36 @@ async function createSession(account) {
       `INSERT INTO tool_sessions (id, account_id, expires_at) VALUES ($1, $2, to_timestamp($3 / 1000.0))`,
       [id, account.id, expiresAt]
     );
+    // "Дата последнего входа" в SaaS-списке общей админки (прямой запрос
+    // пользователя 2026-10-13) — createSession вызывается на каждом реальном
+    // входе: и на POST /api/tool/login, и на авто-логине сразу после
+    // регистрации по приглашению (считаем это первым "входом").
+    await db.requirePool().query(`UPDATE tool_accounts SET last_login_at = now() WHERE id = $1`, [account.id]);
   } catch (err) {
     console.error('[toolAuth] failed to persist session:', err.message);
   }
   return id;
+}
+
+// Кнопка "Удалить" в SaaS-списке общей админки (прямой запрос пользователя
+// 2026-10-13) — полная, безвозвратная зачистка аккаунта и всего, что он
+// успел создать: задачи → проекты → приглашение, которым он был выпущен →
+// сами сессии → сама учётка. Нет ON DELETE CASCADE на этих FK (см. db.js),
+// поэтому порядок важен — от самых "глубоких" дочерних записей к самой
+// учётке.
+async function deleteAccount(accountId) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(`SELECT id, login, display_name FROM tool_accounts WHERE id = $1`, [accountId]);
+  if (!rows[0]) return null;
+  await pool.query(`DELETE FROM tool_tasks WHERE project_id IN (SELECT id FROM tool_projects WHERE account_id = $1)`, [accountId]);
+  await pool.query(`DELETE FROM tool_projects WHERE account_id = $1`, [accountId]);
+  await pool.query(`DELETE FROM tool_invites WHERE used_by_account_id = $1`, [accountId]);
+  await pool.query(`DELETE FROM tool_sessions WHERE account_id = $1`, [accountId]);
+  await pool.query(`DELETE FROM tool_accounts WHERE id = $1`, [accountId]);
+  for (const [sessionId, entry] of sessions) {
+    if (String(entry.accountId) === String(accountId)) sessions.delete(sessionId);
+  }
+  return rows[0];
 }
 
 // Lazy expiry — no background sweep timer, same posture as teamAuth.js.
@@ -191,6 +217,7 @@ module.exports = {
   findByLogin,
   verifyLogin,
   resetPassword,
+  deleteAccount,
   createSession,
   getSession,
   destroySession,

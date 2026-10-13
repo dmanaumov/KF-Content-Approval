@@ -43,4 +43,38 @@ async function chatIdsForProject(boardId, projectId) {
   return rows.map((r) => r.chat_id);
 }
 
-module.exports = { registerChat, unregisterChat, chatIdsForProject };
+// Сколько чатов подписано на TG-напоминания по каждому проекту доски — один
+// GROUP BY-запрос на всю доску (см. pushNotifier.countsByProject / GET
+// /api/projects — те же значки, что и для Web Push). Держим рядом, чтобы
+// агентский список показывал оба канала симметрично.
+async function countsByProject(boardId) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT project_id, count(*)::int AS count FROM client_tg_subs WHERE board_id = $1 GROUP BY project_id',
+    [boardId]
+  );
+  const counts = new Map();
+  for (const r of rows) counts.set(r.project_id, r.count);
+  return counts;
+}
+
+// Полный срез TG-подписок для CEO-вкладки «Оповещения».
+async function listForCEO(boardId, { projectId } = {}) {
+  const pool = db.requirePool();
+  const params = [];
+  let where = 'WHERE board_id = $1';
+  params.push(boardId);
+  if (projectId) {
+    params.push(projectId);
+    where += ` AND project_id = $${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `SELECT chat_id, project_id, created_at, updated_at
+     FROM client_tg_subs ${where}
+     ORDER BY updated_at DESC`,
+    params
+  );
+  return rows;
+}
+
+module.exports = { registerChat, unregisterChat, chatIdsForProject, countsByProject, listForCEO };
