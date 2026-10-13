@@ -1,9 +1,8 @@
 // secretHash.js — one-way hashing for secrets this app owns outright: the
-// self-serve "tool only" account passwords AND invite one-time codes (see
-// toolAuth.js / toolInvites.js). Uses Node's own crypto.scrypt — no bcrypt —
-// so this backend doesn't gain a native npm dependency (everything in
-// package.json today is pure JS / no native build: pg, express, multer,
-// node-fetch, web-push).
+// self-serve "tool only" account passwords (see toolAuth.js). Uses Node's own
+// crypto.scrypt — no bcrypt — so this backend doesn't gain a native npm
+// dependency (everything in package.json today is pure JS / no native build:
+// pg, express, multer, node-fetch, web-push).
 const crypto = require('crypto');
 const { promisify } = require('util');
 const scryptAsync = promisify(crypto.scrypt);

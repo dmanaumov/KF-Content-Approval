@@ -78,9 +78,6 @@
       <p class="fp-intro" style="font-size:14px;color:var(--ink);font-weight:800;margin-bottom:4px">Создадим ваш проект</p>
       <p class="fp-intro" id="invSub"></p>
 
-      <label class="field-label" for="invCode">Код из приглашения</label>
-      <input id="invCode" class="field-input" inputmode="numeric" maxlength="6" placeholder="6 цифр" autocomplete="one-time-code">
-
       <label class="field-label" for="invProjectName">Название проекта</label>
       <input id="invProjectName" class="field-input" type="text" placeholder="например, «Мой бренд»">
 
@@ -120,7 +117,7 @@
 
       <label class="field-label" for="invPassword">Пароль</label>
       <input id="invPassword" class="field-input" type="password" autocomplete="new-password" placeholder="не короче 8 символов">
-      <div class="inv-survey-hint">Этот пароль придумываете вы — он нужен для последующих входов, код из приглашения действует только один раз.</div>
+      <div class="inv-survey-hint">Этот пароль придумываете вы — он нужен для последующих входов.</div>
 
       <label class="field-label" for="invName">Как вас зовут (необязательно)</label>
       <input id="invName" class="field-input" type="text" placeholder="имя">
@@ -157,11 +154,11 @@
     if (mode === 'ai') {
       modeLabelEl.textContent = 'ИИ СММ-ассистент';
       modeLabelEl.classList.add('ai');
-      subEl.textContent = 'Введите код из приглашения, заполните анкету ниже и придумайте пароль для входа.';
+      subEl.textContent = 'Заполните анкету ниже и придумайте пароль для входа.';
     } else {
       modeLabelEl.textContent = 'СММ-инструмент';
       modeLabelEl.classList.add('waiting');
-      subEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — после этого сразу попадёте в свой кабинет.';
+      subEl.textContent = 'Придумайте пароль для входа — после этого сразу попадёте в свой кабинет.';
     }
   }
 
@@ -192,13 +189,12 @@
 
   submitBtn.addEventListener('click', function () {
     errEl.hidden = true;
-    var code = document.getElementById('invCode').value.trim();
     var login = document.getElementById('invLogin').value.trim();
     var password = document.getElementById('invPassword').value;
     var displayName = document.getElementById('invName').value.trim();
     var projectName = document.getElementById('invProjectName').value.trim();
-    if (!code || !login || !password) {
-      showError('Заполните код, email/телефон и пароль.');
+    if (!login || !password) {
+      showError('Заполните email/телефон и пароль.');
       return;
     }
     var survey = selectedMode === 'ai' ? {
@@ -217,7 +213,7 @@
     fetch('/api/invite/' + encodeURIComponent(token) + '/redeem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code, login: login, password: password, displayName: displayName, projectName: projectName, mode: selectedMode, survey: survey }),
+      body: JSON.stringify({ login: login, password: password, displayName: displayName, projectName: projectName, mode: selectedMode, survey: survey }),
     })
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (res) {

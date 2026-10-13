@@ -45,7 +45,7 @@
         <h1 class="staff-title">Приглашения в самостоятельный <span class="staff-title-brand">кабинет</span></h1>
       </div>
       <div class="staff-sub-row">
-        <p class="staff-sub">Ссылка + код — доступ к созданию SaaS-проекта без участия команды</p>
+        <p class="staff-sub">Ссылка — доступ к созданию SaaS-проекта без участия команды</p>
         <div class="staff-head-pill">только admin/CEO</div>
       </div>
       <div class="staff-links">
@@ -63,7 +63,7 @@
   </header>
 
   <div class="iv-wrap">
-  <p class="iv-intro">Ссылку отправьте получателю как угодно, а код — ОТДЕЛЬНЫМ сообщением (например, в WhatsApp), не в одном тексте со ссылкой.</p>
+  <p class="iv-intro">Отправьте получателю ссылку любым каналом — она уже сама по себе даёт доступ к регистрации.</p>
 
   <div class="iv-row">
     <select id="modeSelect">
@@ -145,10 +145,8 @@
         resultEl.style.background = '';
         resultEl.innerHTML =
           '<p><strong>Ссылка</strong> (отправьте как угодно):<br><code id="ivUrl">' + esc(res.data.inviteUrl) + '</code><button class="iv-copy" id="copyUrl">Копировать</button></p>' +
-          '<p><strong>Код</strong> (отправьте ОТДЕЛЬНЫМ сообщением, другим каналом):<br><span class="iv-code" id="ivCode">' + esc(res.data.code) + '</span><button class="iv-copy" id="copyCode">Копировать</button></p>' +
-          '<p style="color:var(--muted);font-size:12px">Код показывается только сейчас — если потерять, нужно будет создать новое приглашение.</p>';
+          '<p style="color:var(--muted);font-size:12px">Ссылка показывается только сейчас — если потерять, нужно будет создать новое приглашение.</p>';
         document.getElementById('copyUrl').addEventListener('click', function () { copy(res.data.inviteUrl, this); });
-        document.getElementById('copyCode').addEventListener('click', function () { copy(res.data.code, this); });
         loadList();
       });
   });

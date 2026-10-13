@@ -555,7 +555,6 @@ document.getElementById('list').addEventListener('click', async (e) => {
 let saasInvites = [];
 let saasFilter = 'all';
 let saasLoaded = false;
-const saasReissueCache = new Map(); // inviteId -> {inviteUrl, code} — чтобы не перевыпускать код повторно при клике на второй значок той же строки
 
 function openTelegramShare(url, text) {
   window.open(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`, '_blank', 'noopener');
@@ -564,7 +563,7 @@ function openEmailShare(subject, body) {
   location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-function renderSaasLinkResult(inviteUrl, code) {
+function renderSaasLinkResult(inviteUrl) {
   const el = document.getElementById('saasResult');
   el.hidden = false;
   el.className = 'saas-result';
@@ -575,14 +574,8 @@ function renderSaasLinkResult(inviteUrl, code) {
       <button class="icon-btn" type="button" data-share="email-link" data-tip="Переслать ссылку на email" aria-label="Email">✉</button>
       <button class="icon-btn" type="button" data-share="copy-link" data-tip="Скопировать ссылку" aria-label="Скопировать ссылку">📋</button>
     </div>
-    <p><strong>Код</strong> (отправьте ОТДЕЛЬНЫМ сообщением, другим каналом):<br><span class="saas-code">${esc(code)}</span></p>
-    <div class="saas-share-row">
-      <button class="icon-btn" type="button" data-share="copy-code" data-tip="Скопировать код" aria-label="Скопировать код">📋</button>
-    </div>
-    <p style="color:var(--muted);font-size:12px">Код показывается только сейчас — если потерять, значок ✈/✉/📋 у приглашения в списке ниже перевыпустит новый.</p>
   `;
   el.dataset.inviteUrl = inviteUrl;
-  el.dataset.code = code;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -614,12 +607,10 @@ document.getElementById('saasResult').addEventListener('click', async (e) => {
   if (!btn) return;
   const el = document.getElementById('saasResult');
   const url = el.dataset.inviteUrl;
-  const code = el.dataset.code;
   const password = el.dataset.password;
   try {
     switch (btn.dataset.share) {
       case 'copy-link': await copyToClipboard(url); toast('Ссылка скопирована'); break;
-      case 'copy-code': await copyToClipboard(code); toast('Код скопирован'); break;
       case 'copy-password': await copyToClipboard(password); toast('Пароль скопирован'); break;
       case 'tg-link': openTelegramShare(url, 'Ссылка на регистрацию в SaaS-кабинете Контент Фермы'); break;
       case 'email-link': openEmailShare('Доступ в SaaS-кабинет Контент Фермы', `Ссылка на регистрацию:\n${url}`); break;
@@ -629,14 +620,8 @@ document.getElementById('saasResult').addEventListener('click', async (e) => {
   }
 });
 
-async function getOrReissue(inviteId) {
-  if (saasReissueCache.has(inviteId)) return saasReissueCache.get(inviteId);
-  const res = await fetch(`/api/tool-invites/${encodeURIComponent(inviteId)}/reissue-code`, { method: 'POST' });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || data.error || 'Не удалось перевыпустить код.');
-  const result = { inviteUrl: data.inviteUrl, code: data.code };
-  saasReissueCache.set(inviteId, result);
-  return result;
+function inviteUrlFromToken(token) {
+  return `${location.origin}/invite/${encodeURIComponent(token)}`;
 }
 
 function renderSaasRows() {
@@ -712,7 +697,7 @@ document.getElementById('saasCreateBtn').addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Не удалось создать приглашение.');
-    renderSaasLinkResult(data.inviteUrl, data.code);
+    renderSaasLinkResult(data.inviteUrl);
     loadSaasList();
   } catch (err) {
     renderSaasError(err.message);
@@ -733,21 +718,14 @@ document.getElementById('saasModeFilter').addEventListener('click', (e) => {
 document.getElementById('saasRows').addEventListener('click', async (e) => {
   const resendBtn = e.target.closest('[data-resend]');
   if (resendBtn) {
-    const inviteId = resendBtn.dataset.inviteId;
-    resendBtn.disabled = true;
-    try {
-      const { inviteUrl, code } = await getOrReissue(inviteId);
-      const kind = resendBtn.dataset.resend;
-      if (kind === 'tg') openTelegramShare(inviteUrl, 'Ссылка на регистрацию в SaaS-кабинете Контент Фермы');
-      else if (kind === 'email') openEmailShare('Доступ в SaaS-кабинет Контент Фермы', `Ссылка на регистрацию:\n${inviteUrl}`);
-      else if (kind === 'copy') { await copyToClipboard(inviteUrl); toast('Ссылка скопирована'); }
-      renderSaasLinkResult(inviteUrl, code);
-      loadSaasList();
-    } catch (err) {
-      toast(err.message || 'Не удалось перевыпустить код.');
-    } finally {
-      resendBtn.disabled = false;
-    }
+    const invite = saasInvites.find((i) => String(i.id) === String(resendBtn.dataset.inviteId));
+    if (!invite) { toast('Приглашение не найдено — обновите список.'); return; }
+    const inviteUrl = inviteUrlFromToken(invite.token);
+    const kind = resendBtn.dataset.resend;
+    if (kind === 'tg') openTelegramShare(inviteUrl, 'Ссылка на регистрацию в SaaS-кабинете Контент Фермы');
+    else if (kind === 'email') openEmailShare('Доступ в SaaS-кабинет Контент Фермы', `Ссылка на регистрацию:\n${inviteUrl}`);
+    else if (kind === 'copy') { try { await copyToClipboard(inviteUrl); toast('Ссылка скопирована'); } catch (err2) { toast('Не удалось скопировать'); } }
+    renderSaasLinkResult(inviteUrl);
     return;
   }
   const resetBtn = e.target.closest('[data-reset-account]');
@@ -769,7 +747,7 @@ document.getElementById('saasRows').addEventListener('click', async (e) => {
   }
   const delInviteBtn = e.target.closest('[data-del-invite]');
   if (delInviteBtn) {
-    if (!confirm('Удалить это приглашение? Ссылка и код перестанут работать.')) return;
+    if (!confirm('Удалить это приглашение? Ссылка перестанет работать.')) return;
     delInviteBtn.disabled = true;
     try {
       const res = await fetch(`/api/tool-invites/${encodeURIComponent(delInviteBtn.dataset.delInvite)}`, { method: 'DELETE' });

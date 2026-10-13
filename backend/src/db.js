@@ -655,16 +655,16 @@ async function initSchema() {
   `);
   // tool_invites — ссылка-приглашение, выпускается из внутренней страницы
   // проектов (POST /api/tool-invites, staffAuth). token — часть URL
-  // (/invite/:token), code_hash — отдельный одноразовый код, который админ
-  // передаёт получателю СВОИМ каналом, не внутри самой ссылки — по прямому
-  // запросу: "нужен отдельный пароль/код для человека по ссылке". mode
-  // резервирует будущий выбор "просто инструмент"/"с ИИ" (см. design-canvas
-  // PlanChoice); сегодня реально обслуживается только 'tool'.
+  // (/invite/:token) — сам по себе достаточно унiquely непредсказуема
+  // (18 байт base64url), он и есть секрет доступа к регистрации: достаточно
+  // уникальной ссылки, без отдельного кода (2026-10-13 — код убран по прямому
+  // запросу: "достаточно уникальной ссылки"). mode резервирует будущий выбор
+  // "просто инструмент"/"с ИИ" (см. design-canvas PlanChoice); сегодня реально
+  // обслуживается только 'tool'.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS tool_invites (
       id bigserial PRIMARY KEY,
       token text NOT NULL,
-      code_hash text NOT NULL,
       mode text NOT NULL DEFAULT 'tool' CHECK (mode IN ('tool', 'ai')),
       created_by text NOT NULL DEFAULT '',
       created_at timestamptz NOT NULL DEFAULT now(),
@@ -674,6 +674,12 @@ async function initSchema() {
   `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS tool_invites_token_idx ON tool_invites (token);
+  `);
+  // Миграция 2026-10-13: отдельный одноразовый код приглашения убран — ссылка
+  // и есть доступ. Столбец code_hash больше не пишется и не читается; чистим
+  // на всякий случай (DROP COLUMN IF EXISTS идемпотентен).
+  await pool.query(`
+    ALTER TABLE tool_invites DROP COLUMN IF EXISTS code_hash;
   `);
   // tool_projects — проект, созданный self-serve аккаунтом при погашении
   // приглашения (см. POST /api/invite/:token/redeem). link_token — его

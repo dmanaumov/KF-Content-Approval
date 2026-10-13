@@ -6494,10 +6494,11 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
 // direct request ("создаем учетку и ведем ее в базе данных! В маттермост
 // его не впускаем!" + "отдельное хранилище в своей БД, не трогая Mattermost
 // вообще"). Staff issue an invite from {staffProjectsPath}/invites
-// (staffAuth, admin/CEO only); the recipient redeems it at /invite/:token
-// with a one-time code the admin sends separately (NOT inside the link),
-// then logs into their own cabinet at /tool with an email/phone + password
-// they pick themselves at redemption time.
+// (staffAuth, admin/CEO only); the recipient redeems it at /invite/:token —
+// the unguessable token inside the URL is itself the whole secret, a
+// separate one-time code was deliberately dropped (2026-10-13, "достаточно
+// уникальной ссылки") — then logs into their own cabinet at /tool with an
+// email/phone + password they pick themselves at redemption time.
 //
 // Scope note: only the "просто инструмент" (no-AI) path is wired up here.
 // The "с ИИ" survey/prompt-autogeneration path is still just the design-
@@ -6506,9 +6507,9 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
 // ---------------------------------------------------------------------------
 
 // POST /api/tool-invites — admin creates an invite link. Body: { mode }
-// ('tool' today — see scope note above). Returns the token (goes in the
-// URL) and the plaintext code (shown ONCE, right here — only its hash is
-// ever persisted, so if it's lost a new invite has to be issued).
+// ('tool' today — see scope note above). Returns the token, which travels
+// inside the URL and is itself the whole secret — no separate code (the link
+// IS the access, 2026-10-13).
 app.post('/api/tool-invites', staffAuth, async (req, res) => {
   if (!req.staffScope || !req.staffScope.full) {
     return res.status(403).json({ error: 'admin_only', message: 'Приглашения создаёт только админ/CEO.' });
@@ -6518,7 +6519,6 @@ app.post('/api/tool-invites', staffAuth, async (req, res) => {
     const invite = await toolInvites.createInvite({ mode, createdBy: req.staffScope.username || '' });
     res.json({
       token: invite.token,
-      code: invite.code,
       mode: invite.mode,
       inviteUrl: `${req.protocol}://${req.get('host')}/invite/${invite.token}`,
     });
@@ -6528,8 +6528,9 @@ app.post('/api/tool-invites', staffAuth, async (req, res) => {
   }
 });
 
-// GET /api/tool-invites — admin's list of outstanding/used invites. Never
-// returns a code again (only its hash is stored) — see POST above.
+// GET /api/tool-invites — admin's list of outstanding/used invites. Returns
+// token (from which the invite URL is rebuilt client-side), never a code —
+// there is no code anymore, only the link (2026-10-13).
 app.get('/api/tool-invites', staffAuth, async (req, res) => {
   if (!req.staffScope || !req.staffScope.full) {
     return res.status(403).json({ error: 'admin_only' });
@@ -6598,32 +6599,9 @@ app.delete('/api/tool-invites/:id', staffAuth, async (req, res) => {
   }
 });
 
-// POST /api/tool-invites/:id/reissue-code — "Направить повторно" в
-// SaaS-списке (прямой запрос пользователя 2026-10-13): для ещё не
-// погашенного приглашения выписывает новый код (старый код не восстановить —
-// хранится только хэш), чтобы можно было переслать ссылку+код заново, не
-// создавая новое приглашение. admin/CEO only, как и выпуск приглашений.
-app.post('/api/tool-invites/:id/reissue-code', staffAuth, async (req, res) => {
-  if (!req.staffScope || !req.staffScope.full) {
-    return res.status(403).json({ error: 'admin_only', message: 'Переслать приглашение может только админ/CEO.' });
-  }
-  try {
-    const result = await toolInvites.reissueCode(req.params.id);
-    if (!result) return res.status(404).json({ error: 'invite_not_found_or_used', message: 'Приглашение не найдено или уже использовано.' });
-    res.json({
-      token: result.token,
-      code: result.code,
-      mode: result.mode,
-      inviteUrl: `${req.protocol}://${req.get('host')}/invite/${result.token}`,
-    });
-  } catch (err) {
-    console.error('[api] reissue tool invite code failed:', err.message);
-    res.status(502).json({ error: 'reissue_failed', message: err.message });
-  }
-});
-
 // GET /api/invite/:token — public; lets the /invite page render the right
-// copy (mode) and whether the link is still redeemable, WITHOUT the code.
+// copy (mode) and whether the link is still redeemable — the token inside the
+// URL is the whole secret, no separate code.
 app.get('/api/invite/:token', async (req, res) => {
   try {
     const invite = await toolInvites.getInviteByToken(req.params.token);
@@ -6650,18 +6628,18 @@ function sanitizeSurvey(input) {
   return out;
 }
 
-// POST /api/invite/:token/redeem — body: { code, login, password,
-// displayName, projectName, mode, survey }. mode/survey — выбор экрана
-// PlanChoice и, для 'ai', ответы анкеты Survey — выбирает САМ приглашённый
-// на /invite, а не админ при выпуске ссылки (invite.mode там — только
-// дефолт/подсказка, какую карточку подсветить). One-shot: creates the
-// tool_accounts row, a first tool_projects row, marks the invite used, and
-// logs the new account straight in (same cookie POST /api/tool/login
-// would set).
+// POST /api/invite/:token/redeem — body: { login, password, displayName,
+// projectName, mode, survey }. mode/survey — выбор экрана PlanChoice и, для
+// 'ai', ответы анкеты Survey — выбирает САМ приглашённый на /invite, а не
+// админ при выпуске ссылки (invite.mode там — только дефолт/подсказка, какую
+// карточку подсветить). Секрет доступа — сам token в URL, отдельного кода
+// нет (2026-10-13). One-shot: creates the tool_accounts row, a first
+// tool_projects row, marks the invite used, and logs the new account straight
+// in (same cookie POST /api/tool/login would set).
 app.post('/api/invite/:token/redeem', async (req, res) => {
-  const { code, login, password, displayName, projectName, mode, survey } = req.body || {};
-  if (!code || !login || !password) {
-    return res.status(400).json({ error: 'missing_fields', message: 'Код, логин и пароль обязательны.' });
+  const { login, password, displayName, projectName, mode, survey } = req.body || {};
+  if (!login || !password) {
+    return res.status(400).json({ error: 'missing_fields', message: 'Логин и пароль обязательны.' });
   }
   if (String(password).length < 8) {
     return res.status(400).json({ error: 'weak_password', message: 'Пароль должен быть не короче 8 символов.' });
@@ -6671,8 +6649,6 @@ app.post('/api/invite/:token/redeem', async (req, res) => {
     const invite = await toolInvites.getInviteByToken(req.params.token);
     if (!invite) return res.status(404).json({ error: 'invite_not_found' });
     if (invite.used_at) return res.status(410).json({ error: 'invite_used', message: 'Эта ссылка уже использована.' });
-    const codeOk = await toolInvites.verifyInviteCode(invite, code);
-    if (!codeOk) return res.status(401).json({ error: 'invalid_code', message: 'Неверный код.' });
     const existing = await toolAuth.findByLogin(login);
     if (existing) return res.status(409).json({ error: 'login_taken', message: 'Этот email/телефон уже зарегистрирован.' });
     const account = await toolAuth.createAccount({ login, password, displayName });
