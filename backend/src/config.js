@@ -147,6 +147,26 @@ module.exports = {
   // must fail fast or the whole cabinet waits on it.
   diskProbeTimeoutMs: parseInt(process.env.MM_DISK_PROBE_TIMEOUT_MS || '5000', 10),
 
+  // Web Push (Push API) — "клиент один раз подписался, дальше напоминания
+  // приходят на телефон сами". VAPID-ключи: если не заданы через env, сервер
+  // генерирует пару при первом старте и сохраняет в Postgres (см.
+  // pushNotifier.js / api_keys table) — так на передеплое не ломаются
+  // подписки уже подписавшихся клиентов. Публичный ключ выдаётся кабинету
+  // через GET /api/links/:token/push/public-key. Subject — mailto: или https
+  // контакт для пуш-сервиса браузера (обязательное поле VAPID).
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
+  vapidSubject: process.env.VAPID_SUBJECT || 'mailto:reminders@kontentferma.ru',
+
+  // Публичный адрес приложения (https://kf.example.com) — из него собираются
+  // ссылки в push/Telegram-уведомлениях ("открыть карточку"). Календарный
+  // фид и сам кабинет по-прежнему берут протокол/хост из заголовков запроса
+  // (см. GET /api/links/:token/calendar.ics), а вот уведомления рождаются
+  // НЕ в HTTP-запросе (при смене статуса карточки из команды/автоматизации),
+  // поэтому им нужен стабильный внешний адрес. Если не задан — уведомления
+  // приходят без ссылки "открыть" (просто текст).
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || '',
+
   // Local on-disk cache of disk.kontentferma share files (backend/src/diskCache.js)
   // so /api/disk-embed stops hammering Nextcloud with one proxied request per
   // view/seek. DISK_CACHE_DIR must be a persistent volume (docker-compose.yml

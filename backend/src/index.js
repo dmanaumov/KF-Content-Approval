@@ -28,6 +28,9 @@ const analytics = require('./analytics');
 const botStore = require('./botStore');
 const apiKeys = require('./apiKeys');
 const bots = require('./bots');
+const pushNotifier = require('./pushNotifier');
+const tgSubs = require('./tgSubs');
+const reminders = require('./reminders');
 const { buildOpenApiSpec } = require('./openapiSpec');
 
 // Safety net (2026-10-10): any promise rejection that escapes an async route
@@ -4003,6 +4006,13 @@ async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
         `остался "${updated.statusLabel || '(нет)'}", а не "${rawLabel}". Проверьте права аккаунта, от имени которого работает приложение.`
     );
   }
+  // Карточка перешла в состояние, ждущее действия КЛИЕНТА ("На согласование"
+  // или "Корректировка") — напомнить по всем каналам, на которые клиент
+  // подписался (Web Push + Telegram, см. reminders.js). Fire-and-forget:
+  // сбой рассылки не должен ломать сам переход статуса.
+  if (updated.status === 'waiting' || updated.status === 'changes') {
+    reminders.notifyTaskNeedsAction(boardId, updated);
+  }
   return updated;
 }
 
@@ -5062,6 +5072,13 @@ async function createAutomationTask(boardId, opts, preloadedBoard) {
         `НЕ повторяйте запрос на всякий случай, это создаст дубликат. Сообщите об этой ошибке для диагностики.`
     );
   }
+  // Новый пост сразу создан в состоянии, ждущем действия клиента
+  // ("На согласование"/"Корректировка") — это ровно тот кейс, ради которого
+  // клиент подписался на уведомления ("мне сегодня надо срочно что-то
+  // согласовать"). Рассылка fire-and-forget, сбой не роняет создание.
+  if (created.status === 'waiting' || created.status === 'changes') {
+    reminders.notifyTaskNeedsAction(boardId, created);
+  }
   return created;
 }
 
@@ -6104,6 +6121,52 @@ app.post('/api/bot/messages/:id/ack', requireBotAuth, async (req, res) => {
   }
 });
 
+// POST /api/bot/client-subscribe — регистрация того, что личный чат клиента
+// (chat_id) хочет получать напоминания о карточках проекта. Генерируется
+// deep link'ом из кабинета: https://t.me/<bot>?start=kf-<token>; n8n ловит
+// /start с таким payload и зовёт сюда (X-Bot-Key). Body: { chatId, payload }
+// где payload — строка после "kf-" (это link_token проекта). Вот и всё —
+// дальше напоминания кладутся в очередь исходящих бота и n8n их доставляет
+// (см. tgSubs.js/reminders.js). Сообщение подтверждения сам клиент видит
+// если бот на стороне n8n ответит − это уже его дело; мы только храним.
+app.post('/api/bot/client-subscribe', requireBotAuth, async (req, res) => {
+  const chatId = String((req.body && req.body.chatId) || '').trim();
+  const payload = String((req.body && req.body.payload) || '').trim();
+  if (!chatId) return res.status(400).json({ error: 'chat_id_required', message: 'chatId обязателен.' });
+  const token = payload.startsWith('kf-') ? payload.slice(3) : payload;
+  if (!token) return res.status(400).json({ error: 'payload_required', message: 'payload (kf-<token>) обязателен.' });
+  let resolved;
+  try {
+    resolved = await projectSettings.resolveToken(token);
+  } catch (err) {
+    return dbUnavailable(res, err);
+  }
+  if (!resolved) {
+    return res.status(404).json({ error: 'link_not_found', message: 'Токен недействителен или был отозван.' });
+  }
+  try {
+    const sub = await tgSubs.registerChat({ chatId, boardId: resolved.boardId, projectId: resolved.projectId });
+    res.json({ ok: true, subscription: { chatId: sub.chat_id, boardId: sub.board_id, projectId: sub.project_id } });
+  } catch (err) {
+    console.error('[api] bot client-subscribe failed:', err.message);
+    res.status(500).json({ error: 'client_subscribe_failed', message: err.message });
+  }
+});
+
+// POST /api/bot/client-unsubscribe — отписать чат от напоминаний (клиент
+// написал боту "стоп" / кнопка отписки у нас не хранится). Body: { chatId }.
+app.post('/api/bot/client-unsubscribe', requireBotAuth, async (req, res) => {
+  const chatId = String((req.body && req.body.chatId) || '').trim();
+  if (!chatId) return res.status(400).json({ error: 'chat_id_required', message: 'chatId обязателен.' });
+  try {
+    await tgSubs.unregisterChat({ chatId });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] bot client-unsubscribe failed:', err.message);
+    res.status(500).json({ error: 'client_unsubscribe_failed', message: err.message });
+  }
+});
+
 // Posts a message TO the client — unlike every other team-cabinet marker,
 // this one is deliberately included in taskMapper.js's clientComments
 // (kind: 'agency'), because the whole point is for the client to see it,
@@ -6364,6 +6427,16 @@ const frontendDir = path.join(__dirname, '..', '..', 'frontend');
 app.use(
   express.static(frontendDir, {
     setHeaders: (res, filePath) => {
+      if (/\/sw\.js$/i.test(filePath)) {
+        // Service worker НЕ подлежит длинному кэшу: браузер обязан
+        // перепроверять его при каждом navigator.serviceWorker.register
+        // и фоновом updatecheck, иначе новое уведомление/фикс никогда
+        // не доедет до уже установленного воркера. Без Cache-Control
+        // тот же браузерный update всё равно сработает (ежедневный
+        // check), но с явным no-cache обновление мгновенное.
+        res.setHeader('Cache-Control', 'no-cache');
+        return;
+      }
       if (/\.(css|js)$/i.test(filePath)) {
         // Every reference to these already carries a hand-bumped ?v=N
         // cache-buster (see release notes on every delivered CSS/JS batch)
@@ -6513,6 +6586,106 @@ app.get('/api/links/:token', async (req, res) => {
   }
 });
 
+// Web Push — "напоминания на телефон" для кабинета клиента. Тот же токен
+// ссылки, что и весь кабинет — отдельных секретов придумывать не нужно, а
+// ротация link-token просто перестаёт отдавать/принимать push-роуты (как и
+// сам кабинет). Отдельный модуль pushNotifier.js держит сами подписки в
+// Postgres (push_subscriptions) и делает рассылку.
+//
+// GET .../push/public-key — публичный VAPID-ключ, который кабинет передаёт в
+// navigator.pushManager.subscribe({ applicationServerKey }). Если Web Push не
+// настроен (VAPID отсутствует) — 200 с пустой строкой, фронтенд прячет
+// кнопку "Подписаться".
+app.get('/api/links/:token/push/public-key', async (req, res) => {
+  res.json({ vapidPublicKey: pushNotifier.getPublicKey() || '' });
+});
+
+// POST .../push/subscribe — сохранить подписку ТЕКУЩЕГО устройства клиента.
+// Body: { endpoint, p256dh, auth } (поля из subscription.toJSON()). Привязка
+// к (board_id, project_id) из resolveToken — НЕ к токену, чтобы ротация
+// ссылки не обрубала уже подписавшиеся устройства (см. pushNotifier.js).
+app.post('/api/links/:token/push/subscribe', async (req, res) => {
+  let resolved;
+  try {
+    resolved = await projectSettings.resolveToken(req.params.token);
+  } catch (err) {
+    return dbUnavailable(res, err);
+  }
+  if (!resolved) return res.status(404).json({ error: 'link_not_found', message: 'Ссылка недействительна или была отозвана.' });
+  const b = req.body || {};
+  if (!b.endpoint || !b.p256dh || !b.auth) {
+    return res.status(400).json({ error: 'subscription_required', message: 'Нужны поля endpoint, p256dh и auth (subscription.toJSON()).' });
+  }
+  try {
+    await pushNotifier.subscribe({
+      endpoint: b.endpoint,
+      p256dh: b.p256dh,
+      auth: b.auth,
+      boardId: resolved.boardId,
+      projectId: resolved.projectId,
+      userAgent: req.headers['user-agent'] || '',
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] push subscribe failed:', err.message);
+    res.status(502).json({ error: 'push_subscribe_failed', message: err.message });
+  }
+});
+
+// POST .../push/unsubscribe — снять подписку устройства (кнопка
+// "Отписаться" в кабинете). Body: { endpoint }. Идемпотентно: повторный
+// вызов с тем же endpoint — 200, строка просто не найден/уже удалена.
+app.post('/api/links/:token/push/unsubscribe', async (req, res) => {
+  let resolved;
+  try {
+    resolved = await projectSettings.resolveToken(req.params.token);
+  } catch (err) {
+    return dbUnavailable(res, err);
+  }
+  if (!resolved) return res.status(404).json({ error: 'link_not_found', message: 'Ссылка недействительна или была отозвана.' });
+  const endpoint = String((req.body || {}).endpoint || '').trim();
+  if (!endpoint) return res.status(400).json({ error: 'endpoint_required', message: 'Нужно поле endpoint.' });
+  try {
+    // Снимаем только если endpoint реально принадлежит этому проекту —
+    // чужая подписка (другой link с тем же токеном-проектом невозможен, но
+    // на всякий случай не удаляем то, что не наше).
+    const subs = await pushNotifier.subscriptionsForProject(resolved.boardId, resolved.projectId);
+    const mine = subs.some((s) => s.endpoint === endpoint);
+    if (mine) await pushNotifier.unsubscribe({ endpoint });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] push unsubscribe failed:', err.message);
+    res.status(502).json({ error: 'push_unsubscribe_failed', message: err.message });
+  }
+});
+
+// GET /api/links/:token/notifications — что кабинету показывать по разделу
+// «Напоминания»: включён ли Web Push (есть VAPID public key — клиент может
+// подписаться), и есть ли активный Telegram-бот (username → кнопка «deep
+// link» t.me/<username>?start=kf-<token>). Один вызов вместо двух, чтобы
+// фронтенд не дёргал несколько роутов при загрузке кабинета.
+app.get('/api/links/:token/notifications', async (req, res) => {
+  let resolved;
+  try {
+    resolved = await projectSettings.resolveToken(req.params.token);
+  } catch (err) {
+    return dbUnavailable(res, err);
+  }
+  if (!resolved) return res.status(404).json({ error: 'link_not_found', message: 'Ссылка недействительна или была отозвана.' });
+  let tgUsername = '';
+  try {
+    const activeBots = await bots.listBots({ activeOnly: true });
+    tgUsername = (activeBots[0] && activeBots[0].username) || '';
+  } catch (err) {
+    console.warn('[api] notifications tg bot lookup failed:', err.message);
+  }
+  res.json({
+    vapidPublicKey: pushNotifier.getPublicKey() || '',
+    telegramUsername: tgUsername,
+    telegramDeepLink: tgUsername ? `https://t.me/${encodeURIComponent(tgUsername)}?start=kf-${encodeURIComponent(req.params.token)}` : '',
+  });
+});
+
 // GET /api/links/:token/calendar.ics — the "напоминания в календаре" feature
 // (see calendarFeed.js for the full design rationale). Same token as the
 // client's own cabinet link — no separate auth to invent, and it stays
@@ -6534,11 +6707,14 @@ app.get('/api/links/:token/calendar.ics', async (req, res) => {
   try {
     const { board, cards, blocks } = await loadBoard(resolved.boardId);
     const { tasks } = buildTasks(board, cards, blocks, { projectFilter: resolved.projectId });
-    const waitingTasks = tasks.filter((t) => t.status === 'waiting');
+    // Все клиенто-видимые карточки проекта (не только "waiting") — сам фид
+    // решает, что показывать в календаре и как (см. pickFeedTasks в
+    // calendarFeed.js): планируемые посты с реальным статусом в SUMMARY,
+    // одно событие на дату публикации, без RRULE-спама.
     const projectProp = findPropertyDef(board, config.projectPropertyName);
     const projectLabel = optionLabelById(projectProp, resolved.projectId) || 'КонтентФерма';
     const proto = req.headers['x-forwarded-proto'] || 'https';
-    const ics = calendarFeed.buildIcsFeed(waitingTasks, {
+    const ics = calendarFeed.buildIcsFeed(tasks, {
       projectLabel,
       linkToken: req.params.token,
       host: req.get('host'),
@@ -6601,6 +6777,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
     await projectSettings.importLegacyFileTokens();
     await apiKeys.init(); // seeds api_keys from env vars on first boot — see apiKeys.js
     await bots.ensureSeeded(); // gives the CEO one starter row instead of an empty table — see bots.js
+    await pushNotifier.init(); // loads/generates VAPID keys for Web Push — never throws, see pushNotifier.js
   } catch (err) {
     console.error('[startup] database init failed — client links/logo/social-credentials editor will not work:', err.message);
   }

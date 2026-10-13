@@ -88,6 +88,15 @@ button{cursor:pointer}
 .cal-sub-modal-actions{display:grid;gap:10px;margin:14px 0}
 .cal-sub-modal-actions .btn{text-align:center;text-decoration:none;display:block}
 .cal-sub-hint{font-size:12px;color:var(--muted);margin:0 0 6px}
+/* "Напоминания на телефон и в Telegram" — блок внутри calSubModal: чип-кнопки
+   включают/выключают каждый канал. Показывается только если канал доступен
+   (Web Push есть на этой странице, у проекта есть TG-бот). */
+.notify-row{border-top:1px dashed var(--line);margin-top:4px;padding-top:12px}
+.notify-title{font-size:13px;font-weight:700;color:#2E7D4F;margin-bottom:8px}
+.notify-channels{display:grid;gap:8px}
+.notify-chip{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 14px;font-size:13px;font-weight:600;border-radius:14px;border:1.5px solid var(--line);background:#fff;color:#0C1C1A;text-align:center;text-decoration:none;cursor:pointer;transition:border-color .15s,background .15s}
+.notify-chip:hover{border-color:#9BB8A8}
+.notify-chip.on{border-color:#2E7D4F;background:#EAF4EE;color:#1E6B41}
 .stack{display:grid;gap:16px;position:relative}
 /* "Всё согласовано" banner with the КРАСАВА mascot — shown at the top of
    the stack whenever no task anywhere on the board is still awaiting

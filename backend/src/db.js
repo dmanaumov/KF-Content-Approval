@@ -561,6 +561,53 @@ async function initSchema() {
       updated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  // Клиентские push-подписки (Web Push / Push API) — дата + endpoint браузера,
+  // на которые кабинет /l/{token} шлёт уведомления "нужно согласовать".
+  // Одна запись = один браузер/устройство клиента ОДНОГО проекта (фильтр по
+  // board_id+project_id — подписка привязана к проекту, не к токену, чтобы
+  // ротация ссылки не обрубала уже подписанные устройства). endpoint —
+  // первичный ключ (уникален в пуш-сервисе браузера), повторная подписка
+  // с техже данных — идемпотентный upsert (см. pushNotifier.js). Ключи
+  // p256dh/auth — из subscription.getKey(), из них браузер расшифровывает
+  // сообщение; это НЕ секреты типа токенов — они принадлежат конкретному
+  // браузеру клиента и бессмысленны сами по себе.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint text PRIMARY KEY,
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      p256dh text NOT NULL,
+      auth text NOT NULL,
+      user_agent text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      last_sent_at timestamptz
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS push_subscriptions_project_idx
+      ON push_subscriptions (board_id, project_id);
+  `);
+  // Подписки клиента на напоминания через Telegram-бота (deep link с кнопки
+  // в кабинете «напоминания в Telegram»). chat_id сабскрайбера — одна запись
+  // на чат; сообщения уходят не напрямую (у нас нет токена бота), а через
+  // существующую очередь исходящих bot_messages (см. botStore.queueOutgoing)
+  // — n8n её вычитывает и реально шлёт в Telegram (тот же принцип, что у
+  // переписки персонала, просто источником выступает наш автоматический
+  // триггер статуса карточки, а не ручная кнопка).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS client_tg_subs (
+      chat_id text PRIMARY KEY,
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS client_tg_subs_project_idx
+      ON client_tg_subs (board_id, project_id);
+  `);
   await ensureN8nRole();
 }
 

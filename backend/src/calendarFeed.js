@@ -1,17 +1,29 @@
 // ICS (iCalendar) feed for the client cabinet's "напоминания в календаре"
 // feature — lets a client subscribe (webcal://) their own calendar app to a
-// per-project feed of cards currently in "На согласование". Deliberately
-// NOT another outbound channel this app has to send through itself (see the
-// "Кот Василий" bot's principle: this app never calls an external send API
-// directly) — the client's OWN calendar app polls this URL on its own
-// schedule and generates the native OS/app notification. One VEVENT per
-// waiting card, RRULE:FREQ=DAILY with no UNTIL — "нагоняющее" is achieved
-// simply by the event recurring every day for as long as the card keeps
-// showing up in this feed; once a card leaves "На согласование" it's absent
-// from the next-generated feed, and the client's calendar removes the
-// recurrence on its next sync (calendar apps typically re-fetch a
-// subscribed URL every few hours to ~24h — that cadence belongs to
-// Google/Apple/Outlook, not something this app controls).
+// per-project feed of their scheduled posts. The client's OWN calendar app
+// polls this URL on its own schedule (Google/Apple/Outlook decide that
+// cadence, not us) and renders the events + optional native alarms.
+//
+// WHY this is a plain pull feed and not a push channel: the calendar belongs
+// to the CLIENT (Google/Apple/Outlook), so we can't write into it — we only
+// answer when their calendar asks. "Реально обновляться по статусу" here
+// means: the feed is regenerated from the LIVE board on every fetch, so a
+// calendar that re-syncs (typically every few hours to ~24h, hinted by
+// X-PUBLISHED-TTL below) picks up the current status. Instant "срочно
+// согласовать" nudges are deliberately NOT this feed's job — that's Web Push
+// (pushNotifier.js) and the Telegram bot for clients who subscribed, both of
+// which we can genuinely push. The calendar is the "план + спокойные
+// напоминания" view.
+//
+// EVERY TASK = EXACTLY ONE VEVENT, no RRULE. Earlier versions used
+// RRULE:FREQ=DAILY to "нагонять" the client until they approve — which made
+// Google show the SAME task on every day for weeks, exactly the "почему
+// показывает всё время одну и ту же задачу" complaint that killed it.
+// Instead: each event sits on the post's publish date, the SUMMARY carries
+// the REAL current status (🔥 нужно согласовать / ✅ согласовано / и т.д.),
+// and UID is stable (kfw-<taskId>) — so when a card changes status, the
+// client's calendar REPLACES the event in place on its next sync (same UID,
+// new SUMMARY/DTSTART). No unbounded recurrence, no spam.
 
 // RFC5545 §3.3.11 TEXT escaping — backslash, semicolon, comma, and embedded
 // newlines all need escaping in any TEXT-valued property (SUMMARY,
@@ -59,53 +71,85 @@ function formatIcsUtc(date) {
 // codebase already makes).
 const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
 
-// The calendar day (in Moscow local time) a reminder should start recurring
-// from — best-effort "since when has this card been waiting" signal, since
-// there's no dedicated "entered На согласование" timestamp on the card,
-// only its overall last-updated time. Clamped to not be in the future (a
-// clock-skew safety net, not an expected real case) so a freshly-touched
-// card doesn't get a DTSTART calendar apps would treat as "starts tomorrow".
-function reminderAnchorDate(task) {
-  const raw = Math.min(task.updateAt || Date.now(), Date.now());
-  const mskShifted = new Date(raw + MSK_OFFSET_MS);
-  return new Date(Date.UTC(mskShifted.getUTCFullYear(), mskShifted.getUTCMonth(), mskShifted.getUTCDate()));
+// The calendar day (in Moscow local time) a task should occupy. Normal case:
+// the post's own publish date (publishDate is 'YYYY-MM-DD' or null). For an
+// action-needed task WITH a publish date we STILL use the publish date (the
+// client sees the plan, and the "нужно сейчас" nudge comes from push/TG).
+// Only when a task needs action but has NO publish date do we fall back to
+// "today in Moscow" — so it still visibly sits somewhere without constantly
+// sliding.
+function eventDay(task) {
+  if (task.publishDate) return task.publishDate;
+  const mskShifted = new Date(Date.now() + MSK_OFFSET_MS);
+  return `${mskShifted.getUTCFullYear()}-${pad2(mskShifted.getUTCMonth() + 1)}-${pad2(mskShifted.getUTCDate())}`;
 }
 
-// Builds one VEVENT for a single "На согласование" task — daily-recurring,
-// 10:00 Moscow time, with a 15-minute-before display alarm (some calendar
-// clients only surface a native notification when an explicit VALARM is
-// present, not just from the bare event).
+// Human status prefix for the calendar SUMMARY — same terminology as the
+// cabinet's own calendar legend (🔥 / правки / согласовано / опубликовано).
+function statusPrefix(task) {
+  switch (task.status) {
+    case 'waiting': return '🔥 Нужно согласовать';
+    case 'changes': return '✏️ Есть правки';
+    case 'approved': return '✅ Согласовано';
+    case 'published': return '📅 Будет опубликовано';
+    default: return '📝 Пост';
+  }
+}
+
+// Whether this task currently needs an action from the client — only these
+// carry a VALARM (calendar apps surface the native notification for a bare
+// event without an explicit alarm unreliably). Approved/published are just
+// informational entries: no alarm, no "open me" urgency.
+function needsAction(task) {
+  return task.status === 'waiting' || task.status === 'changes';
+}
+
+// Builds one VEVENT for a single task — on its publish date (or today, see
+// eventDay), NO recurrence, status in the SUMMARY. VALARM present only while
+// the task is waiting for approval / has revisions to review.
 function buildEvent(task, { linkToken, host, proto, dtstamp }) {
-  const anchor = reminderAnchorDate(task);
-  const startUtcMs = anchor.getTime() + 7 * 60 * 60 * 1000; // 10:00 MSK == 07:00 UTC
+  const day = eventDay(task);
+  const startUtcMs = Date.parse(`${day}T00:00:00Z`) + 7 * 60 * 60 * 1000; // 10:00 MSK == 07:00 UTC
   const dtstart = formatIcsUtc(new Date(startUtcMs));
   const dtend = formatIcsUtc(new Date(startUtcMs + 15 * 60 * 1000));
   const taskUrl = `${proto}://${host}/l/${encodeURIComponent(linkToken)}?task=${encodeURIComponent(task.id)}`;
+  const summary = `${statusPrefix(task)}: ${task.title}`;
   const lines = [
     'BEGIN:VEVENT',
     `UID:kfw-${task.id}@kontentferma.com`,
     `DTSTAMP:${dtstamp}`,
     `DTSTART:${dtstart}`,
     `DTEND:${dtend}`,
-    'RRULE:FREQ=DAILY',
-    `SUMMARY:${escapeIcsText(`Контент на проверку: ${task.title}`)}`,
+    `SUMMARY:${escapeIcsText(summary)}`,
     `DESCRIPTION:${escapeIcsText(`Откройте карточку в кабинете КонтентФермы: ${taskUrl}`)}`,
     `URL:${taskUrl}`,
     'STATUS:CONFIRMED',
     'SEQUENCE:0',
-    'BEGIN:VALARM',
-    'ACTION:DISPLAY',
-    'DESCRIPTION:Контент ждёт вашей проверки',
-    'TRIGGER:-PT15M',
-    'END:VALARM',
-    'END:VEVENT',
   ];
+  if (needsAction(task)) {
+    lines.push(
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeIcsText(summary)}`,
+      'TRIGGER:-PT15M',
+      'END:VALARM'
+    );
+  }
+  lines.push('END:VEVENT');
   return lines.map(foldLine).join('');
 }
 
-// tasks — already filtered to status === 'waiting' by the caller (this
-// module doesn't know about the app's status taxonomy on purpose, keeps it
-// reusable/testable on a plain task array).
+// tasks — the project's CLIENT-VISIBLE tasks. The caller (index.js) already
+// built them with buildTasks(... projectFilter), so every task here is on the
+// right project and not an internal-production-stage card. We further keep
+// only what makes sense in a schedule view: anything with a publish date
+// (the plan), plus action-needed cards even if they somehow lack a date.
+// Archived and status-less cards are dropped (nothing scheduled about them).
+function pickFeedTasks(tasks) {
+  const feedStatus = (t) => t.status === 'waiting' || t.status === 'changes' || t.status === 'approved' || t.status === 'published';
+  return (tasks || []).filter((t) => t.publishDate ? feedStatus(t) : needsAction(t));
+}
+
 function buildIcsFeed(tasks, { projectLabel, linkToken, host, proto }) {
   const dtstamp = formatIcsUtc(new Date());
   const lines = [
@@ -114,17 +158,20 @@ function buildIcsFeed(tasks, { projectLabel, linkToken, host, proto }) {
     'PRODID:-//KontentFerma//KF Content Approval//RU',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    `X-WR-CALNAME:${escapeIcsText(`КФ — ${projectLabel}: контент на проверку`)}`,
-    `X-WR-CALDESC:${escapeIcsText('Автоматическое напоминание о постах, ожидающих вашей проверки в КонтентФерме')}`,
+    `X-WR-CALNAME:${escapeIcsText(`КФ — ${projectLabel}: посты`)}`,
+    `X-WR-CALDESC:${escapeIcsText('План постов КонтентФермы: даты публикации и статусы согласования (обновляется при каждой синхронизации календаря)')}`,
     'X-WR-TIMEZONE:Europe/Moscow',
     // Both are hints, not guarantees — Google Calendar honors X-PUBLISHED-TTL
-    // for its own refresh cadence; other clients may ignore either.
-    'REFRESH-INTERVAL;VALUE=DURATION:PT12H',
-    'X-PUBLISHED-TTL:PT12H',
+    // for its own refresh cadence; other clients may ignore either. Status
+    // changes pick up on the next re-sync, not instantly.
+    'REFRESH-INTERVAL;VALUE=DURATION:PT6H',
+    'X-PUBLISHED-TTL:PT6H',
   ];
-  const body = tasks.map((task) => buildEvent(task, { linkToken, host, proto, dtstamp })).join('');
+  const body = pickFeedTasks(tasks)
+    .map((task) => buildEvent(task, { linkToken, host, proto, dtstamp }))
+    .join('');
   const footer = 'END:VCALENDAR\r\n';
   return lines.map(foldLine).join('') + body + footer;
 }
 
-module.exports = { buildIcsFeed, escapeIcsText, foldLine };
+module.exports = { buildIcsFeed, pickFeedTasks, escapeIcsText, foldLine };

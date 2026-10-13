@@ -7,7 +7,7 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=21">
+  <link rel="stylesheet" href="/app.css?v=22">
 </head>
 <body>
 <div class="page">
@@ -102,12 +102,13 @@
 <div id="calSubModal" class="modal-wrap">
   <div class="sheet">
     <h3>Подключить календарь</h3>
-    <p>Календарь сам будет присылать напоминания, пока есть контент на проверку — ничего дополнительно проверять не нужно.</p>
+    <p>Посты появятся в вашем календаре с реальным статусом (ждёт согласования / согласовано / опубликовано). Календарь обновляет их при каждой синхронизации.</p>
     <div class="cal-sub-modal-actions">
       <a id="calSubWebcalLink" class="btn approve" href="#">Открыть в приложении календаря</a>
       <button type="button" class="btn changes" data-action="cal-sub-copy-link">Скопировать ссылку (для Google Calendar)</button>
     </div>
     <p class="cal-sub-hint">Google Calendar: «Другие календари» → «+» → «По URL» — и вставить скопированную ссылку.</p>
+    <div class="notify-row" id="notifyRow" hidden></div>
     <div class="sheet-actions">
       <button class="btn changes" data-action="close-cal-sub-modal">Закрыть</button>
     </div>
@@ -134,7 +135,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/app.js?v=25"></script>
+<script src="/app.js?v=26"></script>
 <script src="/welcome.js?v=1" defer data-audience="client"></script>
 </body>
 </html>

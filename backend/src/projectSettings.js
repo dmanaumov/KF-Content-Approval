@@ -173,7 +173,8 @@ async function getSettings(boardId, projectId) {
   const { rows } = await pool.query(
     `SELECT logo_url, social_credentials, is_ai_project, is_archived, start_date, posts_per_month,
             publish_time_msk, project_manager, strategy_prompt, planning_prompt,
-            post_prompt, image_prompt, image_references, paid_through_date, cerberus_markdown
+            post_prompt, image_prompt, image_references, paid_through_date, cerberus_markdown,
+            link_token
      FROM project_settings WHERE board_id = $1 AND project_id = $2`,
     [boardId, projectId]
   );
@@ -197,6 +198,9 @@ async function getSettings(boardId, projectId) {
     // и index.js's publishAutomationTask для жёсткого гейта после даты.
     paidThroughDate: row.paid_through_date || '',
     cerberusMarkdown: row.cerberus_markdown || '',
+    // link token кабинета — нужно reminders.js (ссылка «открыть карточку»
+    // в push/TG-уведомлении строится через /l/{token}).
+    token: row.link_token || '',
   };
 }
 

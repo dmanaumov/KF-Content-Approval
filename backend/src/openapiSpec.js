@@ -1328,6 +1328,161 @@ function buildOpenApiSpec() {
           },
         },
       },
+      '/api/bot/client-subscribe': {
+        post: {
+          summary: 'Клиент подписался на напоминания в Telegram по deep link из кабинета',
+          description:
+            'n8n-бот ловит /start с payload "kf-<token>" и зовёт сюда (не сам клиент напрямую). ' +
+            'Сохраняет chat_id → проект (board_id, project_id), дальше reminders.js кладёт в очередь ' +
+            'исходящих текст «нужно согласовать» при переходе карточки в waiting/changes.',
+          security: [{ botApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['chatId', 'payload'],
+                  properties: {
+                    chatId: { type: 'string', description: 'Telegram chat.id клиента (личный чат)' },
+                    payload: { type: 'string', example: 'kf-<link-token>', description: 'строка после "start=" в deep link; "kf-" отрезается сам' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+            400: { description: 'chatId или payload не переданы', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            404: { description: 'Токен недействителен или был отозван', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/bot/client-unsubscribe': {
+        post: {
+          summary: 'Отписать чат клиента от напоминаний в Telegram',
+          description: 'Кнопка/команда "стоп", или просто удаление записи по chat_id. Идемпотентно.',
+          security: [{ botApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['chatId'],
+                  properties: { chatId: { type: 'string' } },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+            400: { description: 'chatId не передан', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Неверный или отсутствующий X-Bot-Key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/links/{token}/notifications': {
+        get: {
+          summary: 'Конфиг раздела «Напоминания» для кабинета клиента',
+          description:
+            'Что фронтенду кабинета показывать: доступен ли Web Push (есть VAPID public key → кнопка ' +
+            '"Напоминания на телефон") и есть ли активный Telegram-бот (username → deep link на подписку).',
+          parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      vapidPublicKey: { type: 'string', description: 'публичный VAPID-ключ или пустая строка, если push не включён' },
+                      telegramUsername: { type: 'string', description: 'username активного бота или пустая строка' },
+                      telegramDeepLink: { type: 'string', description: 't.me/<username>?start=kf-<token> или пустая строка' },
+                    },
+                  },
+                },
+              },
+            },
+            401: { description: 'Ссылка недействительна или была отозвана', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            503: { description: 'База недоступна', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/links/{token}/push/public-key': {
+        get: {
+          summary: 'Публичный VAPID-ключ для подписки Web Push',
+          parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { vapidPublicKey: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/links/{token}/push/subscribe': {
+        post: {
+          summary: 'Сохранить подписку Web Push текущего устройства',
+          description:
+            'Body: { endpoint, p256dh, auth } — поля from subscription.toJSON(). Привязка к проекту через ' +
+            'token (board_id + project_id), а не к самому токену, так что ротация ссылки не обрубает подписку.',
+          parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['endpoint', 'p256dh', 'auth'],
+                  properties: {
+                    endpoint: { type: 'string' },
+                    p256dh: { type: 'string', description: 'base64url (без паддинга)' },
+                    auth: { type: 'string', description: 'base64url (без паддинга)' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+            400: { description: 'Не переданы endpoint/p256dh/auth', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            404: { description: 'Ссылка недействительна или была отозвана', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            502: { description: 'Не удалось сохранить подписку', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/api/links/{token}/push/unsubscribe': {
+        post: {
+          summary: 'Снять подписку Web Push устройства',
+          description: 'Body: { endpoint }. Удаляет только подписку, принадлежащую этому проекту. Идемпотентно.',
+          parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['endpoint'],
+                  properties: { endpoint: { type: 'string' } },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+            400: { description: 'endpoint не передан', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            404: { description: 'Ссылка недействительна или была отозвана', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            502: { description: 'Не удалось снять подписку', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
     },
   };
 }

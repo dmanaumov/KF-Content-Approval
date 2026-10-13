@@ -48,6 +48,24 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
 }
 
+// base64url ↔ Uint8Array — для VAPID public key (иногда без паддинга '=')
+// и для ключей Web Push подписки (p256dh/auth), которые браузер отдаёт как
+// ArrayBuffer'base64url. Пара коротких хелперов, ничего лишнего.
+function urlBase64ToUint8Array(base64url) {
+  const pad = base64url.replace(/-/g, '+').replace(/_/g, '/');
+  const b64 = pad + '='.repeat((4 - (pad.length % 4)) % 4);
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function base64url(arrayBuffer) {
+  let bin = '';
+  const bytes = new Uint8Array(arrayBuffer);
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
 // Russian plural: plural(1,'пост','поста','постов') → "пост" etc.
 function plural(n, one, few, many) {
   const n10 = n % 10;
@@ -1016,6 +1034,9 @@ document.querySelector('[data-action="cal-sub-subscribe"]').addEventListener('cl
   const { webcalUrl } = calendarFeedUrls();
   document.getElementById('calSubWebcalLink').href = webcalUrl;
   document.getElementById('calSubModal').classList.add('show');
+  // Раздел "Напоминания на телефон и в Telegram" подгружаем прямо перед
+  // показом — так конфиг всегда свежий, а не сохранённый с первой загрузки.
+  loadNotificationsConf().then(applyNotifyState).catch(() => {});
 });
 document.querySelector('[data-action="close-cal-sub-modal"]').addEventListener('click', () => {
   document.getElementById('calSubModal').classList.remove('show');
@@ -1033,6 +1054,163 @@ document.querySelector('[data-action="cal-sub-dismiss"]').addEventListener('clic
   try { localStorage.setItem(calSubDismissKey(), '1'); } catch (_) { /* private mode etc — banner just won't stay dismissed */ }
   document.getElementById('calSubBanner').hidden = true;
 });
+
+// --- Напоминания: Web Push + Telegram (модал "Подключить календарь" → блок
+// "Напоминания на телефон и в Telegram"). Подписка на календарь и на push/TG
+// не связаны: календарь живёт в своём календаре, а срочные напоминания о
+// новых постах на согласование приходят браузерным уведомлением и/или в TG.
+// Всё, что нужно помнить на устройстве, хранится в localStorage (какой канал
+// уже активирован), чтобы при перезагрузке кабинета не гадать по подпискам.
+function notifyStateKey() { return `kfNotifyState:${linkToken}`; }
+function loadNotifyState() {
+  try { return JSON.parse(localStorage.getItem(notifyStateKey()) || '{}') || {}; } catch (_) { return {}; }
+}
+function saveNotifyState(state) {
+  try { localStorage.setItem(notifyStateKey(), JSON.stringify(state)); } catch (_) { /* private mode — состояние не переживёт перезагрузку, это некритично */ }
+}
+
+let notificationsConf = { vapidPublicKey: '', telegramUsername: '', telegramDeepLink: '' };
+
+async function loadNotificationsConf() {
+  if (!linkToken) return;
+  try {
+    const res = await fetch(`/api/links/${encodeURIComponent(linkToken)}/notifications`);
+    if (res.ok) notificationsConf = await res.json();
+  } catch (_) { /* сеть уснула — оставляем текущие значения (канал просто не покажется) */ }
+}
+
+// Готовность Web Push на этом браузере: HTTPS/service worker + поддержка
+// PushManager. Без этого кнопку "на телефон" не показываем вовсе.
+function webPushSupported() {
+  return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && !!notificationsConf.vapidPublicKey;
+}
+
+let swRegistration = null;
+async function ensureSW() {
+  if (swRegistration) return swRegistration;
+  if (!('serviceWorker' in navigator)) return null;
+  // scope /l/ — воркер лежит в /sw.js (корень). Регистрируем с той же
+  // области видимости, что и кабинет, чтобы click→navigate работал.
+  swRegistration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  return swRegistration;
+}
+
+function currentPushSubscription() {
+  if (!swRegistration || !swRegistration.pushManager) return Promise.resolve(null);
+  return swRegistration.pushManager.getSubscription();
+}
+
+// Собрать browser-подписку, отдать на сервер, запомнить состояние.
+async function enableWebPush() {
+  if (!webPushSupported()) throw new Error('Этот браузер не поддерживает Web Push.');
+  if (Notification.permission === 'denied') throw new Error('Уведомления в браузере заблокированы — разрешите их в настройках сайта.');
+  const sw = await ensureSW();
+  if (!sw) throw new Error('Сервис-воркер недоступен.');
+  if (Notification.permission !== 'granted') {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('Вы не разрешили уведомления — напоминания в браузере не придут.');
+  }
+  const reg = await sw.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(notificationsConf.vapidPublicKey),
+  });
+  const payload = {
+    endpoint: reg.endpoint,
+    p256dh: base64url(reg.getKey('p256dh')),
+    auth: base64url(reg.getKey('auth')),
+  };
+  const res = await fetch(`/api/links/${encodeURIComponent(linkToken)}/push/subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let msg = 'Не удалось активировать (повторите попытку).';
+    try { msg = (await res.json()).message || msg; } catch (_) {}
+    // Если сервер не принял подписку (токен отозван / дубль) — отписаться
+    // на клиенте, иначе следующий toggle застрянет на мёртвой подписке.
+    if (res.status === 404) {
+      try { await reg.unsubscribe(); } catch (_) {}
+    }
+    throw new Error(msg);
+  }
+  return reg;
+}
+
+async function disableWebPush() {
+  const sub = await currentPushSubscription();
+  if (sub) {
+    const endpoint = sub.endpoint;
+    try { await fetch(`/api/links/${encodeURIComponent(linkToken)}/push/unsubscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint }),
+    }); } catch (_) { /* сервер может быть недоступен — локальную отписку всё равно сделаем */ }
+    await sub.unsubscribe();
+  }
+}
+
+// Включаем/выключаем все заявленные каналы; state.push/tg — булевы флаги
+// того, какой канал клиент хочет. Перерисовываем блок notifyRow.
+async function applyNotifyState() {
+  const state = loadNotifyState();
+  const row = document.getElementById('notifyRow');
+  if (!row) return;
+  if (!linkToken) { row.innerHTML = ''; return; }
+  if (!webPushSupported() && !notificationsConf.telegramDeepLink) { row.innerHTML = ''; return; }
+
+  const pushOn = state.push === true && webPushSupported();
+  const tgOn = state.tg === true && !!notificationsConf.telegramDeepLink;
+  let html = '<div class="notify-title">Напоминания на телефон и в Telegram</div><div class="notify-channels">';
+  if (webPushSupported()) {
+    html += `
+      <button type="button" class="notify-chip ${pushOn ? 'on' : ''}" data-channel="push">
+        ${pushOn ? '🔔 Телефон включён' : '🔕 Напоминания на телефон'}
+      </button>`;
+  }
+  if (notificationsConf.telegramDeepLink) {
+    // Через deep link: клиент вписывает бота в TG — статус приходит только если
+    // n8n реально вызвал /api/bot/client-subscribe. Пока героями не подтверждено,
+    // показываем "Подключено в Telegram" как намерение (ссылка на бота всегда
+    // в чипе: второй раз открыть диалог / подписать другой чат).
+    html += `
+      <a class="notify-chip ${tgOn ? 'on' : ''}" href="${esc(notificationsConf.telegramDeepLink)}" target="_blank" rel="noopener" data-channel="tg">
+        ${tgOn ? '✈️ Telegram: подключено' : '✈️ Напоминания в Telegram'}
+      </a>`;
+  }
+  html += '</div>';
+  row.innerHTML = html;
+  row.hidden = false;
+
+  row.querySelectorAll('[data-channel]').forEach((chip) => {
+    chip.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const channel = chip.dataset.channel;
+      const wasOn = channel === 'push' ? pushOn : tgOn;
+      if (channel === 'push') {
+        try {
+          if (wasOn) {
+            await disableWebPush();
+            state.push = false;
+          } else {
+            await enableWebPush();
+            state.push = true;
+          }
+          saveNotifyState(state);
+          toast(state.push ? 'Напоминания в браузере включены' : 'Напоминания в браузере выключены');
+        } catch (err) {
+          toast(err.message || 'Не удалось изменить напоминания — попробуйте ещё раз.');
+        }
+      } else {
+        // TG — это переход по deep link (внешнее приложение). Сам флаг мы не
+        // меняем: реальное подтверждение приходит от бота через endpoint. Здесь
+        // просто открываем ссылку; повторный клик по чипу тоже открывает её.
+        if (notificationsConf.telegramDeepLink) window.open(notificationsConf.telegramDeepLink, '_blank', 'noopener');
+      }
+      applyNotifyState().catch(() => {});
+    });
+  });
+}
 
 document.getElementById('mainTabs').addEventListener('click', (e) => {
   const btn = e.target.closest('.main-tab');
@@ -1509,6 +1687,13 @@ async function init() {
     }
     applyBranding(name, logoUrl);
     loadTasks();
+    // Service Worker регистрируем заранее (страница может быть открыта до
+    // первого клика в "Напоминания") — тогда push приходит сразу после
+    // подписки, без паузы на первую регистрацию воркера. Конфиг каналов
+    // тоже тянем заранее: applyNotifyState (при открытии модала) увидит его
+    // загруженным и не станет мигать заглушками.
+    ensureSW().catch(() => {});
+    loadNotificationsConf().catch(() => {});
     return;
   }
   if (!boardId) {
