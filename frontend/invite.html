@@ -8,18 +8,34 @@
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <!-- Та же тройка стилей, что у /team и /tool — реальные field-label/
-     field-input/fp-box/btn вместо придуманных .inv-* классов (см. правку
-     2026-10-13 после жалобы "почему другой интерфейс"). -->
+     field-input/fp-box/btn/card вместо придуманных .inv-* классов. Шаги
+     ниже (выбор режима → анкета для ИИ → регистрация) переносят
+     PlanChoice.dc.html/Survey.dc.html из одобренного design-канвас, но на
+     реальных токенах (см. правку 2026-10-13). -->
 <link rel="stylesheet" href="/app.css?v=22">
 <link rel="stylesheet" href="/projects.css?v=15">
 <link rel="stylesheet" href="/team.css?v=34">
 <style>
-  .inv-wrap{max-width:420px;margin:0 auto}
-  .inv-mascot{width:48px;height:48px;border-radius:14px;background:#FFE6E4;display:flex;align-items:center;justify-content:center;flex:none;overflow:hidden}
-  .inv-mascot img{width:88%;height:88%;object-fit:contain}
-  .inv-mode{display:inline-block;margin-bottom:10px}
-  .inv-hint{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4}
+  .inv-wrap{max-width:460px;margin:0 auto}
   .inv-state{text-align:center;padding:60px 10px;color:var(--muted);font-size:14px}
+  .inv-back{background:none;border:0;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;padding:6px 0;margin:0 0 10px}
+
+  /* Шаг 1 — PlanChoice: "Как будете использовать инструмент?" */
+  .pc-lead{font-size:13px;color:var(--muted);margin:0 0 18px;line-height:1.5}
+  .pc-grid{display:grid;grid-template-columns:1fr;gap:14px}
+  @media(min-width:480px){.pc-grid{grid-template-columns:1fr 1fr}}
+  .pc-card{display:block;width:100%;text-align:left;cursor:pointer;padding:20px;font:inherit;color:inherit}
+  .pc-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:14px;overflow:hidden}
+  .pc-icon img{width:80%;height:80%;object-fit:contain}
+  .pc-eyebrow{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin-bottom:5px;display:flex;align-items:center;gap:6px}
+  .pc-card h3{font-size:16px;font-weight:800;margin:0 0 6px}
+  .pc-card p{font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 14px}
+  .pc-go{font-weight:800;font-size:13px;color:var(--accent)}
+
+  /* Шаг 2/3 — анкета (ai) и форма регистрации */
+  .inv-mode-badge{margin-bottom:10px}
+  .inv-survey-hint{font-size:11px;color:var(--muted);margin:14px 0 2px;line-height:1.4}
+  .inv-divider{border:0;border-top:1px solid var(--line);margin:18px 0}
 </style>
 </head>
 <body>
@@ -33,45 +49,120 @@
 
   <div id="invState" class="inv-state">Загрузка…</div>
 
-  <div id="invBox" class="fp-box" hidden>
-    <span class="inv-mode status" id="invModeLabel">Инструмент</span>
-    <p class="fp-intro" id="invIntro" style="font-size:14px;color:var(--ink);font-weight:800;margin-bottom:4px"></p>
-    <p class="fp-intro" id="invSub"></p>
+  <!-- Шаг 1: выбор режима (PlanChoice.dc.html) -->
+  <div id="choiceStep" hidden>
+    <div class="pc-lead">Вас пригласили в Контент Ферму. Как будете использовать инструмент? Это можно изменить позже, обратившись к нам.</div>
+    <div class="pc-grid">
+      <button type="button" class="card pc-card" data-mode="tool">
+        <div class="pc-icon" style="background:#FFE6E4"><img src="/mascot.png" alt=""></div>
+        <div class="pc-eyebrow">Инструмент</div>
+        <h3>СММ-инструмент</h3>
+        <p>Кабинет согласования и ведения контента + туториал по типовым задачам СММ-щика. Без ИИ-генерации.</p>
+        <span class="pc-go">Выбрать →</span>
+      </button>
+      <button type="button" class="card pc-card" data-mode="ai">
+        <div class="pc-icon" style="background:#E8F0FE"><img src="/ai-avatar.png" alt=""></div>
+        <div class="pc-eyebrow">ИИ-ассистент <span class="status ai" style="padding:2px 8px;font-size:10px">новое</span></div>
+        <h3>ИИ СММ-ассистент</h3>
+        <p>Тот же инструмент + автогенерация контента под бренд — после короткой анкеты о проекте.</p>
+        <span class="pc-go">Выбрать →</span>
+      </button>
+    </div>
+  </div>
 
-    <label class="field-label" for="invCode">Код из приглашения</label>
-    <input id="invCode" class="field-input" inputmode="numeric" maxlength="6" placeholder="6 цифр" autocomplete="one-time-code">
+  <!-- Шаг 2: анкета + регистрация -->
+  <div id="formStep" hidden>
+    <button type="button" id="backToChoice" class="inv-back">← Назад к выбору режима</button>
+    <div class="fp-box">
+      <span class="status inv-mode-badge" id="invModeLabel">Инструмент</span>
+      <p class="fp-intro" style="font-size:14px;color:var(--ink);font-weight:800;margin-bottom:4px">Создадим ваш проект</p>
+      <p class="fp-intro" id="invSub"></p>
 
-    <label class="field-label" for="invProjectName">Название проекта</label>
-    <input id="invProjectName" class="field-input" type="text" placeholder="например, «Мой бренд»">
+      <label class="field-label" for="invCode">Код из приглашения</label>
+      <input id="invCode" class="field-input" inputmode="numeric" maxlength="6" placeholder="6 цифр" autocomplete="one-time-code">
 
-    <label class="field-label" for="invLogin">Email или телефон</label>
-    <input id="invLogin" class="field-input" type="text" autocomplete="username" placeholder="для входа в кабинет">
+      <label class="field-label" for="invProjectName">Название проекта</label>
+      <input id="invProjectName" class="field-input" type="text" placeholder="например, «Мой бренд»">
 
-    <label class="field-label" for="invPassword">Пароль</label>
-    <input id="invPassword" class="field-input" type="password" autocomplete="new-password" placeholder="не короче 8 символов">
-    <div class="inv-hint">Этот пароль придумываете вы — он нужен для последующих входов, код из приглашения действует только один раз.</div>
+      <div id="surveyFields" hidden>
+        <hr class="inv-divider">
+        <p class="fp-intro" style="font-weight:800;color:var(--ink)">Анкета проекта — для автогенерации контента под бренд</p>
+        <label class="field-label" for="svBusiness">Чем занимается бизнес и что именно вы продаёте?</label>
+        <textarea id="svBusiness" class="field-input" style="min-height:64px;resize:vertical;font:inherit"></textarea>
+        <label class="field-label" for="svAudience">Кто ваш клиент? А кто точно не ваш клиент?</label>
+        <textarea id="svAudience" class="field-input" style="min-height:64px;resize:vertical;font:inherit"></textarea>
+        <label class="field-label" for="svDifferentiator">Почему выбирают именно вас, а не конкурента?</label>
+        <textarea id="svDifferentiator" class="field-input" style="min-height:64px;resize:vertical;font:inherit"></textarea>
+        <label class="field-label" for="svForbidden">Что категорически нельзя — темы, шутки, упоминания?</label>
+        <textarea id="svForbidden" class="field-input" style="min-height:52px;resize:vertical;font:inherit"></textarea>
+        <label class="field-label" for="svGoal">Какая сейчас главная задача контента?</label>
+        <select id="svGoal" class="field-input">
+          <option value="">— выберите —</option>
+          <option value="awareness">Узнаваемость</option>
+          <option value="trust">Доверие и экспертность</option>
+          <option value="leads">Заявки и продажи</option>
+          <option value="unsure">Пока не определились</option>
+        </select>
+        <label class="field-label" for="svChannels">Где публикуем и как часто?</label>
+        <input id="svChannels" class="field-input" type="text" placeholder="соцсети + частота">
+        <div class="inv-survey-hint">Дальше — необязательно, но поможет ИИ точнее попадать в ваш тон:</div>
+        <label class="field-label" for="svTone">2–3 примера постов/каналов, которые нравятся по подаче</label>
+        <input id="svTone" class="field-input" type="text" placeholder="ссылки или названия">
+        <label class="field-label" for="svCta">Куда должен вести пост — сайт, директ, заявка, звонок?</label>
+        <input id="svCta" class="field-input" type="text" placeholder="например: директ">
+        <label class="field-label" for="svRaw">Кейсы, цифры, частые вопросы клиентов</label>
+        <textarea id="svRaw" class="field-input" style="min-height:52px;resize:vertical;font:inherit"></textarea>
+        <hr class="inv-divider">
+      </div>
 
-    <label class="field-label" for="invName">Как вас зовут (необязательно)</label>
-    <input id="invName" class="field-input" type="text" placeholder="имя">
+      <label class="field-label" for="invLogin">Email или телефон</label>
+      <input id="invLogin" class="field-input" type="text" autocomplete="username" placeholder="для входа в кабинет">
 
-    <button id="invSubmit" class="btn approve fp-submit">Создать проект</button>
-    <div id="invError" class="error-box" style="margin-top:14px" hidden></div>
+      <label class="field-label" for="invPassword">Пароль</label>
+      <input id="invPassword" class="field-input" type="password" autocomplete="new-password" placeholder="не короче 8 символов">
+      <div class="inv-survey-hint">Этот пароль придумываете вы — он нужен для последующих входов, код из приглашения действует только один раз.</div>
+
+      <label class="field-label" for="invName">Как вас зовут (необязательно)</label>
+      <input id="invName" class="field-input" type="text" placeholder="имя">
+
+      <button id="invSubmit" class="btn approve fp-submit">Создать проект</button>
+      <div id="invError" class="error-box" style="margin-top:14px" hidden></div>
+    </div>
   </div>
 </div>
 <script>
 (function () {
   var token = location.pathname.split('/').filter(Boolean).pop();
   var stateEl = document.getElementById('invState');
-  var boxEl = document.getElementById('invBox');
+  var choiceEl = document.getElementById('choiceStep');
+  var formEl = document.getElementById('formStep');
   var errEl = document.getElementById('invError');
   var modeLabelEl = document.getElementById('invModeLabel');
-  var introEl = document.getElementById('invIntro');
   var subEl = document.getElementById('invSub');
   var submitBtn = document.getElementById('invSubmit');
+  var selectedMode = 'tool';
+  var defaultMode = 'tool';
 
   function showError(msg) {
     errEl.textContent = msg;
     errEl.hidden = false;
+  }
+
+  function showForm(mode) {
+    selectedMode = mode;
+    choiceEl.hidden = true;
+    formEl.hidden = false;
+    document.getElementById('surveyFields').hidden = mode !== 'ai';
+    modeLabelEl.classList.remove('waiting', 'ai');
+    if (mode === 'ai') {
+      modeLabelEl.textContent = 'ИИ СММ-ассистент';
+      modeLabelEl.classList.add('ai');
+      subEl.textContent = 'Введите код из приглашения, заполните анкету ниже и придумайте пароль для входа.';
+    } else {
+      modeLabelEl.textContent = 'СММ-инструмент';
+      modeLabelEl.classList.add('waiting');
+      subEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — после этого сразу попадёте в свой кабинет.';
+    }
   }
 
   fetch('/api/invite/' + encodeURIComponent(token))
@@ -85,20 +176,19 @@
         return;
       }
       stateEl.hidden = true;
-      boxEl.hidden = false;
-      if (res.data.mode === 'ai') {
-        modeLabelEl.textContent = 'ИИ СММ-ассистент';
-        modeLabelEl.classList.add('ai');
-        introEl.textContent = 'Создадим ваш проект';
-        subEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — проект создастся сразу, донастройка анкеты будет доступна в кабинете.';
-      } else {
-        modeLabelEl.textContent = 'СММ-инструмент';
-        modeLabelEl.classList.add('waiting');
-        introEl.textContent = 'Создадим ваш проект';
-        subEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — после этого сразу попадёте в свой кабинет.';
-      }
+      defaultMode = res.data.mode === 'ai' ? 'ai' : 'tool';
+      choiceEl.hidden = false;
     })
     .catch(function () { stateEl.textContent = 'Не получилось проверить ссылку — проверьте подключение и обновите страницу.'; });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.pc-card'), function (btn) {
+    btn.addEventListener('click', function () { showForm(btn.getAttribute('data-mode')); });
+  });
+
+  document.getElementById('backToChoice').addEventListener('click', function () {
+    formEl.hidden = true;
+    choiceEl.hidden = false;
+  });
 
   submitBtn.addEventListener('click', function () {
     errEl.hidden = true;
@@ -111,12 +201,23 @@
       showError('Заполните код, email/телефон и пароль.');
       return;
     }
+    var survey = selectedMode === 'ai' ? {
+      business: document.getElementById('svBusiness').value.trim(),
+      audience: document.getElementById('svAudience').value.trim(),
+      differentiator: document.getElementById('svDifferentiator').value.trim(),
+      forbidden: document.getElementById('svForbidden').value.trim(),
+      goal: document.getElementById('svGoal').value,
+      channels: document.getElementById('svChannels').value.trim(),
+      toneExamples: document.getElementById('svTone').value.trim(),
+      cta: document.getElementById('svCta').value.trim(),
+      rawMaterial: document.getElementById('svRaw').value.trim(),
+    } : undefined;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Создаём…';
     fetch('/api/invite/' + encodeURIComponent(token) + '/redeem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code, login: login, password: password, displayName: displayName, projectName: projectName }),
+      body: JSON.stringify({ code: code, login: login, password: password, displayName: displayName, projectName: projectName, mode: selectedMode, survey: survey }),
     })
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (res) {

@@ -16,31 +16,50 @@ function newLinkToken() {
   return crypto.randomBytes(18).toString('base64url');
 }
 
-async function createProject(accountId, name) {
+const PROJECT_COLUMNS = 'id, account_id, name, link_token, created_at, is_archived, mode, survey';
+
+function mapProjectRow(r) {
+  return {
+    id: String(r.id),
+    accountId: String(r.account_id),
+    name: r.name,
+    linkToken: r.link_token,
+    createdAt: r.created_at,
+    isArchived: r.is_archived,
+    mode: r.mode,
+    survey: r.survey || {},
+  };
+}
+
+// mode/survey — выбор "Как будете использовать инструмент?" (PlanChoice) и,
+// для режима 'ai', ответы на анкету (Survey) — оба собираются на /invite на
+// СТОРОНЕ приглашённого при регистрации, см. POST /api/invite/:token/redeem.
+async function createProject(accountId, name, mode, survey) {
+  const safeMode = mode === 'ai' ? 'ai' : 'tool';
   const { rows } = await db.requirePool().query(
-    `INSERT INTO tool_projects (account_id, name, link_token) VALUES ($1, $2, $3)
-     RETURNING id, account_id, name, link_token, created_at, is_archived`,
-    [accountId, String(name || '').trim() || 'Проект', newLinkToken()]
+    `INSERT INTO tool_projects (account_id, name, link_token, mode, survey) VALUES ($1, $2, $3, $4, $5)
+     RETURNING ${PROJECT_COLUMNS}`,
+    [accountId, String(name || '').trim() || 'Проект', newLinkToken(), safeMode, JSON.stringify(survey || {})]
   );
-  return rows[0];
+  return mapProjectRow(rows[0]);
 }
 
 async function listProjectsForAccount(accountId) {
   const { rows } = await db.requirePool().query(
-    `SELECT id, account_id, name, link_token, created_at, is_archived
+    `SELECT ${PROJECT_COLUMNS}
      FROM tool_projects WHERE account_id = $1 ORDER BY created_at ASC`,
     [accountId]
   );
-  return rows;
+  return rows.map(mapProjectRow);
 }
 
 async function getProjectForAccount(accountId, projectId) {
   const { rows } = await db.requirePool().query(
-    `SELECT id, account_id, name, link_token, created_at, is_archived
+    `SELECT ${PROJECT_COLUMNS}
      FROM tool_projects WHERE account_id = $1 AND id = $2`,
     [accountId, projectId]
   );
-  return rows[0] || null;
+  return rows[0] ? mapProjectRow(rows[0]) : null;
 }
 
 // Public read — used by the (future) client-approval portal for this
@@ -48,11 +67,11 @@ async function getProjectForAccount(accountId, projectId) {
 // separate, not-yet-built piece — see project notes).
 async function getProjectByLinkToken(linkToken) {
   const { rows } = await db.requirePool().query(
-    `SELECT id, account_id, name, link_token, created_at, is_archived
+    `SELECT ${PROJECT_COLUMNS}
      FROM tool_projects WHERE link_token = $1`,
     [linkToken]
   );
-  return rows[0] || null;
+  return rows[0] ? mapProjectRow(rows[0]) : null;
 }
 
 function mapTaskRow(r) {

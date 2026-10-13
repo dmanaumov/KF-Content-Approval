@@ -6492,18 +6492,37 @@ app.get('/api/invite/:token', async (req, res) => {
   }
 });
 
+// Анкета режима "ИИ СММ-ассистент" (Survey.dc.html) — те же ключи/порядок,
+// что в мокапе; обрезаем на всякий случай длину каждого поля, это
+// свободный текст с клиентской стороны регистрации (до логина).
+const SURVEY_FIELDS = ['business', 'audience', 'differentiator', 'forbidden', 'goal', 'channels', 'toneExamples', 'cta', 'rawMaterial'];
+function sanitizeSurvey(input) {
+  const out = {};
+  if (!input || typeof input !== 'object') return out;
+  for (const key of SURVEY_FIELDS) {
+    const v = input[key];
+    if (typeof v === 'string' && v.trim()) out[key] = v.trim().slice(0, 2000);
+  }
+  return out;
+}
+
 // POST /api/invite/:token/redeem — body: { code, login, password,
-// displayName, projectName }. One-shot: creates the tool_accounts row, a
-// first tool_projects row, marks the invite used, and logs the new account
-// straight in (same cookie POST /api/tool/login would set).
+// displayName, projectName, mode, survey }. mode/survey — выбор экрана
+// PlanChoice и, для 'ai', ответы анкеты Survey — выбирает САМ приглашённый
+// на /invite, а не админ при выпуске ссылки (invite.mode там — только
+// дефолт/подсказка, какую карточку подсветить). One-shot: creates the
+// tool_accounts row, a first tool_projects row, marks the invite used, and
+// logs the new account straight in (same cookie POST /api/tool/login
+// would set).
 app.post('/api/invite/:token/redeem', async (req, res) => {
-  const { code, login, password, displayName, projectName } = req.body || {};
+  const { code, login, password, displayName, projectName, mode, survey } = req.body || {};
   if (!code || !login || !password) {
     return res.status(400).json({ error: 'missing_fields', message: 'Код, логин и пароль обязательны.' });
   }
   if (String(password).length < 8) {
     return res.status(400).json({ error: 'weak_password', message: 'Пароль должен быть не короче 8 символов.' });
   }
+  const chosenMode = mode === 'ai' ? 'ai' : 'tool';
   try {
     const invite = await toolInvites.getInviteByToken(req.params.token);
     if (!invite) return res.status(404).json({ error: 'invite_not_found' });
@@ -6513,7 +6532,7 @@ app.post('/api/invite/:token/redeem', async (req, res) => {
     const existing = await toolAuth.findByLogin(login);
     if (existing) return res.status(409).json({ error: 'login_taken', message: 'Этот email/телефон уже зарегистрирован.' });
     const account = await toolAuth.createAccount({ login, password, displayName });
-    const project = await toolProjects.createProject(account.id, projectName);
+    const project = await toolProjects.createProject(account.id, projectName, chosenMode, chosenMode === 'ai' ? sanitizeSurvey(survey) : {});
     await toolInvites.markInviteUsed(invite.id, account.id);
     const sessionId = await toolAuth.createSession(account);
     toolAuth.setSessionCookie(res, sessionId);

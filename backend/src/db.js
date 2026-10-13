@@ -679,6 +679,20 @@ async function initSchema() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS tool_projects_link_token_idx ON tool_projects (link_token);
   `);
+  // 2026-10-13 — режим проекта теперь выбирает САМ приглашённый на экране
+  // "Как будете использовать инструмент?" (PlanChoice) при регистрации, а
+  // не админ при выпуске ссылки (tool_invites.mode остаётся только
+  // подсказкой/дефолтом для этого экрана). survey — ответы на анкету из
+  // режима "ИИ СММ-ассистент" (см. Survey.dc.html в design-канвасе);
+  // пустой объект для режима "tool" или пока анкета не пройдена.
+  await pool.query(`
+    ALTER TABLE tool_projects
+      ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'tool' CHECK (mode IN ('tool', 'ai'));
+  `);
+  await pool.query(`
+    ALTER TABLE tool_projects
+      ADD COLUMN IF NOT EXISTS survey jsonb NOT NULL DEFAULT '{}'::jsonb;
+  `);
   // tool_tasks — карточки self-serve проекта, своя таблица, НЕ Mattermost
   // board. Форма полей зеркалит то, что taskMapper.js отдаёт для
   // Mattermost-карточек (status/caption/media/publishDate/title), чтобы
