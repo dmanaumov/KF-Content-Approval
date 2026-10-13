@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>КФ — Приглашения</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="stylesheet" href="/app.css?v=20">
+<style>
+  .iv-wrap{max-width:640px;margin:0 auto;padding:22px 16px 60px}
+  .iv-head{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+  .iv-head img{width:34px;height:34px;border-radius:9px}
+  .iv-head strong{font-size:16px}
+  .iv-row{display:flex;gap:10px;margin-bottom:18px}
+  .iv-row select{border:1px solid var(--line);border-radius:12px;padding:12px 13px;font-size:14px;background:var(--bg);color:var(--ink)}
+  .iv-result{background:#E1F3E5;border-radius:14px;padding:16px;margin-bottom:20px;font-size:14px}
+  .iv-result code{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;word-break:break-all}
+  .iv-result .iv-code{font-size:22px;font-weight:800;letter-spacing:.06em}
+  .iv-result p{margin:6px 0}
+  .iv-copy{font-size:12px;border:0;background:var(--accent);color:#fff;border-radius:8px;padding:5px 9px;margin-left:6px;cursor:pointer}
+  table.iv-table{width:100%;border-collapse:collapse;font-size:13px}
+  table.iv-table th,table.iv-table td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+  .iv-badge{font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px}
+  .iv-badge.pending{background:#FFF3C9;color:#755600}
+  .iv-badge.used{background:#E1F3E5;color:#216A39}
+  @media (prefers-color-scheme: dark){
+    .iv-result{background:#213626}
+    .iv-result code{background:#12181A}
+  }
+</style>
+</head>
+<body>
+<div class="page iv-wrap">
+  <div class="iv-head"><img src="/kf-logo.png" alt="КФ"><strong>Приглашения — самостоятельное создание проекта</strong></div>
+  <p style="font-size:13px;color:var(--muted);margin:0 0 16px">Ссылку отправьте получателю как угодно, а код — ОТДЕЛЬНЫМ сообщением (например, в WhatsApp), не в одном тексте со ссылкой.</p>
+
+  <div class="iv-row">
+    <select id="modeSelect">
+      <option value="tool">Просто инструмент</option>
+      <option value="ai">С ИИ (пока не обслуживается)</option>
+    </select>
+    <button id="createBtn" class="btn approve">Создать ссылку</button>
+  </div>
+
+  <div id="result" hidden class="iv-result"></div>
+
+  <table class="iv-table">
+    <thead><tr><th>Создано</th><th>Режим</th><th>Статус</th></tr></thead>
+    <tbody id="inviteRows"></tbody>
+  </table>
+</div>
+<script>
+(function () {
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmtDate(iso) {
+    try { return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+    catch (e) { return iso; }
+  }
+
+  function loadList() {
+    fetch('/api/tool-invites').then(function (r) { return r.json(); }).then(function (data) {
+      var rows = (data.invites || []).map(function (inv) {
+        var statusHtml = inv.used_at
+          ? '<span class="iv-badge used">Использовано' + (inv.used_by_login ? ' — ' + esc(inv.used_by_login) : '') + '</span>'
+          : '<span class="iv-badge pending">Ожидает</span>';
+        return '<tr><td>' + fmtDate(inv.created_at) + '</td><td>' + (inv.mode === 'ai' ? 'С ИИ' : 'Инструмент') + '</td><td>' + statusHtml + '</td></tr>';
+      });
+      document.getElementById('inviteRows').innerHTML = rows.join('') || '<tr><td colspan="3" style="color:var(--muted)">Пока нет приглашений</td></tr>';
+    });
+  }
+
+  function copy(text, btn) {
+    navigator.clipboard.writeText(text).then(function () {
+      var old = btn.textContent;
+      btn.textContent = 'Скопировано';
+      setTimeout(function () { btn.textContent = old; }, 1400);
+    });
+  }
+
+  document.getElementById('createBtn').addEventListener('click', function () {
+    var mode = document.getElementById('modeSelect').value;
+    fetch('/api/tool-invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: mode }),
+    })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        var resultEl = document.getElementById('result');
+        if (!res.ok) {
+          resultEl.hidden = false;
+          resultEl.style.background = '#FBE0E0';
+          resultEl.textContent = (res.data && res.data.message) || 'Не удалось создать приглашение.';
+          return;
+        }
+        resultEl.hidden = false;
+        resultEl.style.background = '';
+        resultEl.innerHTML =
+          '<p><strong>Ссылка</strong> (отправьте как угодно):<br><code id="ivUrl">' + esc(res.data.inviteUrl) + '</code><button class="iv-copy" id="copyUrl">Копировать</button></p>' +
+          '<p><strong>Код</strong> (отправьте ОТДЕЛЬНЫМ сообщением, другим каналом):<br><span class="iv-code" id="ivCode">' + esc(res.data.code) + '</span><button class="iv-copy" id="copyCode">Копировать</button></p>' +
+          '<p style="color:var(--muted);font-size:12px">Код показывается только сейчас — если потерять, нужно будет создать новое приглашение.</p>';
+        document.getElementById('copyUrl').addEventListener('click', function () { copy(res.data.inviteUrl, this); });
+        document.getElementById('copyCode').addEventListener('click', function () { copy(res.data.code, this); });
+        loadList();
+      });
+  });
+
+  loadList();
+})();
+</script>
+</body>
+</html>

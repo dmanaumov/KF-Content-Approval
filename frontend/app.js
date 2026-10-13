@@ -451,6 +451,7 @@ const PROGRESS_STAGES = [
   { key: 'published', label: 'Публ.' },
 ];
 const PROGRESS_STATUS_INDEX = { waiting: 2, changes: 3, approved: 4, published: 5 };
+const PROGRESS_LAST_INDEX = PROGRESS_STAGES.length - 1;
 function progressStages(task) {
   const current = PROGRESS_STATUS_INDEX[task.status];
   if (current == null) return null; // неизвестный/внутренний статус — индикатор не показываем
@@ -460,16 +461,24 @@ function progressStages(task) {
     let state;
     if (i === 0) state = textDone ? 'done' : 'upcoming';
     else if (i === 1) state = visualDone ? 'done' : 'upcoming';
-    else state = i < current ? 'done' : i === current ? 'active' : 'upcoming';
+    else if (i < current) state = 'done';
+    // Последний этап ("Публ.") при current===i — это УЖЕ готово, а не "в
+    // процессе": раньше тут всегда было 'active', из-за чего опубликованный
+    // пост показывал пульсирующую "горящую" точку на последнем шаге, как
+    // будто он всё ещё требует внимания (баг, замечен по скриншоту).
+    else if (i === current) state = i === PROGRESS_LAST_INDEX ? 'done' : 'active';
+    else state = 'upcoming';
     return { key: s.key, label: s.label, state };
   });
 }
+// Тонкая сегментированная полоска прямо по верхнему краю карточки (едва
+// заметная — без точек/подписей, см. правку 2026-10-13 по просьбе "давай
+// прилепим к краю карточки и сделаем это едва заметно"). Подпись этапа
+// осталась в title (всплывающая подсказка при наведении), не на экране.
 function progressHtml(task) {
   const stages = progressStages(task);
   if (!stages) return '';
-  const steps = stages
-    .map((s) => `<span class="cp-step ${s.state}"><span class="cp-dot"></span><span class="cp-label">${esc(s.label)}</span></span>`)
-    .join('');
+  const steps = stages.map((s) => `<span class="cp-step ${s.state}" title="${esc(s.label)}"></span>`).join('');
   return `<div class="card-progress">${steps}</div>`;
 }
 

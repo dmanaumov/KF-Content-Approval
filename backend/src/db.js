@@ -608,6 +608,113 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS client_tg_subs_project_idx
       ON client_tg_subs (board_id, project_id);
   `);
+  // --- Self-serve "tool only" SaaS accounts (added for the invite-link
+  // project-creation feature) ------------------------------------------------
+  // Полностью отдельно от Mattermost и от project_settings/project_access
+  // выше — по прямому запросу пользователя: "создаем учетку и ведем ее в
+  // базе данных! В маттермост его не впускаем!" + "отдельное хранилище в
+  // своей БД, не трогая Mattermost вообще" (режим "просто инструмент", без
+  // ИИ — автогенерация промтов для режима "с ИИ" пока отложена и эти
+  // таблицы её не обслуживают). Вход — email/телефон + пароль, которые
+  // человек сам придумывает при регистрации по ссылке-приглашению, НЕ
+  // Mattermost-логин — см. toolAuth.js.
+  //
+  // tool_accounts — сам аккаунт. login хранит email ИЛИ телефон ровно как
+  // его ввёл человек; уникальность — без учёта регистра (index ниже).
+  // password_hash — scrypt (secretHash.js), не bcrypt, чтобы не тащить
+  // нативную npm-зависимость в этот и так уже pg-only backend.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tool_accounts (
+      id bigserial PRIMARY KEY,
+      login text NOT NULL,
+      password_hash text NOT NULL,
+      display_name text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      is_disabled boolean NOT NULL DEFAULT false
+    );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS tool_accounts_login_idx
+      ON tool_accounts (lower(login));
+  `);
+  // tool_invites — ссылка-приглашение, выпускается из внутренней страницы
+  // проектов (POST /api/tool-invites, staffAuth). token — часть URL
+  // (/invite/:token), code_hash — отдельный одноразовый код, который админ
+  // передаёт получателю СВОИМ каналом, не внутри самой ссылки — по прямому
+  // запросу: "нужен отдельный пароль/код для человека по ссылке". mode
+  // резервирует будущий выбор "просто инструмент"/"с ИИ" (см. design-canvas
+  // PlanChoice); сегодня реально обслуживается только 'tool'.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tool_invites (
+      id bigserial PRIMARY KEY,
+      token text NOT NULL,
+      code_hash text NOT NULL,
+      mode text NOT NULL DEFAULT 'tool' CHECK (mode IN ('tool', 'ai')),
+      created_by text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      used_at timestamptz,
+      used_by_account_id bigint REFERENCES tool_accounts(id)
+    );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS tool_invites_token_idx ON tool_invites (token);
+  `);
+  // tool_projects — проект, созданный self-serve аккаунтом при погашении
+  // приглашения (см. POST /api/invite/:token/redeem). link_token — его
+  // собственная (не связанная с Mattermost project_settings.link_token)
+  // ссылка на будущий клиентский портал согласования этого проекта.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tool_projects (
+      id bigserial PRIMARY KEY,
+      account_id bigint NOT NULL REFERENCES tool_accounts(id),
+      name text NOT NULL,
+      link_token text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      is_archived boolean NOT NULL DEFAULT false
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS tool_projects_account_idx ON tool_projects (account_id);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS tool_projects_link_token_idx ON tool_projects (link_token);
+  `);
+  // tool_tasks — карточки self-serve проекта, своя таблица, НЕ Mattermost
+  // board. Форма полей зеркалит то, что taskMapper.js отдаёт для
+  // Mattermost-карточек (status/caption/media/publishDate/title), чтобы
+  // существующую вёрстку карточки (cardHtml()/progressHtml() в app.js,
+  // team.js) можно было переиспользовать почти как есть, просто с другим
+  // источником данных — см. toolProjects.js.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tool_tasks (
+      id bigserial PRIMARY KEY,
+      project_id bigint NOT NULL REFERENCES tool_projects(id),
+      title text NOT NULL DEFAULT '',
+      caption text NOT NULL DEFAULT '',
+      media jsonb NOT NULL DEFAULT '[]'::jsonb,
+      status text NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'changes', 'approved', 'published')),
+      publish_date text NOT NULL DEFAULT '',
+      keywords text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS tool_tasks_project_idx ON tool_tasks (project_id);
+  `);
+  // tool_sessions — сессии нового кабинета, тот же принцип что team_sessions
+  // выше (пережить редеплой без разлогина), но полностью свой cookie/
+  // таблица (toolAuth.js) — НЕ смешивается с team_sessions (разные
+  // субъекты: Mattermost-сотрудник vs self-serve аккаунт).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tool_sessions (
+      id text PRIMARY KEY,
+      account_id bigint NOT NULL REFERENCES tool_accounts(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      expires_at timestamptz NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS tool_sessions_expires_idx ON tool_sessions (expires_at);`);
   await ensureN8nRole();
 }
 

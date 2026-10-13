@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>КФ — Инструмент</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="stylesheet" href="/app.css?v=20">
+<style>
+  .tl-wrap{max-width:640px;margin:0 auto;padding:22px 16px 70px}
+  .tl-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px}
+  .tl-head-left{display:flex;align-items:center;gap:10px}
+  .tl-head-left img{width:34px;height:34px;border-radius:9px}
+  .tl-project{font-size:16px;font-weight:800}
+  .tl-logout{background:none;border:0;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;padding:6px}
+  .tl-add{width:100%;margin-bottom:16px}
+  .tl-login-box{max-width:380px;margin:60px auto;background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px}
+  .tl-field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:12px 0 6px}
+  .tl-input,.tl-textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:12px 13px;font-size:15px;background:var(--bg);color:var(--ink);font-family:inherit}
+  .tl-textarea{min-height:90px;resize:vertical}
+  .tl-error{margin-top:12px;background:#FBE0E0;color:#A12E2E;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700}
+  .tl-card{margin-bottom:14px}
+  .tl-card-body{padding:14px}
+  .tl-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .tl-card-title{font-size:15px;font-weight:800}
+  .tl-caption{font-size:14px;color:var(--ink);white-space:pre-wrap;margin:8px 0}
+  .tl-status-select{border:1px solid var(--line);border-radius:999px;font-size:11px;font-weight:800;padding:6px 10px;background:var(--bg);color:var(--ink)}
+  .tl-card-actions{display:flex;gap:8px;margin-top:10px}
+  .tl-card-actions .btn{flex:1;padding:9px;font-size:12px}
+  .tl-empty{text-align:center;color:var(--muted);padding:40px 10px;font-size:14px}
+  .tl-state{text-align:center;color:var(--muted);padding:60px 10px;font-size:14px}
+  @media (prefers-color-scheme: dark){
+    .tl-login-box{background:#182220}
+    .tl-input,.tl-textarea,.tl-status-select{background:#12181A}
+  }
+</style>
+</head>
+<body>
+<div class="page tl-wrap">
+
+  <div id="toolState" class="tl-state">Загрузка…</div>
+
+  <div id="loginBox" class="tl-login-box" hidden>
+    <div class="tl-head-left" style="margin-bottom:14px"><img src="/kf-logo.png" alt="КФ"><strong>КонтентФерма</strong></div>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 4px">Войдите в свой кабинет инструмента.</p>
+    <label class="tl-field-label" for="loginLogin">Email или телефон</label>
+    <input id="loginLogin" class="tl-input" type="text" autocomplete="username">
+    <label class="tl-field-label" for="loginPassword">Пароль</label>
+    <input id="loginPassword" class="tl-input" type="password" autocomplete="current-password">
+    <button id="loginSubmit" class="btn approve" style="width:100%;margin-top:16px">Войти</button>
+    <div id="loginError" class="tl-error" hidden></div>
+  </div>
+
+  <div id="cabinet" hidden>
+    <div class="tl-head">
+      <div class="tl-head-left"><img src="/kf-logo.png" alt="КФ"><span class="tl-project" id="projectName">Проект</span></div>
+      <button id="logoutBtn" class="tl-logout">Выйти</button>
+    </div>
+
+    <button id="addTaskBtn" class="btn approve tl-add">+ Новая задача</button>
+
+    <div id="taskForm" hidden class="card tl-card">
+      <div class="tl-card-body">
+        <label class="tl-field-label" for="taskTitle">Заголовок</label>
+        <input id="taskTitle" class="tl-input" type="text" placeholder="например, «Пост про акцию»">
+        <label class="tl-field-label" for="taskCaption">Текст поста</label>
+        <textarea id="taskCaption" class="tl-textarea"></textarea>
+        <div class="tl-card-actions">
+          <button id="taskSave" class="btn approve">Сохранить</button>
+          <button id="taskCancel" class="btn" style="background:var(--line)">Отмена</button>
+        </div>
+        <div id="taskFormError" class="tl-error" hidden></div>
+      </div>
+    </div>
+
+    <div id="taskList"></div>
+    <div id="taskEmpty" class="tl-empty" hidden>Пока нет ни одной задачи — добавьте первую.</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var STATUS_LABELS = { waiting: 'Ожидает', changes: 'Правки', approved: 'Согласовано', published: 'Опубликовано' };
+  var editingTaskId = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    return fetch(path, opts).then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    });
+  }
+
+  function progressHtml(status) {
+    var order = ['waiting', 'changes', 'approved', 'published'];
+    var idx = order.indexOf(status);
+    var labels = ['Провер.', 'Правки', 'Готово', 'Публ.'];
+    var steps = order.map(function (key, i) {
+      var state = i < idx ? 'done' : i === idx ? 'active' : 'upcoming';
+      return '<span class="cp-step ' + state + '"><span class="cp-dot"></span><span class="cp-label">' + labels[i] + '</span></span>';
+    }).join('');
+    return '<div class="card-progress">' + steps + '</div>';
+  }
+
+  var currentProjectId = null;
+
+  function taskCardHtml(task) {
+    return '' +
+      '<article class="card tl-card" data-task-id="' + esc(task.id) + '">' +
+        progressHtml(task.status) +
+        '<div class="tl-card-body">' +
+          '<div class="tl-card-top">' +
+            '<span class="tl-card-title">' + esc(task.title || 'Без названия') + '</span>' +
+            '<select class="tl-status-select" data-task-id="' + esc(task.id) + '">' +
+              Object.keys(STATUS_LABELS).map(function (k) {
+                return '<option value="' + k + '"' + (k === task.status ? ' selected' : '') + '>' + STATUS_LABELS[k] + '</option>';
+              }).join('') +
+            '</select>' +
+          '</div>' +
+          (task.caption ? '<div class="tl-caption">' + esc(task.caption) + '</div>' : '') +
+          '<div class="tl-card-actions">' +
+            '<button class="btn" style="background:var(--line)" data-edit="' + esc(task.id) + '">Править</button>' +
+            '<button class="btn" style="background:#FBE0E0;color:#A12E2E" data-delete="' + esc(task.id) + '">Удалить</button>' +
+          '</div>' +
+        '</div>' +
+      '</article>';
+  }
+
+  function loadTasks() {
+    api('/api/tool/projects/' + currentProjectId + '/tasks').then(function (res) {
+      if (!res.ok) return;
+      var listEl = document.getElementById('taskList');
+      var emptyEl = document.getElementById('taskEmpty');
+      var tasks = res.data.tasks || [];
+      if (!tasks.length) {
+        listEl.innerHTML = '';
+        emptyEl.hidden = false;
+        return;
+      }
+      emptyEl.hidden = true;
+      listEl.innerHTML = tasks.map(taskCardHtml).join('');
+    });
+  }
+
+  function showCabinet(user, projects) {
+    document.getElementById('toolState').hidden = true;
+    document.getElementById('loginBox').hidden = true;
+    document.getElementById('cabinet').hidden = false;
+    var project = projects && projects[0];
+    if (!project) {
+      document.getElementById('projectName').textContent = 'Нет проекта';
+      document.getElementById('addTaskBtn').hidden = true;
+      return;
+    }
+    currentProjectId = project.id;
+    document.getElementById('projectName').textContent = project.name;
+    loadTasks();
+  }
+
+  function showLogin() {
+    document.getElementById('toolState').hidden = true;
+    document.getElementById('loginBox').hidden = false;
+  }
+
+  api('/api/tool/me').then(function (res) {
+    if (res.ok) showCabinet(res.data.user, res.data.projects);
+    else showLogin();
+  });
+
+  document.getElementById('loginSubmit').addEventListener('click', function () {
+    var login = document.getElementById('loginLogin').value.trim();
+    var password = document.getElementById('loginPassword').value;
+    var errEl = document.getElementById('loginError');
+    errEl.hidden = true;
+    if (!login || !password) { errEl.textContent = 'Введите email/телефон и пароль.'; errEl.hidden = false; return; }
+    api('/api/tool/login', { method: 'POST', body: JSON.stringify({ login: login, password: password }) }).then(function (res) {
+      if (!res.ok) { errEl.textContent = (res.data && res.data.message) || 'Не удалось войти.'; errEl.hidden = false; return; }
+      api('/api/tool/me').then(function (meRes) {
+        if (meRes.ok) showCabinet(meRes.data.user, meRes.data.projects);
+      });
+    });
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', function () {
+    api('/api/tool/logout', { method: 'POST' }).then(function () { location.reload(); });
+  });
+
+  document.getElementById('addTaskBtn').addEventListener('click', function () {
+    editingTaskId = null;
+    document.getElementById('taskTitle').value = '';
+    document.getElementById('taskCaption').value = '';
+    document.getElementById('taskFormError').hidden = true;
+    document.getElementById('taskForm').hidden = false;
+  });
+
+  document.getElementById('taskCancel').addEventListener('click', function () {
+    document.getElementById('taskForm').hidden = true;
+  });
+
+  document.getElementById('taskSave').addEventListener('click', function () {
+    var title = document.getElementById('taskTitle').value.trim();
+    var caption = document.getElementById('taskCaption').value.trim();
+    var errEl = document.getElementById('taskFormError');
+    errEl.hidden = true;
+    if (!title) { errEl.textContent = 'Введите заголовок.'; errEl.hidden = false; return; }
+    var body = JSON.stringify({ title: title, caption: caption });
+    var req = editingTaskId
+      ? api('/api/tool/projects/' + currentProjectId + '/tasks/' + editingTaskId, { method: 'PUT', body: body })
+      : api('/api/tool/projects/' + currentProjectId + '/tasks', { method: 'POST', body: body });
+    req.then(function (res) {
+      if (!res.ok) { errEl.textContent = (res.data && res.data.message) || 'Не удалось сохранить.'; errEl.hidden = false; return; }
+      document.getElementById('taskForm').hidden = true;
+      loadTasks();
+    });
+  });
+
+  document.getElementById('taskList').addEventListener('click', function (e) {
+    var editId = e.target.getAttribute('data-edit');
+    var delId = e.target.getAttribute('data-delete');
+    if (editId) {
+      api('/api/tool/projects/' + currentProjectId + '/tasks').then(function (res) {
+        var task = (res.data.tasks || []).find(function (t) { return t.id === editId; });
+        if (!task) return;
+        editingTaskId = editId;
+        document.getElementById('taskTitle').value = task.title || '';
+        document.getElementById('taskCaption').value = task.caption || '';
+        document.getElementById('taskFormError').hidden = true;
+        document.getElementById('taskForm').hidden = false;
+      });
+    } else if (delId) {
+      if (!confirm('Удалить задачу?')) return;
+      api('/api/tool/projects/' + currentProjectId + '/tasks/' + delId, { method: 'DELETE' }).then(function (res) {
+        if (res.ok) loadTasks();
+      });
+    }
+  });
+
+  document.getElementById('taskList').addEventListener('change', function (e) {
+    if (!e.target.classList.contains('tl-status-select')) return;
+    var taskId = e.target.getAttribute('data-task-id');
+    api('/api/tool/projects/' + currentProjectId + '/tasks/' + taskId, {
+      method: 'PUT',
+      body: JSON.stringify({ status: e.target.value }),
+    }).then(function (res) { if (res.ok) loadTasks(); });
+  });
+})();
+</script>
+</body>
+</html>

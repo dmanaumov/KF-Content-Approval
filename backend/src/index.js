@@ -32,6 +32,9 @@ const pushNotifier = require('./pushNotifier');
 const tgSubs = require('./tgSubs');
 const reminders = require('./reminders');
 const { buildOpenApiSpec } = require('./openapiSpec');
+const toolAuth = require('./toolAuth');
+const toolInvites = require('./toolInvites');
+const toolProjects = require('./toolProjects');
 
 // Safety net (2026-10-10): any promise rejection that escapes an async route
 // handler (Express 4 doesn't catch those) used to crash the entire app — one
@@ -6418,6 +6421,218 @@ app.get('/api/debug/boards/:boardId/find', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Self-serve "tool only" SaaS accounts — invite-link project creation
+// (tool_accounts/tool_invites/tool_projects/tool_tasks, see db.js +
+// toolAuth.js/toolInvites.js/toolProjects.js). Entirely separate subsystem
+// from everything above: these are NOT Mattermost accounts, never touch the
+// shared board, and their tasks live in their own Postgres tables — by
+// direct request ("создаем учетку и ведем ее в базе данных! В маттермост
+// его не впускаем!" + "отдельное хранилище в своей БД, не трогая Mattermost
+// вообще"). Staff issue an invite from {staffProjectsPath}/invites
+// (staffAuth, admin/CEO only); the recipient redeems it at /invite/:token
+// with a one-time code the admin sends separately (NOT inside the link),
+// then logs into their own cabinet at /tool with an email/phone + password
+// they pick themselves at redemption time.
+//
+// Scope note: only the "просто инструмент" (no-AI) path is wired up here.
+// The "с ИИ" survey/prompt-autogeneration path is still just the design-
+// canvas mockup — tool_invites.mode accepts 'ai' and stores it, but no
+// route serves it yet.
+// ---------------------------------------------------------------------------
+
+// POST /api/tool-invites — admin creates an invite link. Body: { mode }
+// ('tool' today — see scope note above). Returns the token (goes in the
+// URL) and the plaintext code (shown ONCE, right here — only its hash is
+// ever persisted, so if it's lost a new invite has to be issued).
+app.post('/api/tool-invites', staffAuth, async (req, res) => {
+  if (!req.staffScope || !req.staffScope.full) {
+    return res.status(403).json({ error: 'admin_only', message: 'Приглашения создаёт только админ/CEO.' });
+  }
+  const mode = req.body && req.body.mode === 'ai' ? 'ai' : 'tool';
+  try {
+    const invite = await toolInvites.createInvite({ mode, createdBy: req.staffScope.username || '' });
+    res.json({
+      token: invite.token,
+      code: invite.code,
+      mode: invite.mode,
+      inviteUrl: `${req.protocol}://${req.get('host')}/invite/${invite.token}`,
+    });
+  } catch (err) {
+    console.error('[api] create tool invite failed:', err.message);
+    res.status(502).json({ error: 'invite_create_failed', message: err.message });
+  }
+});
+
+// GET /api/tool-invites — admin's list of outstanding/used invites. Never
+// returns a code again (only its hash is stored) — see POST above.
+app.get('/api/tool-invites', staffAuth, async (req, res) => {
+  if (!req.staffScope || !req.staffScope.full) {
+    return res.status(403).json({ error: 'admin_only' });
+  }
+  try {
+    const invites = await toolInvites.listInvites();
+    res.json({ invites });
+  } catch (err) {
+    console.error('[api] list tool invites failed:', err.message);
+    res.status(502).json({ error: 'invite_list_failed', message: err.message });
+  }
+});
+
+// GET /api/invite/:token — public; lets the /invite page render the right
+// copy (mode) and whether the link is still redeemable, WITHOUT the code.
+app.get('/api/invite/:token', async (req, res) => {
+  try {
+    const invite = await toolInvites.getInviteByToken(req.params.token);
+    if (!invite) return res.status(404).json({ error: 'invite_not_found' });
+    if (invite.used_at) return res.status(410).json({ error: 'invite_used' });
+    res.json({ mode: invite.mode });
+  } catch (err) {
+    console.error('[api] get invite failed:', err.message);
+    res.status(502).json({ error: 'invite_lookup_failed', message: err.message });
+  }
+});
+
+// POST /api/invite/:token/redeem — body: { code, login, password,
+// displayName, projectName }. One-shot: creates the tool_accounts row, a
+// first tool_projects row, marks the invite used, and logs the new account
+// straight in (same cookie POST /api/tool/login would set).
+app.post('/api/invite/:token/redeem', async (req, res) => {
+  const { code, login, password, displayName, projectName } = req.body || {};
+  if (!code || !login || !password) {
+    return res.status(400).json({ error: 'missing_fields', message: 'Код, логин и пароль обязательны.' });
+  }
+  if (String(password).length < 8) {
+    return res.status(400).json({ error: 'weak_password', message: 'Пароль должен быть не короче 8 символов.' });
+  }
+  try {
+    const invite = await toolInvites.getInviteByToken(req.params.token);
+    if (!invite) return res.status(404).json({ error: 'invite_not_found' });
+    if (invite.used_at) return res.status(410).json({ error: 'invite_used', message: 'Эта ссылка уже использована.' });
+    const codeOk = await toolInvites.verifyInviteCode(invite, code);
+    if (!codeOk) return res.status(401).json({ error: 'invalid_code', message: 'Неверный код.' });
+    const existing = await toolAuth.findByLogin(login);
+    if (existing) return res.status(409).json({ error: 'login_taken', message: 'Этот email/телефон уже зарегистрирован.' });
+    const account = await toolAuth.createAccount({ login, password, displayName });
+    const project = await toolProjects.createProject(account.id, projectName);
+    await toolInvites.markInviteUsed(invite.id, account.id);
+    const sessionId = await toolAuth.createSession(account);
+    toolAuth.setSessionCookie(res, sessionId);
+    res.json({ user: { id: account.id, login: account.login, displayName: account.display_name }, project });
+  } catch (err) {
+    console.error('[api] redeem invite failed:', err.message);
+    res.status(502).json({ error: 'redeem_failed', message: err.message });
+  }
+});
+
+// POST /api/tool/login — body: { login, password }.
+app.post('/api/tool/login', async (req, res) => {
+  const login = String((req.body && req.body.login) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  if (!login || !password) return res.status(400).json({ error: 'credentials_required' });
+  try {
+    const account = await toolAuth.verifyLogin(login, password);
+    if (!account) return res.status(401).json({ error: 'login_failed', message: 'Неверный логин или пароль.' });
+    const sessionId = await toolAuth.createSession(account);
+    toolAuth.setSessionCookie(res, sessionId);
+    res.json({ user: account });
+  } catch (err) {
+    console.error('[api] tool login failed:', err.message);
+    res.status(502).json({ error: 'login_failed', message: err.message });
+  }
+});
+
+app.post('/api/tool/logout', (req, res) => {
+  toolAuth.destroySession(toolAuth.sessionIdFromRequest(req));
+  toolAuth.clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// GET /api/tool/me — "am I logged in?" + this account's project list, same
+// pattern as GET /api/team/me.
+app.get('/api/tool/me', toolAuth.requireToolAuth, async (req, res) => {
+  try {
+    const projects = await toolProjects.listProjectsForAccount(req.toolSession.accountId);
+    res.json({ user: req.toolSession.account, projects });
+  } catch (err) {
+    console.error('[api] tool me failed:', err.message);
+    res.status(502).json({ error: 'tool_me_failed', message: err.message });
+  }
+});
+
+// POST /api/tool/projects — an account may hold more than one project (not
+// exercised by the invite flow today, which creates exactly one on
+// redemption, but there's no reason to block it later).
+app.post('/api/tool/projects', toolAuth.requireToolAuth, async (req, res) => {
+  try {
+    const project = await toolProjects.createProject(req.toolSession.accountId, req.body && req.body.name);
+    res.json({ project });
+  } catch (err) {
+    console.error('[api] create tool project failed:', err.message);
+    res.status(502).json({ error: 'project_create_failed', message: err.message });
+  }
+});
+
+// Shared ownership check for every /api/tool/projects/:projectId/* route
+// below — a tool_session may only ever touch its OWN projects.
+async function toolProjectOrNotFound(req, res) {
+  const project = await toolProjects.getProjectForAccount(req.toolSession.accountId, req.params.projectId);
+  if (!project) {
+    res.status(404).json({ error: 'project_not_found' });
+    return null;
+  }
+  return project;
+}
+
+app.get('/api/tool/projects/:projectId/tasks', toolAuth.requireToolAuth, async (req, res) => {
+  try {
+    const project = await toolProjectOrNotFound(req, res);
+    if (!project) return;
+    const tasks = await toolProjects.listTasks(project.id);
+    res.json({ project, tasks });
+  } catch (err) {
+    console.error('[api] list tool tasks failed:', err.message);
+    res.status(502).json({ error: 'tasks_list_failed', message: err.message });
+  }
+});
+
+app.post('/api/tool/projects/:projectId/tasks', toolAuth.requireToolAuth, async (req, res) => {
+  try {
+    const project = await toolProjectOrNotFound(req, res);
+    if (!project) return;
+    const task = await toolProjects.createTask(project.id, req.body || {});
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] create tool task failed:', err.message);
+    res.status(502).json({ error: 'task_create_failed', message: err.message });
+  }
+});
+
+app.put('/api/tool/projects/:projectId/tasks/:taskId', toolAuth.requireToolAuth, async (req, res) => {
+  try {
+    const project = await toolProjectOrNotFound(req, res);
+    if (!project) return;
+    const task = await toolProjects.updateTask(project.id, req.params.taskId, req.body || {});
+    if (!task) return res.status(404).json({ error: 'task_not_found' });
+    res.json({ task });
+  } catch (err) {
+    console.error('[api] update tool task failed:', err.message);
+    res.status(502).json({ error: 'task_update_failed', message: err.message });
+  }
+});
+
+app.delete('/api/tool/projects/:projectId/tasks/:taskId', toolAuth.requireToolAuth, async (req, res) => {
+  try {
+    const project = await toolProjectOrNotFound(req, res);
+    if (!project) return;
+    await toolProjects.deleteTask(project.id, req.params.taskId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] delete tool task failed:', err.message);
+    res.status(502).json({ error: 'task_delete_failed', message: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Static frontend. Client link shape: /p/{boardId}?task={taskId}
 // (boardId is the Mattermost Board/Project id — the whole "auth" for now is
 // that this id is unguessable-enough and shared privately; see README for
@@ -6744,6 +6959,21 @@ app.get(config.staffProjectsPath, staffAuth, (req, res) => res.sendFile(path.joi
 // real per-person Mattermost login (see teamAuth.js) is the actual gate.
 app.get(config.teamCabinetPath, (req, res) => res.sendFile(path.join(frontendDir, 'team.html')));
 
+// --- Self-serve "tool only" SaaS pages (invite-link project creation) -----
+// See the big API block above (search "tool-invites"/"toolAuth"). Three
+// static pages, each doing its own client-side auth check the same way
+// /team + team.js already does:
+//   /invite/:token — registration page, reads GET /api/invite/:token for
+//     copy, posts to /redeem with the one-time code.
+//   /tool          — the new cabinet itself (login form OR task list),
+//     checks GET /api/tool/me on load.
+//   {staffProjectsPath}/invites — admin-only page to issue invite links
+//     (staffAuth gate here; admin/CEO-only is re-checked inside
+//     POST /api/tool-invites itself).
+app.get('/invite/:token', (req, res) => res.sendFile(path.join(frontendDir, 'invite.html')));
+app.get('/tool', (req, res) => res.sendFile(path.join(frontendDir, 'tool.html')));
+app.get(`${config.staffProjectsPath}/invites`, staffAuth, (req, res) => res.sendFile(path.join(frontendDir, 'invites.html')));
+
 // On a brand-new deploy, the "db" container and this "app" container start
 // at roughly the same time — docker-compose's plain `depends_on: [db]`
 // (see docker-compose.yml) only orders CONTAINER START, not "Postgres is
@@ -6773,6 +7003,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
   try {
     await waitForDb();
     await teamAuth.restoreSessions();
+    await toolAuth.restoreSessions();
     await analytics.pruneOldLogs();
     await projectSettings.importLegacyFileTokens();
     await apiKeys.init(); // seeds api_keys from env vars on first boot — see apiKeys.js
