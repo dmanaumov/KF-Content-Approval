@@ -6914,6 +6914,11 @@ app.get('/swagger', teamAuth.requireCeoAuth, sendSwaggerUiPage);
 app.get('/ceo/bot-chats', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-chats.html')));
 app.get('/ceo/bot-leads', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'bot-leads.html')));
 
+// GET /ceo/notifications — "Оповещения клиентов" (frontend/notifications.html
+// + the /api/ceo/notifications data route above): какие проекты какими
+// каналами напоминаний пользуются (Web Push подписки + TG-чаты). Owner-only.
+app.get('/ceo/notifications', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'notifications.html')));
+
 // GET /ceo/api-keys — the 4th owner-only tab, "Управление" (see
 // frontend/api-keys.html + the /api/ceo/api-keys* routes above).
 app.get('/ceo/api-keys', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'api-keys.html')));

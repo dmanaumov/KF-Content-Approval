@@ -369,6 +369,33 @@
 }
 .proj-net-chip[data-tip]:hover::after{opacity:1}
 
+/* Subscriber counts on the project card — small rounded chips showing how
+   many devices are on Web Push (🔔) and how many TG chats subscribed to
+   reminders (✈️) for this project. See GET /api/projects pushSubscribers /
+   tgSubscribers. Grey so they never fight the colorful net chips above. */
+.proj-notify-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.proj-notify-bit{position:relative;display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:650;color:var(--muted);background:rgba(0,0,0,.04);border-radius:999px;padding:2px 8px;cursor:default}
+.proj-notify-bit[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:50%;
+  transform:translateX(-50%);
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+}
+.proj-notify-bit[data-tip]:hover::after{opacity:1}
+
 /* Vertical column of action icons (copy / edit / regenerate), one above the
    other in the accent color. Hover shows a hint built from data-tip — the
    action's name + what it actually does. */
