@@ -3,85 +3,214 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>КФ — Инструмент</title>
+<title>КФ — Личный кабинет</title>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="stylesheet" href="/app.css?v=20">
+<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- Та же тройка стилей, что у /team — это тоже кабинет-клон, только для
+     самостоятельных (self-serve) аккаунтов, не для сотрудников. Берём
+     отсюда все реальные классы формы/карточки/статусов, а не придумываем
+     свои — см. правку 2026-10-13 после жалобы "почему другой интерфейс". -->
+<link rel="stylesheet" href="/app.css?v=22">
+<link rel="stylesheet" href="/projects.css?v=15">
+<link rel="stylesheet" href="/team.css?v=34">
 <style>
-  .tl-wrap{max-width:640px;margin:0 auto;padding:22px 16px 70px}
-  .tl-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px}
-  .tl-head-left{display:flex;align-items:center;gap:10px}
-  .tl-head-left img{width:34px;height:34px;border-radius:9px}
-  .tl-project{font-size:16px;font-weight:800}
-  .tl-logout{background:none;border:0;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;padding:6px}
-  .tl-add{width:100%;margin-bottom:16px}
-  .tl-login-box{max-width:380px;margin:60px auto;background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px}
-  .tl-field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:12px 0 6px}
-  .tl-input,.tl-textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:12px 13px;font-size:15px;background:var(--bg);color:var(--ink);font-family:inherit}
-  .tl-textarea{min-height:90px;resize:vertical}
-  .tl-error{margin-top:12px;background:#FBE0E0;color:#A12E2E;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700}
-  .tl-card{margin-bottom:14px}
-  .tl-card-body{padding:14px}
-  .tl-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
-  .tl-card-title{font-size:15px;font-weight:800}
-  .tl-caption{font-size:14px;color:var(--ink);white-space:pre-wrap;margin:8px 0}
-  .tl-status-select{border:1px solid var(--line);border-radius:999px;font-size:11px;font-weight:800;padding:6px 10px;background:var(--bg);color:var(--ink)}
-  .tl-card-actions{display:flex;gap:8px;margin-top:10px}
-  .tl-card-actions .btn{flex:1;padding:9px;font-size:12px}
-  .tl-empty{text-align:center;color:var(--muted);padding:40px 10px;font-size:14px}
-  .tl-state{text-align:center;color:var(--muted);padding:60px 10px;font-size:14px}
+  /* Эта страница — новая (самостоятельный SaaS-кабинет), поэтому часть
+     блоков ниже не берётся из team.css/projects.css один в один: приветствие
+     с маскотом, туториал-грид и список "Мои клиенты" переносим с одобренного
+     макета (design-canvas, Cabinet.dc.html) — но на тех же переменных и
+     классах (.card, .btn, .status, .field-label/.field-input, .fp-box,
+     .card-progress/.cp-step), что и везде в приложении. Ничего нового не
+     придумываем — только раскладка для блоков, которых раньше в проекте
+     не было. */
+  .tool-hero{display:flex;align-items:center;gap:18px;padding:20px;margin-bottom:20px}
+  .tool-mascot{width:64px;height:64px;border-radius:18px;background:#FFE6E4;display:flex;align-items:center;justify-content:center;flex:none;overflow:hidden}
+  .tool-mascot img{width:88%;height:88%;object-fit:contain}
+  .tool-hero h2{font-size:17px;font-weight:800;margin:0 0 4px}
+  .tool-hero p{font-size:13px;color:var(--muted);margin:0;line-height:1.5}
+  .tool-section-title{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin:0}
+  .tool-tut{margin-bottom:20px}
+  .tool-tut summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:4px 2px;margin-bottom:4px}
+  .tool-tut summary::-webkit-details-marker{display:none}
+  .tool-tut summary .chev{display:inline-block;transition:transform .15s;color:var(--muted);font-size:11px}
+  .tool-tut[open] summary .chev{transform:rotate(90deg)}
+  .tut-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:10px}
+  @media(min-width:680px){.tut-grid{grid-template-columns:1fr 1fr}}
+  .tut-card{padding:16px}
+  .tut-card.wide{grid-column:1 / -1}
+  .tut-card h3{font-size:14px;font-weight:800;margin:0 0 6px}
+  .tut-card p{font-size:12.5px;color:var(--muted);line-height:1.5;margin:0}
+  .ref-caption{font-size:11.5px;font-weight:700;color:var(--muted);margin:14px 0 8px}
+  .ref-progress{position:static;margin:0 0 10px;border-radius:10px;overflow:hidden}
+  .ref-card{border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;gap:10px;align-items:flex-start;background:var(--bg);max-width:420px}
+  .ref-thumb{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#E4EFED,#d7f3ec);flex:none}
+  .ref-lines{flex:1;min-width:0}
+  .ref-line{height:7px;border-radius:4px;background:var(--line);margin-bottom:6px}
+  .ref-line.short{width:55%}
+  .ref-meta{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .cl-row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid var(--line);cursor:pointer}
+  .cl-row:first-of-type{border-top:none}
+  .cl-row:hover{background:var(--bg)}
+  .cl-name{font-weight:800;font-size:14px}
+  .cl-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .cl-spacer{flex:1 1 auto}
+  .tool-back{background:none;border:0;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;padding:6px 0;margin:0 0 8px}
+  .tool-task-actions{display:flex;gap:8px;margin-top:10px}
+  .tool-task-actions .btn{flex:1;padding:9px;font-size:12px}
   @media (prefers-color-scheme: dark){
-    .tl-login-box{background:#182220}
-    .tl-input,.tl-textarea,.tl-status-select{background:#12181A}
+    .tool-mascot{background:#2E1B19}
+    .ref-thumb{background:#222626}
   }
 </style>
 </head>
 <body>
-<div class="page tl-wrap">
+<div class="page">
+  <div id="toolState" style="text-align:center;color:var(--muted);padding:60px 10px;font-size:14px">Загрузка…</div>
 
-  <div id="toolState" class="tl-state">Загрузка…</div>
+  <div id="loginApp" hidden>
+    <header class="head">
+      <div class="head-top">
+        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+        <div class="client-brand"><strong>Личный кабинет</strong></div>
+      </div>
+    </header>
 
-  <div id="loginBox" class="tl-login-box" hidden>
-    <div class="tl-head-left" style="margin-bottom:14px"><img src="/kf-logo.png" alt="КФ"><strong>КонтентФерма</strong></div>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 4px">Войдите в свой кабинет инструмента.</p>
-    <label class="tl-field-label" for="loginLogin">Email или телефон</label>
-    <input id="loginLogin" class="tl-input" type="text" autocomplete="username">
-    <label class="tl-field-label" for="loginPassword">Пароль</label>
-    <input id="loginPassword" class="tl-input" type="password" autocomplete="current-password">
-    <button id="loginSubmit" class="btn approve" style="width:100%;margin-top:16px">Войти</button>
-    <div id="loginError" class="tl-error" hidden></div>
+    <div class="fp-box team-login-box">
+      <p class="fp-intro">Войдите по email/телефону и паролю, которые указали при регистрации по приглашению.</p>
+      <label class="field-label" for="loginLogin">Email или телефон</label>
+      <input id="loginLogin" class="field-input" type="text" autocomplete="username">
+      <label class="field-label" for="loginPassword">Пароль</label>
+      <input id="loginPassword" class="field-input" type="password" autocomplete="current-password">
+      <button id="loginSubmit" class="btn approve fp-submit">Войти</button>
+      <div id="loginError" class="error-box team-login-error" hidden></div>
+    </div>
   </div>
 
-  <div id="cabinet" hidden>
-    <div class="tl-head">
-      <div class="tl-head-left"><img src="/kf-logo.png" alt="КФ"><span class="tl-project" id="projectName">Проект</span></div>
-      <button id="logoutBtn" class="tl-logout">Выйти</button>
-    </div>
-
-    <button id="addTaskBtn" class="btn approve tl-add">+ Новая задача</button>
-
-    <div id="taskForm" hidden class="card tl-card">
-      <div class="tl-card-body">
-        <label class="tl-field-label" for="taskTitle">Заголовок</label>
-        <input id="taskTitle" class="tl-input" type="text" placeholder="например, «Пост про акцию»">
-        <label class="tl-field-label" for="taskCaption">Текст поста</label>
-        <textarea id="taskCaption" class="tl-textarea"></textarea>
-        <div class="tl-card-actions">
-          <button id="taskSave" class="btn approve">Сохранить</button>
-          <button id="taskCancel" class="btn" style="background:var(--line)">Отмена</button>
+  <div id="cabinetApp" hidden>
+    <header class="head">
+      <div class="head-top">
+        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+        <div class="client-brand"><strong>Личный кабинет</strong></div>
+        <div class="head-right">
+          <button id="logoutBtn" class="tool-back">Выйти</button>
         </div>
-        <div id="taskFormError" class="tl-error" hidden></div>
+      </div>
+    </header>
+
+    <div class="card tool-hero">
+      <div class="tool-mascot"><img src="/mascot.png" alt=""></div>
+      <div>
+        <h2>Привет! Я кот Василий 🐾</h2>
+        <p>Буду рядом, пока вы ведёте контент своих клиентов в этом инструменте. Коротко — как здесь всё устроено.</p>
       </div>
     </div>
 
-    <div id="taskList"></div>
-    <div id="taskEmpty" class="tl-empty" hidden>Пока нет ни одной задачи — добавьте первую.</div>
+    <details class="tool-tut" id="tutDetails">
+      <summary><span class="chev">▸</span><span class="tool-section-title">Как это работает</span></summary>
+      <div class="tut-grid">
+        <div class="card tut-card wide">
+          <h3>Карточки и статусы</h3>
+          <p>Каждый пост проходит путь: текст → визуал → на согласование → правки (если нужны) → согласовано → опубликовано. Прогресс виден прямо сверху на карточке — не нужно открывать её, чтобы понять, на каком шаге пост.</p>
+          <div class="ref-caption">Пример карточки — прогресс виден сверху ↓</div>
+          <div class="card-progress ref-progress">
+            <span class="cp-step done" title="Текст"></span>
+            <span class="cp-step done" title="Визуал"></span>
+            <span class="cp-step active" title="На согласование"></span>
+            <span class="cp-step upcoming" title="Правки"></span>
+            <span class="cp-step upcoming" title="Согласовано"></span>
+            <span class="cp-step upcoming" title="Опубликовано"></span>
+          </div>
+          <div class="ref-card">
+            <div class="ref-thumb"></div>
+            <div class="ref-lines">
+              <div class="ref-line"></div>
+              <div class="ref-line short"></div>
+              <div class="ref-meta"><span class="status waiting">На согласовании</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card tut-card">
+          <h3>Путь поста до публикации</h3>
+          <p>Готовите карточку → клиент смотрит по своей ссылке и согласует или просит правки → после согласования пост публикуется.</p>
+        </div>
+        <div class="card tut-card">
+          <h3>Если просят правки</h3>
+          <p>Комментарий клиента приходит прямо на карточку — поправьте и верните на согласование заново.</p>
+        </div>
+        <div class="card tut-card wide">
+          <h3>Клиенту — только ссылка</h3>
+          <p>У клиента нет доступа в этот кабинет — только личная ссылка на согласование для его проекта.</p>
+        </div>
+      </div>
+    </details>
+
+    <div id="clientsSection" hidden>
+      <div class="tool-section-title" style="margin:0 2px 10px">Мои клиенты</div>
+      <div class="card" id="clientsList"></div>
+    </div>
+
+    <div id="projectSection" hidden>
+      <button id="backToClients" class="tool-back" hidden>← Мои клиенты</button>
+      <button id="addTaskBtn" class="btn approve" style="width:100%;margin-bottom:16px">+ Новая задача</button>
+
+      <div id="taskForm" hidden class="card fp-box" style="margin-bottom:16px">
+        <label class="field-label" for="taskTitle">Заголовок</label>
+        <input id="taskTitle" class="field-input" type="text" placeholder="например, «Пост про акцию»">
+        <label class="field-label" for="taskCaption">Текст поста</label>
+        <textarea id="taskCaption" class="field-input" style="min-height:90px;resize:vertical;font:inherit"></textarea>
+        <label class="field-label" for="taskStatus">Статус</label>
+        <select id="taskStatus" class="field-input"></select>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button id="taskSave" class="btn approve" style="flex:1">Сохранить</button>
+          <button id="taskCancel" class="btn" style="flex:1;background:var(--line)">Отмена</button>
+        </div>
+        <div id="taskFormError" class="error-box" style="margin-top:12px" hidden></div>
+      </div>
+
+      <div id="taskList"></div>
+      <div id="taskEmpty" class="team-empty" hidden>Пока нет ни одной задачи — добавьте первую.</div>
+    </div>
   </div>
 </div>
-
 <script>
 (function () {
-  var STATUS_LABELS = { waiting: 'Ожидает', changes: 'Правки', approved: 'Согласовано', published: 'Опубликовано' };
+  // Те же подписи/классы статусов, что в team.js (STATUS_LABELS/STATUS_CLASS)
+  // — задачи self-serve кабинета используют ровно те же 4 статуса.
+  var STATUS_LABELS = { waiting: 'На согласовании', changes: 'Правки', approved: 'Согласовано', published: 'Опубликовано' };
+  var STATUS_CLASS = { waiting: 'waiting', changes: 'changes', approved: 'approved', published: 'published' };
+
+  // Прогресс-бар — та же логика, что progressStages()/progressHtml() в
+  // app.js/team.js (см. правку 2026-10-13 про "едва заметный" прогресс).
+  // Копия именно логики (не импорт team.js целиком): team.js — 178КБ
+  // staff-кода, который на загрузке ищет свои DOM-элементы и упадёт на
+  // этой странице; дублируем только сам алгоритм, 1:1.
+  var PROGRESS_STAGES = [
+    { key: 'text', label: 'Текст' },
+    { key: 'visual', label: 'Визуал' },
+    { key: 'waiting', label: 'Провер.' },
+    { key: 'changes', label: 'Правки' },
+    { key: 'approved', label: 'Готово' },
+    { key: 'published', label: 'Публ.' },
+  ];
+  var PROGRESS_STATUS_INDEX = { waiting: 2, changes: 3, approved: 4, published: 5 };
+  function progressHtml(task) {
+    var current = PROGRESS_STATUS_INDEX[task.status];
+    if (current == null) return '';
+    var textDone = !!(task.caption && task.caption.trim());
+    var visualDone = !!(task.media && task.media.length);
+    var steps = PROGRESS_STAGES.map(function (s, i) {
+      var state;
+      if (i === 0) state = textDone ? 'done' : 'upcoming';
+      else if (i === 1) state = visualDone ? 'done' : 'upcoming';
+      else state = i < current ? 'done' : (i === current ? (i === PROGRESS_STAGES.length - 1 ? 'done' : 'active') : 'upcoming');
+      return '<span class="cp-step ' + state + '" title="' + esc(s.label) + '"></span>';
+    }).join('');
+    return '<div class="card-progress">' + steps + '</div>';
+  }
+
   var editingTaskId = null;
+  var currentProjectId = null;
+  var allProjects = [];
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -97,79 +226,110 @@
     });
   }
 
-  function progressHtml(status) {
-    var order = ['waiting', 'changes', 'approved', 'published'];
-    var idx = order.indexOf(status);
-    var labels = ['Провер.', 'Правки', 'Готово', 'Публ.'];
-    var steps = order.map(function (key, i) {
-      var state = i < idx ? 'done' : i === idx ? 'active' : 'upcoming';
-      return '<span class="cp-step ' + state + '"><span class="cp-dot"></span><span class="cp-label">' + labels[i] + '</span></span>';
-    }).join('');
-    return '<div class="card-progress">' + steps + '</div>';
-  }
+  function show(id, visible) { document.getElementById(id).hidden = !visible; }
 
-  var currentProjectId = null;
-
-  function taskCardHtml(task) {
+  function taskRowHtml(task) {
+    var dateBadge = task.publishDate
+      ? '<div class="team-task-date">' + esc(task.publishDate.split('-').reverse().join('.')) + '</div>'
+      : '';
+    var statusHtml = task.status && STATUS_LABELS[task.status]
+      ? '<span class="status ' + STATUS_CLASS[task.status] + '">' + STATUS_LABELS[task.status] + '</span>'
+      : '';
     return '' +
-      '<article class="card tl-card" data-task-id="' + esc(task.id) + '">' +
-        progressHtml(task.status) +
-        '<div class="tl-card-body">' +
-          '<div class="tl-card-top">' +
-            '<span class="tl-card-title">' + esc(task.title || 'Без названия') + '</span>' +
-            '<select class="tl-status-select" data-task-id="' + esc(task.id) + '">' +
-              Object.keys(STATUS_LABELS).map(function (k) {
-                return '<option value="' + k + '"' + (k === task.status ? ' selected' : '') + '>' + STATUS_LABELS[k] + '</option>';
-              }).join('') +
-            '</select>' +
-          '</div>' +
-          (task.caption ? '<div class="tl-caption">' + esc(task.caption) + '</div>' : '') +
-          '<div class="tl-card-actions">' +
-            '<button class="btn" style="background:var(--line)" data-edit="' + esc(task.id) + '">Править</button>' +
-            '<button class="btn" style="background:#FBE0E0;color:#A12E2E" data-delete="' + esc(task.id) + '">Удалить</button>' +
+      '<div class="team-task has-progress" data-task-id="' + esc(task.id) + '">' +
+        progressHtml(task) +
+        '<div class="team-task-top">' +
+          '<div class="team-task-title">' + esc(task.title || 'Без названия') + '</div>' +
+        '</div>' +
+        (task.caption ? '<div style="font-size:13.5px;color:var(--ink);white-space:pre-wrap;margin:6px 0">' + esc(task.caption) + '</div>' : '') +
+        '<div class="team-task-bottom">' +
+          '<div class="team-task-meta">' +
+            '<div class="team-task-status">' + statusHtml + '</div>' +
+            dateBadge +
           '</div>' +
         '</div>' +
-      '</article>';
+        '<div class="tool-task-actions">' +
+          '<button class="btn" style="background:var(--line)" data-edit="' + esc(task.id) + '">Править</button>' +
+          '<button class="btn" style="background:#FBE0E0;color:#A12E2E" data-delete="' + esc(task.id) + '">Удалить</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function fillStatusSelect() {
+    var sel = document.getElementById('taskStatus');
+    sel.innerHTML = Object.keys(STATUS_LABELS).map(function (k) {
+      return '<option value="' + k + '">' + STATUS_LABELS[k] + '</option>';
+    }).join('');
   }
 
   function loadTasks() {
     api('/api/tool/projects/' + currentProjectId + '/tasks').then(function (res) {
       if (!res.ok) return;
       var listEl = document.getElementById('taskList');
-      var emptyEl = document.getElementById('taskEmpty');
       var tasks = res.data.tasks || [];
       if (!tasks.length) {
         listEl.innerHTML = '';
-        emptyEl.hidden = false;
+        show('taskEmpty', true);
         return;
       }
-      emptyEl.hidden = true;
-      listEl.innerHTML = tasks.map(taskCardHtml).join('');
+      show('taskEmpty', false);
+      listEl.innerHTML = tasks.map(taskRowHtml).join('');
     });
   }
 
-  function showCabinet(user, projects) {
-    document.getElementById('toolState').hidden = true;
-    document.getElementById('loginBox').hidden = true;
-    document.getElementById('cabinet').hidden = false;
-    var project = projects && projects[0];
-    if (!project) {
-      document.getElementById('projectName').textContent = 'Нет проекта';
-      document.getElementById('addTaskBtn').hidden = true;
-      return;
-    }
+  function openProject(project) {
     currentProjectId = project.id;
-    document.getElementById('projectName').textContent = project.name;
+    show('clientsSection', false);
+    show('projectSection', true);
+    document.getElementById('backToClients').hidden = allProjects.length < 2;
+    document.getElementById('taskForm').hidden = true;
     loadTasks();
   }
 
-  function showLogin() {
-    document.getElementById('toolState').hidden = true;
-    document.getElementById('loginBox').hidden = false;
+  function clientRowHtml(p) {
+    return '' +
+      '<div class="cl-row" data-project-id="' + esc(p.id) + '">' +
+        '<div><div class="cl-name">' + esc(p.name) + '</div></div>' +
+        '<div class="cl-spacer"></div>' +
+        '<span style="color:var(--muted);font-size:13px;font-weight:700">Открыть →</span>' +
+      '</div>';
   }
 
+  function showClientsList() {
+    show('projectSection', false);
+    show('clientsSection', true);
+    document.getElementById('clientsList').innerHTML = allProjects.map(clientRowHtml).join('');
+  }
+
+  function showCabinet(projects) {
+    show('toolState', false);
+    show('loginApp', false);
+    show('cabinetApp', true);
+    allProjects = projects || [];
+    if (!allProjects.length) {
+      show('projectSection', true);
+      document.getElementById('addTaskBtn').hidden = true;
+      document.getElementById('taskList').innerHTML = '';
+      show('taskEmpty', false);
+      document.getElementById('projectSection').insertAdjacentHTML('afterbegin', '<p style="color:var(--muted);font-size:13px">Проект ещё не создан — обратитесь к нам.</p>');
+      return;
+    }
+    if (allProjects.length === 1) {
+      openProject(allProjects[0]);
+    } else {
+      showClientsList();
+    }
+  }
+
+  function showLogin() {
+    show('toolState', false);
+    show('loginApp', true);
+  }
+
+  fillStatusSelect();
+
   api('/api/tool/me').then(function (res) {
-    if (res.ok) showCabinet(res.data.user, res.data.projects);
+    if (res.ok) showCabinet(res.data.projects);
     else showLogin();
   });
 
@@ -182,7 +342,7 @@
     api('/api/tool/login', { method: 'POST', body: JSON.stringify({ login: login, password: password }) }).then(function (res) {
       if (!res.ok) { errEl.textContent = (res.data && res.data.message) || 'Не удалось войти.'; errEl.hidden = false; return; }
       api('/api/tool/me').then(function (meRes) {
-        if (meRes.ok) showCabinet(meRes.data.user, meRes.data.projects);
+        if (meRes.ok) showCabinet(meRes.data.projects);
       });
     });
   });
@@ -191,10 +351,21 @@
     api('/api/tool/logout', { method: 'POST' }).then(function () { location.reload(); });
   });
 
+  document.getElementById('backToClients').addEventListener('click', showClientsList);
+
+  document.getElementById('clientsList').addEventListener('click', function (e) {
+    var row = e.target.closest('.cl-row');
+    if (!row) return;
+    var id = row.getAttribute('data-project-id');
+    var project = allProjects.find(function (p) { return String(p.id) === String(id); });
+    if (project) openProject(project);
+  });
+
   document.getElementById('addTaskBtn').addEventListener('click', function () {
     editingTaskId = null;
     document.getElementById('taskTitle').value = '';
     document.getElementById('taskCaption').value = '';
+    document.getElementById('taskStatus').value = 'waiting';
     document.getElementById('taskFormError').hidden = true;
     document.getElementById('taskForm').hidden = false;
   });
@@ -206,15 +377,20 @@
   document.getElementById('taskSave').addEventListener('click', function () {
     var title = document.getElementById('taskTitle').value.trim();
     var caption = document.getElementById('taskCaption').value.trim();
+    var status = document.getElementById('taskStatus').value;
     var errEl = document.getElementById('taskFormError');
     errEl.hidden = true;
     if (!title) { errEl.textContent = 'Введите заголовок.'; errEl.hidden = false; return; }
-    var body = JSON.stringify({ title: title, caption: caption });
+    var body = JSON.stringify({ title: title, caption: caption, status: status });
     var req = editingTaskId
       ? api('/api/tool/projects/' + currentProjectId + '/tasks/' + editingTaskId, { method: 'PUT', body: body })
       : api('/api/tool/projects/' + currentProjectId + '/tasks', { method: 'POST', body: body });
     req.then(function (res) {
-      if (!res.ok) { errEl.textContent = (res.data && res.data.message) || 'Не удалось сохранить.'; errEl.hidden = false; return; }
+      if (!res.ok) {
+        errEl.textContent = (res.data && (res.data.message || res.data.error)) || ('Не удалось сохранить (код ' + res.status + ').');
+        errEl.hidden = false;
+        return;
+      }
       document.getElementById('taskForm').hidden = true;
       loadTasks();
     });
@@ -230,6 +406,7 @@
         editingTaskId = editId;
         document.getElementById('taskTitle').value = task.title || '';
         document.getElementById('taskCaption').value = task.caption || '';
+        document.getElementById('taskStatus').value = task.status || 'waiting';
         document.getElementById('taskFormError').hidden = true;
         document.getElementById('taskForm').hidden = false;
       });
@@ -239,15 +416,6 @@
         if (res.ok) loadTasks();
       });
     }
-  });
-
-  document.getElementById('taskList').addEventListener('change', function (e) {
-    if (!e.target.classList.contains('tl-status-select')) return;
-    var taskId = e.target.getAttribute('data-task-id');
-    api('/api/tool/projects/' + currentProjectId + '/tasks/' + taskId, {
-      method: 'PUT',
-      body: JSON.stringify({ status: e.target.value }),
-    }).then(function (res) { if (res.ok) loadTasks(); });
   });
 })();
 </script>

@@ -5,58 +5,57 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>КФ — Приглашение</title>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="stylesheet" href="/app.css?v=20">
+<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- Та же тройка стилей, что у /team и /tool — реальные field-label/
+     field-input/fp-box/btn вместо придуманных .inv-* классов (см. правку
+     2026-10-13 после жалобы "почему другой интерфейс"). -->
+<link rel="stylesheet" href="/app.css?v=22">
+<link rel="stylesheet" href="/projects.css?v=15">
+<link rel="stylesheet" href="/team.css?v=34">
 <style>
-  .inv-wrap{max-width:420px;margin:0 auto;padding:32px 18px 60px}
-  .inv-logo{display:flex;align-items:center;gap:10px;margin-bottom:22px}
-  .inv-logo img{width:36px;height:36px;border-radius:9px}
-  .inv-logo strong{font-size:16px}
-  .inv-box{background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 8px 24px rgba(16,45,42,.06)}
-  .inv-mode{font-size:13px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px}
-  .inv-title{font-size:19px;font-weight:800;margin:0 0 8px}
-  .inv-intro{font-size:14px;color:var(--muted);line-height:1.45;margin:0 0 20px}
-  .inv-field-label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px}
-  .inv-input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:12px 13px;font-size:15px;background:var(--bg);color:var(--ink)}
-  .inv-input:focus{outline:2px solid var(--accent);outline-offset:1px}
-  .inv-hint{font-size:11px;color:var(--muted);margin-top:4px}
-  .inv-submit{width:100%;margin-top:20px}
-  .inv-error{margin-top:14px;background:#FBE0E0;color:#A12E2E;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700}
-  .inv-state{text-align:center;padding:40px 10px;color:var(--muted);font-size:14px}
-  @media (prefers-color-scheme: dark){
-    .inv-box{background:#182220;box-shadow:none}
-    .inv-input{background:#12181A}
-  }
+  .inv-wrap{max-width:420px;margin:0 auto}
+  .inv-mascot{width:48px;height:48px;border-radius:14px;background:#FFE6E4;display:flex;align-items:center;justify-content:center;flex:none;overflow:hidden}
+  .inv-mascot img{width:88%;height:88%;object-fit:contain}
+  .inv-mode{display:inline-block;margin-bottom:10px}
+  .inv-hint{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4}
+  .inv-state{text-align:center;padding:60px 10px;color:var(--muted);font-size:14px}
 </style>
 </head>
 <body>
 <div class="page inv-wrap">
-  <div class="inv-logo"><img src="/kf-logo.png" alt="КФ"><strong>КонтентФерма</strong></div>
+  <header class="head">
+    <div class="head-top">
+      <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+      <div class="client-brand"><strong>КонтентФерма</strong></div>
+    </div>
+  </header>
 
   <div id="invState" class="inv-state">Загрузка…</div>
 
-  <div id="invBox" class="inv-box" hidden>
-    <div class="inv-mode" id="invModeLabel">Инструмент</div>
-    <h1 class="inv-title">Создадим ваш проект</h1>
-    <p class="inv-intro" id="invIntro"></p>
+  <div id="invBox" class="fp-box" hidden>
+    <span class="inv-mode status" id="invModeLabel">Инструмент</span>
+    <p class="fp-intro" id="invIntro" style="font-size:14px;color:var(--ink);font-weight:800;margin-bottom:4px"></p>
+    <p class="fp-intro" id="invSub"></p>
 
-    <label class="inv-field-label" for="invCode">Код из приглашения</label>
-    <input id="invCode" class="inv-input" inputmode="numeric" maxlength="6" placeholder="6 цифр" autocomplete="one-time-code">
+    <label class="field-label" for="invCode">Код из приглашения</label>
+    <input id="invCode" class="field-input" inputmode="numeric" maxlength="6" placeholder="6 цифр" autocomplete="one-time-code">
 
-    <label class="inv-field-label" for="invProjectName">Название проекта</label>
-    <input id="invProjectName" class="inv-input" type="text" placeholder="например, «Мой бренд»">
+    <label class="field-label" for="invProjectName">Название проекта</label>
+    <input id="invProjectName" class="field-input" type="text" placeholder="например, «Мой бренд»">
 
-    <label class="inv-field-label" for="invLogin">Email или телефон</label>
-    <input id="invLogin" class="inv-input" type="text" autocomplete="username" placeholder="для входа в кабинет">
+    <label class="field-label" for="invLogin">Email или телефон</label>
+    <input id="invLogin" class="field-input" type="text" autocomplete="username" placeholder="для входа в кабинет">
 
-    <label class="inv-field-label" for="invPassword">Пароль</label>
-    <input id="invPassword" class="inv-input" type="password" autocomplete="new-password" placeholder="не короче 8 символов">
+    <label class="field-label" for="invPassword">Пароль</label>
+    <input id="invPassword" class="field-input" type="password" autocomplete="new-password" placeholder="не короче 8 символов">
     <div class="inv-hint">Этот пароль придумываете вы — он нужен для последующих входов, код из приглашения действует только один раз.</div>
 
-    <label class="inv-field-label" for="invName">Как вас зовут (необязательно)</label>
-    <input id="invName" class="inv-input" type="text" placeholder="имя">
+    <label class="field-label" for="invName">Как вас зовут (необязательно)</label>
+    <input id="invName" class="field-input" type="text" placeholder="имя">
 
-    <button id="invSubmit" class="btn approve inv-submit">Создать проект</button>
-    <div id="invError" class="inv-error" hidden></div>
+    <button id="invSubmit" class="btn approve fp-submit">Создать проект</button>
+    <div id="invError" class="error-box" style="margin-top:14px" hidden></div>
   </div>
 </div>
 <script>
@@ -67,6 +66,7 @@
   var errEl = document.getElementById('invError');
   var modeLabelEl = document.getElementById('invModeLabel');
   var introEl = document.getElementById('invIntro');
+  var subEl = document.getElementById('invSub');
   var submitBtn = document.getElementById('invSubmit');
 
   function showError(msg) {
@@ -88,10 +88,14 @@
       boxEl.hidden = false;
       if (res.data.mode === 'ai') {
         modeLabelEl.textContent = 'ИИ СММ-ассистент';
-        introEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — проект создастся сразу, донастройка анкеты будет доступна в кабинете.';
+        modeLabelEl.classList.add('ai');
+        introEl.textContent = 'Создадим ваш проект';
+        subEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — проект создастся сразу, донастройка анкеты будет доступна в кабинете.';
       } else {
         modeLabelEl.textContent = 'СММ-инструмент';
-        introEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — после этого сразу попадёте в свой проект.';
+        modeLabelEl.classList.add('waiting');
+        introEl.textContent = 'Создадим ваш проект';
+        subEl.textContent = 'Введите код из приглашения и придумайте пароль для входа — после этого сразу попадёте в свой кабинет.';
       }
     })
     .catch(function () { stateEl.textContent = 'Не получилось проверить ссылку — проверьте подключение и обновите страницу.'; });
@@ -117,7 +121,7 @@
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (res) {
         if (!res.ok) {
-          showError(res.data.message || 'Не получилось создать проект.');
+          showError((res.data && (res.data.message || res.data.error)) || 'Не получилось создать проект.');
           submitBtn.disabled = false;
           submitBtn.textContent = 'Создать проект';
           return;
