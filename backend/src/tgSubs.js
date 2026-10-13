@@ -31,6 +31,17 @@ async function unregisterChat({ chatId }) {
   return rows[0] || null;
 }
 
+// Отметить, что клиенту этого чата ушло напоминание (см. reminders.js) — тот
+// же сигнал активности, что push's last_sent_at: сколько клиентов реально
+// что-то получали за последние 48 часов (матрица CEO-вкладки оповещений).
+async function markSent({ chatId }) {
+  const pool = db.requirePool();
+  await pool.query(
+    `UPDATE client_tg_subs SET last_sent_at = now() WHERE chat_id = $1`,
+    [String(chatId || '').trim()]
+  );
+}
+
 // Чьи чаты получать напоминания по проекту — используется автоматическим
 // триггером (см. reminders.js): на переход карточки в "waiting" шлём всем,
 // кто подписался, текст + ссылку на карточку.
@@ -69,7 +80,7 @@ async function listForCEO(boardId, { projectId } = {}) {
     where += ` AND project_id = $${params.length}`;
   }
   const { rows } = await pool.query(
-    `SELECT chat_id, project_id, created_at, updated_at
+    `SELECT chat_id, project_id, created_at, updated_at, last_sent_at
      FROM client_tg_subs ${where}
      ORDER BY updated_at DESC`,
     params
@@ -77,4 +88,4 @@ async function listForCEO(boardId, { projectId } = {}) {
   return rows;
 }
 
-module.exports = { registerChat, unregisterChat, chatIdsForProject, countsByProject, listForCEO };
+module.exports = { registerChat, unregisterChat, markSent, chatIdsForProject, countsByProject, listForCEO };

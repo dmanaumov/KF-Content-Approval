@@ -601,12 +601,21 @@ async function initSchema() {
       board_id text NOT NULL,
       project_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      last_sent_at timestamptz
     );
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS client_tg_subs_project_idx
       ON client_tg_subs (board_id, project_id);
+  `);
+  // last_sent_at — зеркало push_subscriptions.last_sent_at: момент, когда мы
+  // в ПЕРВЫЙ раз (или в последний раз) поставили этому чату напоминание в
+  // очередь исходящих. Нужен для «активности за 48ч» в матрице CEO-вкладки
+  // оповещений (см. tgSubs.markSent). Проставляется в reminders.js.
+  await pool.query(`
+    ALTER TABLE client_tg_subs
+      ADD COLUMN IF NOT EXISTS last_sent_at timestamptz;
   `);
   // --- Self-serve "tool only" SaaS accounts (added for the invite-link
   // project-creation feature) ------------------------------------------------

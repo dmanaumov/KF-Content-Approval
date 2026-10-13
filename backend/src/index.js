@@ -1355,6 +1355,7 @@ app.get('/api/ceo/notifications', teamAuth.requireCeoAuth, async (req, res) => {
         chatId: r.chat_id,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
+        lastSentAt: r.last_sent_at,
       })),
     });
   } catch (err) {

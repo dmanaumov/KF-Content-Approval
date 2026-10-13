@@ -175,6 +175,12 @@ async function sendToOne(subscription, payload) {
       { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
       JSON.stringify(payload)
     );
+    // Реальная доставка состоялась — обновляем last_sent_at, чтобы CEO-вкладка
+    // «Оповещения» показывала честную активность ("клиенты с активностью за
+    // последние 48 часов"), а не только момент подписки.
+    const db = require('./db');
+    const pool = db.requirePool();
+    pool.query('UPDATE push_subscriptions SET last_sent_at = now() WHERE endpoint = $1', [subscription.endpoint]).catch(() => {});
     return { ok: true };
   } catch (err) {
     const status = err && err.statusCode;

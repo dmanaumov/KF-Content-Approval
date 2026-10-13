@@ -58,6 +58,40 @@ function pushLifeLabel(r) {
   return `<span class="muted">давно (${msk(r.lastSentAt)})</span>`;
 }
 
+// «Активность» подписки = момент последней реальной отправки уведомления
+// (lastSentAt), а если ещё ни разу не отправляли — момент последнего контакта
+// клиента с каналом (подключение/пере-подписка, updatedAt).
+function lastActivity(r) {
+  const sent = r.lastSentAt ? new Date(r.lastSentAt).getTime() : 0;
+  const contact = r.updatedAt ? new Date(r.updatedAt).getTime() : 0;
+  return Math.max(sent, contact) || 0;
+}
+
+const ACTIVE_MS = 48 * 3600 * 1000; // «активные» = была активность за последние 48 часов
+
+// Матрица «проект × канал»: в каждой ячейке два числа — всего клиентов и
+// клиентов с активностью за последние 48 часов.
+function buildMatrix(rows) {
+  const map = new Map(); // projectId -> { push: [total, active], tg: [total, active] }
+  const now = Date.now();
+  for (const r of rows) {
+    const cell = map.get(r.projectId) || { push: [0, 0], tg: [0, 0] };
+    const arr = cell[r.channel];
+    arr[0]++;
+    if (now - lastActivity(r) <= ACTIVE_MS) arr[1]++;
+    map.set(r.projectId, cell);
+  }
+  return map;
+}
+
+function matrixCellHtml(cell, channel) {
+  const [total, active] = cell[channel];
+  const sub = total
+    ? `<span class="matrix-total">${total}</span><span class="matrix-sep">/</span><span class="matrix-active" title="активных за последние 48 часов">${active}</span>`
+    : '<span class="muted">—</span>';
+  return `<div class="matrix-cell">${sub}</div>`;
+}
+
 function render() {
   const filteredPush = filterProjectId ? push.filter((r) => r.projectId === filterProjectId) : push;
   const filteredTg = filterProjectId ? tg.filter((r) => r.projectId === filterProjectId) : tg;
@@ -71,6 +105,31 @@ function render() {
     <option value="">Все проекты</option>
     ${projects.map((p) => `<option value="${esc(p.id)}"${filterProjectId === p.id ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}
   </select>`;
+
+  // Матрица «проект × канал». Проекты, у которых вообще нет подписок, в матрицу
+  // не попадают — иначе каждый новый проект мусорил бы нулевыми строками.
+  const matrix = buildMatrix(all);
+  const matrixRows = [...matrix.entries()]
+    .sort((a, b) => projectLabel(a[0]).localeCompare(projectLabel(b[0]), 'ru'))
+    .map(([projectId, cell]) => `
+      <tr>
+        <td><strong>${esc(projectLabel(projectId))}</strong></td>
+        <td>${matrixCellHtml(cell, 'push')}</td>
+        <td>${matrixCellHtml(cell, 'tg')}</td>
+      </tr>`)
+    .join('');
+
+  const matrixTable = matrixRows
+    ? `<table class="notify-matrix">
+        <thead><tr>
+          <th>Проект</th>
+          <th>${channelPill('push')}</th>
+          <th>${channelPill('tg')}</th>
+        </tr></thead>
+        <tbody>${matrixRows}</tbody>
+      </table>
+      <div class="matrix-legend muted">В ячейке: всего клиентов / из них с активностью за&nbsp;последние&nbsp;48&nbsp;часов</div>`
+    : '<div class="muted">Пока никто не подписан на напоминания.</div>';
 
   const rowsHtml = all.length
     ? all.map((r) => r.channel === 'push'
@@ -101,7 +160,8 @@ function render() {
       <div class="stat-card"><div class="stat-card-num">${all.length}</div><div class="stat-card-label">всего подписок</div></div>
     </div>
     <div class="stat-filters-row">${filterSelect}</div>
-    <section class="stat-section"><h2>Подписки на оповещения</h2>${table}</section>
+    <section class="stat-section"><h2>Матрица подписок</h2>${matrixTable}</section>
+    <section class="stat-section"><h2>Лента событий</h2>${table}</section>
   `;
 
   document.getElementById('notifyProjectFilter').addEventListener('change', (e) => {

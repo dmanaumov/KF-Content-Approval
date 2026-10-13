@@ -56,15 +56,23 @@ async function notifyTaskNeedsAction(boardId, task) {
   }).catch(() => {});
 
   // Telegram — для каждого подписавшегося чата кладём строку в очередь
-  // исходящих бота (n8n вычитает и отправит). Ошибки только логируем.
+  // исходящих бота (n8n вычитает и отправит). Ошибки только логируем. markSent
+  // проставляет last_sent_at (тот же сигнал активности, что и у push), чтобы
+  // в CEO-матрице "клиенты с активностью за 48ч" TG-канал был честным: чат
+  // считается активным, если ему реально ушло напоминание, а не только был
+  // подписан когда-то.
   tgSubs
     .chatIdsForProject(boardId, task.projectId)
     .then((chatIds) => {
       const text = taskUrl ? `«${title}» — ${actionText}\nОткрыть: ${taskUrl}` : `«${title}» — ${actionText}`;
       return Promise.all(
-        chatIds.map((chatId) => botStore.queueOutgoing({ chatId, text, sentBy: 'КФ: напоминание' }).catch((err) => {
-          console.warn(`[reminders] не удалось поставить tg-напоминание в чат ${chatId}: ${err.message}`);
-        }))
+        chatIds.map((chatId) =>
+          botStore.queueOutgoing({ chatId, text, sentBy: 'КФ: напоминание' })
+            .then(() => tgSubs.markSent({ chatId }))
+            .catch((err) => {
+              console.warn(`[reminders] не удалось поставить tg-напоминание в чат ${chatId}: ${err.message}`);
+            })
+        )
       );
     })
     .catch((err) => {
