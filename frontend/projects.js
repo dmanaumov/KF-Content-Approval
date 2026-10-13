@@ -520,6 +520,15 @@ document.getElementById('list').addEventListener('click', async (e) => {
 // только UX: менеджеру кнопок просто не рисуем).
 function updateManageUi() {
   document.getElementById('createProjectBtn').hidden = !canManage;
+  // Ссылка-приглашение на самостоятельное создание SaaS-проекта (POST
+  // /api/tool-invites) — тот же гейт, что и у «Создать проект» (backend
+  // пускает туда тоже только admin/ceo, см. index.js). Страница её выпуска
+  // — {staffProjectsPath}/invites; путь считаем от текущего расположения
+  // этой страницы (а не хардкодим /admin), чтобы работать и если
+  // STAFF_PROJECTS_PATH сконфигурирован иначе.
+  const inviteBtn = document.getElementById('inviteLinkBtn');
+  inviteBtn.hidden = !canManage;
+  inviteBtn.href = location.pathname.replace(/\/$/, '') + '/invites';
 }
 
 const createModal = document.getElementById('createModal');
