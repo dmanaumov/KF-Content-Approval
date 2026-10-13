@@ -373,6 +373,20 @@ module.exports = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 
+  // 2026-10-13 — ВРЕМЕННЫЙ debug-вход в /team ("на время отладки", по
+  // прямому запросу пользователя): POST /api/team/login (см. index.js)
+  // пропускает живую проверку через Mattermost, если присланный login/
+  // password совпадают с этими двумя переменными, и вместо этого сразу
+  // выдаёт сессию с ролью admin (см. roleFor выше — она смотрит только на
+  // email, поэтому синтетическому пользователю ниже присваивается ПЕРВЫЙ
+  // email из adminEmails). Выключено по умолчанию (обе переменные пустые —
+  // байпас не сработает ни при каком вводе). Снять ограничение целиком —
+  // просто убрать эти две строки из .env и передеплоить; оставлять
+  // навсегда не стоит — это пароль в открытом виде в .env, а не настоящая
+  // Mattermost-учётка.
+  debugStaffLogin: process.env.DEBUG_STAFF_LOGIN || '',
+  debugStaffPassword: process.env.DEBUG_STAFF_PASSWORD || '',
+
   // Emails allowed to view /stat (access analytics) but NOT the staff page.
   // Admins from adminEmails get /stat automatically; list here everyone who
   // only gets the stats (e.g. the analyst). Default: empty.

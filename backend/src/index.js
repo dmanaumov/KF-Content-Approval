@@ -2267,7 +2267,16 @@ app.post('/api/team/login', async (req, res) => {
   const password = String((req.body && req.body.password) || '');
   if (!login || !password) return res.status(400).json({ error: 'credentials_required' });
   try {
-    const { token, user } = await mm.loginAs(login, password);
+    // ВРЕМЕННЫЙ debug-байпас (см. config.js, "на время отладки" — прямой
+    // запрос пользователя 2026-10-13): если обе переменные заданы в .env И
+    // совпали — входим БЕЗ обращения к Mattermost, с ролью admin (synthetic
+    // user, email — первый из adminEmails, см. roleFor в teamAuth.js). Если
+    // хоть одна из переменных пустая (дефолт), это условие никогда не
+    // сработает, и обычный живой Mattermost-логин ниже работает как раньше.
+    const { token, user } = (config.debugStaffLogin && config.debugStaffPassword
+      && login === config.debugStaffLogin && password === config.debugStaffPassword)
+      ? { token: 'debug', user: { id: 'debug-staff', username: login, email: config.adminEmails[0] || '', first_name: 'Debug', last_name: 'Staff' } }
+      : await mm.loginAs(login, password);
     const sessionId = await teamAuth.createSession(token, user);
     teamAuth.setSessionCookie(res, sessionId);
     analytics.note('team', { actor: user.username || login, actorName: [user.first_name, user.last_name].filter(Boolean).join(' '), path: req.path }, req, res);
