@@ -1360,6 +1360,30 @@ app.get('/api/ceo/telegram/leads/:chatId/messages', teamAuth.requireCeoAuth, asy
   }
 });
 
+// GET /api/ceo/telegram/channel-stats?from=&to= — еженедельный срез по
+// каждому каналу, куда бот добавлен администратором: посты за период (со
+// ссылкой/текстом/просмотрами/реакциями/комментариями), подписчики на конец
+// периода + дельта с начала периода, вовлечённость. from/to — ISO-даты
+// (без таймзоны считаются UTC-полночью); по умолчанию — последние 7 дней.
+// Данные пишут только n8n-воркфлоу через POST /api/bot/channel-posts,
+// /api/bot/channel-reactions, /api/bot/channel-subscribers (см. выше) — этот
+// маршрут только читает botStore.getChannelWeeklyReport().
+app.get('/api/ceo/telegram/channel-stats', teamAuth.requireCeoAuth, async (req, res) => {
+  try {
+    const now = new Date();
+    const toDate = req.query.to ? new Date(req.query.to) : now;
+    const fromDate = req.query.from ? new Date(req.query.from) : new Date(toDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      return res.status(400).json({ error: 'invalid_range', message: 'from/to должны быть корректными датами.' });
+    }
+    const channels = await botStore.getChannelWeeklyReport(fromDate, toDate);
+    res.json({ from: fromDate.toISOString(), to: toDate.toISOString(), channels });
+  } catch (err) {
+    console.error('[api] ceo telegram channel-stats failed:', err.message);
+    res.status(500).json({ error: 'telegram_channel_stats_unavailable', message: err.message });
+  }
+});
+
 // POST /api/ceo/telegram/leads/:chatId/send — body: { text }. Queues an
 // outgoing message (status 'pending') — does NOT send it itself, see the
 // file comment on botStore.js. n8n picks it up via GET /api/bot/messages/
@@ -6040,6 +6064,7 @@ app.post('/api/bot/channels', requireBotAuth, async (req, res) => {
       chatType: b.chatType,
       title: b.title,
       status: b.status,
+      username: b.username,
       actorUserId: b.actorUserId,
       actorName: b.actorName,
       actorUsername: b.actorUsername,
@@ -6048,6 +6073,63 @@ app.post('/api/bot/channels', requireBotAuth, async (req, res) => {
   } catch (err) {
     console.error('[api] bot channels failed:', err.message);
     res.status(400).json({ error: 'bot_channel_event_failed', message: err.message });
+  }
+});
+
+// POST /api/bot/channel-posts — массовый апсерт постов одного канала после
+// еженедельного скрейпа n8n публичной страницы t.me/s/<username> (Bot API не
+// даёт ни историю постов, ни их просмотры/комментарии — см. комментарий в
+// начале botStore.js). Body: { chatId, posts: [{ telegramMessageId, url,
+// text, publishedAt, views, commentsCount }, ...] }.
+app.post('/api/bot/channel-posts', requireBotAuth, async (req, res) => {
+  const b = req.body || {};
+  if (!b.chatId) return res.status(400).json({ error: 'chat_id_required', message: 'chatId обязателен.' });
+  if (!Array.isArray(b.posts)) return res.status(400).json({ error: 'posts_required', message: 'posts (массив) обязателен.' });
+  try {
+    const posts = await botStore.upsertChannelPosts(b.chatId, b.posts);
+    res.json({ posts });
+  } catch (err) {
+    console.error('[api] bot channel-posts failed:', err.message);
+    res.status(400).json({ error: 'bot_channel_posts_failed', message: err.message });
+  }
+});
+
+// POST /api/bot/channel-reactions — один апдейт message_reaction_count от
+// Telegram (real-time, релеится n8n по мере поступления — без исторического
+// бэкфилла, см. ответ «Да, включить с этого момента» 2026-10-13). Body:
+// { chatId, telegramMessageId, reactionsTotal, breakdown }.
+app.post('/api/bot/channel-reactions', requireBotAuth, async (req, res) => {
+  const b = req.body || {};
+  if (!b.chatId || !b.telegramMessageId) {
+    return res.status(400).json({ error: 'ids_required', message: 'chatId и telegramMessageId обязательны.' });
+  }
+  try {
+    const post = await botStore.upsertReactionCount({
+      chatId: b.chatId,
+      telegramMessageId: b.telegramMessageId,
+      reactionsTotal: b.reactionsTotal,
+      breakdown: b.breakdown,
+    });
+    res.json({ post });
+  } catch (err) {
+    console.error('[api] bot channel-reactions failed:', err.message);
+    res.status(400).json({ error: 'bot_channel_reactions_failed', message: err.message });
+  }
+});
+
+// POST /api/bot/channel-subscribers — один еженедельный снимок числа
+// подписчиков канала (n8n's getChatMemberCount). Body:
+// { chatId, subscriberCount }.
+app.post('/api/bot/channel-subscribers', requireBotAuth, async (req, res) => {
+  const b = req.body || {};
+  if (!b.chatId) return res.status(400).json({ error: 'chat_id_required', message: 'chatId обязателен.' });
+  if (b.subscriberCount == null) return res.status(400).json({ error: 'subscriber_count_required', message: 'subscriberCount обязателен.' });
+  try {
+    const row = await botStore.recordSubscriberCount(b.chatId, b.subscriberCount);
+    res.json({ row });
+  } catch (err) {
+    console.error('[api] bot channel-subscribers failed:', err.message);
+    res.status(400).json({ error: 'bot_channel_subscribers_failed', message: err.message });
   }
 });
 
@@ -6544,6 +6626,11 @@ app.get('/ceo/api-keys', teamAuth.requireCeoAuth, (req, res) => res.sendFile(pat
 // GET /ceo/access — 5-я вкладка, "Доступ" (frontend/access.html + the
 // /api/ceo/project-access* routes above). Same requireCeoAuth as /ceo.
 app.get('/ceo/access', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'access.html')));
+
+// GET /ceo/telegram-stats — еженедельная статистика по каналам, куда
+// добавлен бот (frontend/telegram-stats.html + GET /api/ceo/telegram/
+// channel-stats above). Same requireCeoAuth as the other bot tabs.
+app.get('/ceo/telegram-stats', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'telegram-stats.html')));
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns

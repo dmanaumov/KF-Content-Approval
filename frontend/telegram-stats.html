@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>КФ — Статистика Telegram</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css?v=20">
+  <link rel="stylesheet" href="/stat.css?v=9">
+  <link rel="stylesheet" href="/bot.css?v=4">
+  <link rel="stylesheet" href="/telegram-stats.css?v=1">
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div class="head-top">
+      <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+      <div class="head-right">
+        <div class="client-brand"><strong>Статистика Telegram-каналов</strong></div>
+        <a class="cal-toggle" href="/ceo" title="К CEO-дашборду" aria-label="К CEO-дашборду">←</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="ceo-tabs">
+    <a class="ceo-tab" href="/team">SMM</a>
+    <a class="ceo-tab" href="/ceo/bot-chats">Бот</a>
+    <a class="ceo-tab" href="/ceo/bot-leads">Переписка</a>
+    <a class="ceo-tab active" href="/ceo/telegram-stats">Статистика</a>
+    <a class="ceo-tab" href="/ceo/api-keys">Управление</a>
+    <a class="ceo-tab ceo-tab-access" href="/ceo/access">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5z"></path><path d="m9.5 12 1.8 1.8L15 10"></path></svg>
+      <span>Доступ</span>
+    </a>
+  </nav>
+
+  <div class="ts-range-row">
+    <label class="ts-range-field">С <input type="date" id="tsFrom"></label>
+    <label class="ts-range-field">По <input type="date" id="tsTo"></label>
+    <button id="tsRefreshBtn" class="ts-refresh-btn" type="button">Обновить</button>
+    <span id="tsRangeHint" class="ts-range-hint"></span>
+  </div>
+
+  <div id="loading" class="loading">Загружаем статистику…</div>
+  <div id="errorBox" class="error-box stat-error" hidden></div>
+  <main id="root" class="ts-root" hidden></main>
+</div>
+
+<script src="/telegram-stats.js?v=1"></script>
+</body>
+</html>

@@ -84,7 +84,7 @@ async function initSchema() {
     ALTER TABLE project_settings
       ADD COLUMN IF NOT EXISTS is_ai_project boolean NOT NULL DEFAULT false;
   `);
-  // "Проект в архиве" toggle (staff-set, same "Настройки" tab of the edit
+  // «Проект в архиве» toggle (staff-set, same "Настройки" tab of the edit
   // popup as is_ai_project above) — projects on pause that the team still
   // wants on record but doesn't want cluttering the default staff list. Ground
   // truth for the /projects "Архивные проекты" checkbox filter and the grey
@@ -608,6 +608,59 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS client_tg_subs_project_idx
       ON client_tg_subs (board_id, project_id);
   `);
+  // Телеграм-канал: @username бота в чате (нужен, чтобы собирать ссылку на
+  // пост вида t.me/<username>/<id> без похода в Bot API — getChat не даёт
+  // истории постов, только текущий username). Пустая строка = бот в чате,
+  // но username канала не публичный/не известен (см. kf-social-stats-
+  // tracking.md — публичный @username — предпосылка для статистики постов).
+  await pool.query(`
+    ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS username text NOT NULL DEFAULT '';
+  `);
+  // Еженедельная статистика по каналам, куда бот добавлен (добавлено
+  // 2026-10-13 по запросу: "мне надо делать еженедельный срез по каждому
+  // каналу, где добавлен наш бот" — посты/просмотры/реакции/комментарии/
+  // подписчики/вовлечённость). Bot API не даёт ни историю постов канала, ни
+  // их просмотры/комментарии — это даёт только бесплатная публичная страница
+  // t.me/s/<username> (HTML), которую скрейпит n8n (отдельный weekly-воркфлоу,
+  // этот backend никогда сам не ходит в Telegram — см. комментарий в начале
+  // botStore.js). Поэтому только публичные каналы (см. AskUserQuestion-ответ
+  // «Все публичные» от 2026-10-13) — для приватных нужен был бы MTProto-клиент
+  // с риском для аккаунта, решили не делать.
+  //
+  // bot_channel_posts — СНИМОК (upsert по PK, не append-only): просмотры/
+  // реакции/комментарии у поста только растут, нам нужны последние totals на
+  // пост, а не полная история точек по каждому посту (в отличие от подписчиков
+  // ниже, где нужен именно тренд по времени).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_channel_posts (
+      chat_id text NOT NULL REFERENCES bot_chats (chat_id),
+      telegram_message_id text NOT NULL,
+      url text NOT NULL DEFAULT '',
+      text text NOT NULL DEFAULT '',
+      published_at timestamptz,
+      views bigint NOT NULL DEFAULT 0,
+      comments_count integer NOT NULL DEFAULT 0,
+      reactions_total integer NOT NULL DEFAULT 0,
+      reactions_breakdown jsonb NOT NULL DEFAULT '{}'::jsonb,
+      first_seen_at timestamptz NOT NULL DEFAULT now(),
+      last_scraped_at timestamptz,
+      last_reaction_at timestamptz,
+      PRIMARY KEY (chat_id, telegram_message_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS bot_channel_posts_published_idx ON bot_channel_posts (chat_id, published_at);`);
+  // bot_channel_subscriber_stats — APPEND-ONLY (каждый еженедельный снимок —
+  // новая строка, как social_channel_stats выше): для отчёта нужна дельта
+  // «было/стало» за период, а не только последнее значение.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_channel_subscriber_stats (
+      id bigserial PRIMARY KEY,
+      chat_id text NOT NULL REFERENCES bot_chats (chat_id),
+      subscriber_count integer NOT NULL,
+      recorded_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS bot_channel_subscriber_stats_chat_idx ON bot_channel_subscriber_stats (chat_id, recorded_at);`);
   await ensureN8nRole();
 }
 
