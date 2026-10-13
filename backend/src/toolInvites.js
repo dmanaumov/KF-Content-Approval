@@ -39,7 +39,10 @@ async function createInvite({ mode, createdBy }) {
 
 async function listInvites() {
   const { rows } = await db.requirePool().query(
-    `SELECT ti.id, ti.token, ti.mode, ti.created_by, ti.created_at, ti.used_at, a.login AS used_by_login
+    // used_by_account_id добавлен 2026-10-13 — нужен фронту (invites.html),
+    // чтобы нарисовать кнопку "Сбросить пароль" у уже погашенного приглашения
+    // без отдельного запроса на аккаунт (см. POST /api/tool-accounts/:id/reset-password).
+    `SELECT ti.id, ti.token, ti.mode, ti.created_by, ti.created_at, ti.used_at, ti.used_by_account_id, a.login AS used_by_login
      FROM tool_invites ti LEFT JOIN tool_accounts a ON a.id = ti.used_by_account_id
      ORDER BY ti.created_at DESC`
   );

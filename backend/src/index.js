@@ -6487,6 +6487,25 @@ app.get('/api/tool-invites', staffAuth, async (req, res) => {
   }
 });
 
+// POST /api/tool-accounts/:accountId/reset-password — "Сбросить пароль" в
+// /admin/invites (по прямому запросу пользователя), admin/CEO only (та же
+// дверь, что выпуск приглашений). Возвращает новый пароль ОТКРЫТЫМ ТЕКСТОМ
+// ОДИН РАЗ — так же, как код приглашения, его нужно сразу передать
+// self-serve пользователю отдельно (это не сохраняется нигде, кроме хэша).
+app.post('/api/tool-accounts/:accountId/reset-password', staffAuth, async (req, res) => {
+  if (!req.staffScope || !req.staffScope.full) {
+    return res.status(403).json({ error: 'admin_only', message: 'Сбросить пароль может только админ/CEO.' });
+  }
+  try {
+    const result = await toolAuth.resetPassword(req.params.accountId);
+    if (!result) return res.status(404).json({ error: 'account_not_found' });
+    res.json({ login: result.account.login, password: result.password });
+  } catch (err) {
+    console.error('[api] reset tool account password failed:', err.message);
+    res.status(502).json({ error: 'reset_password_failed', message: err.message });
+  }
+});
+
 // GET /api/invite/:token — public; lets the /invite page render the right
 // copy (mode) and whether the link is still redeemable, WITHOUT the code.
 app.get('/api/invite/:token', async (req, res) => {

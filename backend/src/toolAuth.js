@@ -55,6 +55,40 @@ async function verifyLogin(login, password) {
   return { id: account.id, login: account.login, displayName: account.display_name };
 }
 
+// Кнопка "Сбросить пароль" в /admin/invites (по прямому запросу пользователя
+// 2026-10-13) — для случая, когда self-serve пользователь забыл пароль и
+// написал напрямую агентству, а не через какое-то (пока не существующее)
+// "забыли пароль" на самом /tool. Генерирует новый пароль, хэширует,
+// перезаписывает и возвращает ОТКРЫТЫМ ТЕКСТОМ ОДИН РАЗ — его показывает
+// админ в интерфейсе и дальше передаёт пользователю сам, тем же принципом
+// "отдельным каналом", что и код приглашения (см. toolInvites.js). Заодно
+// гасит все текущие сессии этого аккаунта — старый пароль мог быть
+// скомпрометирован, раз его вообще понадобилось сбрасывать.
+function randomPassword() {
+  // 9 байт base64url ~ 12 символов [A-Za-z0-9_-] — легко продиктовать/
+  // скопировать, без неоднозначных спецсимволов.
+  return crypto.randomBytes(9).toString('base64url');
+}
+
+async function resetPassword(accountId) {
+  const password = randomPassword();
+  const passwordHash = await hashSecret(password);
+  const { rows } = await db.requirePool().query(
+    `UPDATE tool_accounts SET password_hash = $2 WHERE id = $1 RETURNING id, login, display_name`,
+    [accountId, passwordHash]
+  );
+  if (!rows[0]) return null;
+  for (const [sessionId, entry] of sessions) {
+    if (String(entry.accountId) === String(accountId)) sessions.delete(sessionId);
+  }
+  try {
+    await db.requirePool().query(`DELETE FROM tool_sessions WHERE account_id = $1`, [accountId]);
+  } catch (err) {
+    console.error('[toolAuth] failed to clear sessions on password reset:', err.message);
+  }
+  return { account: rows[0], password };
+}
+
 async function createSession(account) {
   const id = newId();
   const expiresAt = Date.now() + SESSION_TTL_MS;
@@ -156,6 +190,7 @@ module.exports = {
   createAccount,
   findByLogin,
   verifyLogin,
+  resetPassword,
   createSession,
   getSession,
   destroySession,

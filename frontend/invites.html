@@ -45,7 +45,7 @@
   <div id="result" hidden class="iv-result"></div>
 
   <table class="iv-table">
-    <thead><tr><th>Создано</th><th>Режим</th><th>Статус</th></tr></thead>
+    <thead><tr><th>Создано</th><th>Режим</th><th>Статус</th><th></th></tr></thead>
     <tbody id="inviteRows"></tbody>
   </table>
 </div>
@@ -67,9 +67,15 @@
         var statusHtml = inv.used_at
           ? '<span class="iv-badge used">Использовано' + (inv.used_by_login ? ' — ' + esc(inv.used_by_login) : '') + '</span>'
           : '<span class="iv-badge pending">Ожидает</span>';
-        return '<tr><td>' + fmtDate(inv.created_at) + '</td><td>' + (inv.mode === 'ai' ? 'С ИИ' : 'Инструмент') + '</td><td>' + statusHtml + '</td></tr>';
+        // "Сбросить пароль" — только у уже погашенных приглашений (есть
+        // аккаунт, которому есть что сбрасывать), по прямому запросу
+        // пользователя 2026-10-13.
+        var actionHtml = inv.used_by_account_id
+          ? '<button class="iv-copy" style="background:#A12E2E" data-reset="' + esc(inv.used_by_account_id) + '" data-login="' + esc(inv.used_by_login || '') + '">Сбросить пароль</button>'
+          : '';
+        return '<tr><td>' + fmtDate(inv.created_at) + '</td><td>' + (inv.mode === 'ai' ? 'С ИИ' : 'Инструмент') + '</td><td>' + statusHtml + '</td><td>' + actionHtml + '</td></tr>';
       });
-      document.getElementById('inviteRows').innerHTML = rows.join('') || '<tr><td colspan="3" style="color:var(--muted)">Пока нет приглашений</td></tr>';
+      document.getElementById('inviteRows').innerHTML = rows.join('') || '<tr><td colspan="4" style="color:var(--muted)">Пока нет приглашений</td></tr>';
     });
   }
 
@@ -106,6 +112,38 @@
         document.getElementById('copyUrl').addEventListener('click', function () { copy(res.data.inviteUrl, this); });
         document.getElementById('copyCode').addEventListener('click', function () { copy(res.data.code, this); });
         loadList();
+      });
+  });
+
+  document.getElementById('inviteRows').addEventListener('click', function (e) {
+    var accountId = e.target.getAttribute('data-reset');
+    if (!accountId) return;
+    var login = e.target.getAttribute('data-login');
+    if (!confirm('Сбросить пароль для ' + (login || 'этого аккаунта') + '? Старый пароль перестанет работать, пользователя разлогинит.')) return;
+    e.target.disabled = true;
+    fetch('/api/tool-accounts/' + encodeURIComponent(accountId) + '/reset-password', { method: 'POST' })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        e.target.disabled = false;
+        var resultEl = document.getElementById('result');
+        if (!res.ok) {
+          resultEl.hidden = false;
+          resultEl.style.background = '#FBE0E0';
+          resultEl.textContent = (res.data && res.data.message) || 'Не удалось сбросить пароль.';
+          resultEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+        resultEl.hidden = false;
+        resultEl.style.background = '';
+        resultEl.innerHTML =
+          '<p><strong>Новый пароль</strong> для <code>' + esc(res.data.login) + '</code> (передайте пользователю сами, ОТДЕЛЬНЫМ каналом):<br><span class="iv-code" id="ivNewPassword">' + esc(res.data.password) + '</span><button class="iv-copy" id="copyNewPassword">Копировать</button></p>' +
+          '<p style="color:var(--muted);font-size:12px">Пароль показывается только сейчас — если потерять, нужно будет сбросить ещё раз. Все предыдущие сессии этого аккаунта завершены.</p>';
+        document.getElementById('copyNewPassword').addEventListener('click', function () { copy(res.data.password, this); });
+        resultEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      })
+      .catch(function () {
+        e.target.disabled = false;
+        alert('Ошибка сети — попробуйте ещё раз.');
       });
   });
 
