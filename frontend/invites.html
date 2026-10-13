@@ -5,12 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>КФ — Приглашения</title>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="stylesheet" href="/app.css?v=20">
+<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/app.css?v=22">
+<link rel="stylesheet" href="/projects.css?v=24">
 <style>
+  /* Шапка .staff-head/.head-icon-link ниже — те же классы, что и у основной
+     админки (projects.html, см. его .staff-head/.staff-links) — по
+     прямому запросу пользователя 2026-10-13: "окно управления клиентами
+     выглядит оторванным, давай его вписывать в общую админку". Контент
+     страницы (выпуск ссылки, таблица приглашений) остаётся своим, просто
+     теперь под тем же баннером и с переходом назад в админку. */
   .iv-wrap{max-width:640px;margin:0 auto;padding:22px 16px 60px}
-  .iv-head{display:flex;align-items:center;gap:10px;margin-bottom:18px}
-  .iv-head img{width:34px;height:34px;border-radius:9px}
-  .iv-head strong{font-size:16px}
+  .iv-intro{font-size:13px;color:var(--muted);margin:0 0 16px}
   .iv-row{display:flex;gap:10px;margin-bottom:18px}
   .iv-row select{border:1px solid var(--line);border-radius:12px;padding:12px 13px;font-size:14px;background:var(--bg);color:var(--ink)}
   .iv-result{background:#E1F3E5;border-radius:14px;padding:16px;margin-bottom:20px;font-size:14px}
@@ -30,9 +37,33 @@
 </style>
 </head>
 <body>
-<div class="page iv-wrap">
-  <div class="iv-head"><img src="/kf-logo.png" alt="КФ"><strong>Приглашения — самостоятельное создание проекта</strong></div>
-  <p style="font-size:13px;color:var(--muted);margin:0 0 16px">Ссылку отправьте получателю как угодно, а код — ОТДЕЛЬНЫМ сообщением (например, в WhatsApp), не в одном тексте со ссылкой.</p>
+<div class="page">
+  <header class="staff-head">
+    <div class="staff-head-main">
+      <div class="staff-title-row">
+        <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
+        <h1 class="staff-title">Приглашения в самостоятельный <span class="staff-title-brand">кабинет</span></h1>
+      </div>
+      <div class="staff-sub-row">
+        <p class="staff-sub">Ссылка + код — доступ к созданию SaaS-проекта без участия команды</p>
+        <div class="staff-head-pill">только admin/CEO</div>
+      </div>
+      <div class="staff-links">
+        <a id="adminBackLink" class="head-icon-link" href="#" title="Назад в админку" aria-label="Назад в админку">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        </a>
+        <a class="head-icon-link" href="/team" title="Кабинет команды" aria-label="Кабинет команды">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 20c0-3 1.9-4.7 4.5-4.7s4.5 1.7 4.5 4.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M15 5.8a3.2 3.2 0 110 5.4M15.5 15.6c2.2.6 3.5 2.1 3.5 4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </a>
+        <a class="head-icon-link" href="/stat" title="Статистика доступа" aria-label="Статистика доступа">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="10" y="7" width="4" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="16" y="3" width="4" height="17" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <div class="iv-wrap">
+  <p class="iv-intro">Ссылку отправьте получателю как угодно, а код — ОТДЕЛЬНЫМ сообщением (например, в WhatsApp), не в одном тексте со ссылкой.</p>
 
   <div class="iv-row">
     <select id="modeSelect">
@@ -48,9 +79,16 @@
     <thead><tr><th>Создано</th><th>Режим</th><th>Статус</th><th></th></tr></thead>
     <tbody id="inviteRows"></tbody>
   </table>
+  </div>
 </div>
 <script>
 (function () {
+  // Путь назад в админку — не хардкодим "/projects": эта страница всегда
+  // живёт по адресу {staffProjectsPath}/invites (см. index.js), так что
+  // просто отрезаем "/invites" от своего же пути — работает и если
+  // STAFF_PROJECTS_PATH сконфигурирован иначе.
+  document.getElementById('adminBackLink').href = location.pathname.replace(/\/invites\/?$/, '') || '/';
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
