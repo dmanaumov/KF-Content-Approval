@@ -14,6 +14,46 @@ const ACTIVE_STATUSES = ['В ПРОЦЕССЕ', 'КОРРЕКТИРОВКА'];
 const GRAY_STATUSES = ['НА СОГЛАСОВАНИИ', 'СДАЛИ', 'ЗАПЛАНИРОВАНО'];
 const PREFERRED_STATUS_ORDER = [...ACTIVE_STATUSES, ...GRAY_STATUSES];
 
+// Мини-прогресс сверху карточки в списке — тот же индикатор и та же логика,
+// что в кабинете клиента (см. progressHtml()/PROGRESS_STAGES в app.js,
+// дублировано здесь — файлы без общего модуля, как и остальные общие
+// хелперы вроде mediaFileUrl). По прямому запросу пользователя (2026-10-13).
+// Применяется только к карточкам с уже нормализованным task.status (waiting/
+// changes/approved/published) — на внутренних добордовых статусах (ещё не
+// переданных клиенту) индикатор не показываем, он тут не осмыслен. Компактная
+// версия — только точки, без подписей (см. .card-progress.compact в app.css,
+// которое грузится и на этой странице).
+const PROGRESS_STAGES = [
+  { key: 'text', label: 'Текст' },
+  { key: 'visual', label: 'Визуал' },
+  { key: 'waiting', label: 'Провер.' },
+  { key: 'changes', label: 'Правки' },
+  { key: 'approved', label: 'Готово' },
+  { key: 'published', label: 'Публ.' },
+];
+const PROGRESS_STATUS_INDEX = { waiting: 2, changes: 3, approved: 4, published: 5 };
+function progressStages(task) {
+  const current = PROGRESS_STATUS_INDEX[task.status];
+  if (current == null) return null;
+  const textDone = !!(task.caption && task.caption.trim());
+  const visualDone = !!(task.media && task.media.length);
+  return PROGRESS_STAGES.map((s, i) => {
+    let state;
+    if (i === 0) state = textDone ? 'done' : 'upcoming';
+    else if (i === 1) state = visualDone ? 'done' : 'upcoming';
+    else state = i < current ? 'done' : i === current ? 'active' : 'upcoming';
+    return { key: s.key, label: s.label, state };
+  });
+}
+function progressHtml(task, compact) {
+  const stages = progressStages(task);
+  if (!stages) return '';
+  const steps = stages
+    .map((s) => `<span class="cp-step ${s.state}"><span class="cp-dot"></span><span class="cp-label">${esc(s.label)}</span></span>`)
+    .join('');
+  return `<div class="card-progress${compact ? ' compact' : ''}">${steps}</div>`;
+}
+
 // Соцсеть и AI-тег — тот же префикс-конвеншен, что frontend/app.js уже
 // реально читает (SOCIAL_MAP/SOCIAL_PREFIX_RE/detectSocial там) для бейджа
 // на карточке клиента, и backend/src/index.js пишет (updateTaskNetwork). Нет
@@ -521,8 +561,10 @@ function taskRowHtml(task) {
     ? `<span class="team-task-check${selectedTaskIds.has(task.id) ? ' checked' : ''}" aria-hidden="true"></span>`
     : '';
   const selectedCls = selectMode && selectedTaskIds.has(task.id) ? ' selected' : '';
-  return `<div class="team-task${urgent ? ' urgent' : ''}${selectedCls}" data-task-id="${esc(task.id)}">
+  const progress = progressHtml(task, true);
+  return `<div class="team-task${urgent ? ' urgent' : ''}${selectedCls}${progress ? ' has-progress' : ''}" data-task-id="${esc(task.id)}">
     ${checkboxHtml}
+    ${progress}
     <div class="team-task-top">
       <div>
         ${task.projectLabel ? `<div class="team-task-project">${esc(task.projectLabel)}</div>` : ''}

@@ -433,6 +433,46 @@ function mediaHtml(task, canReorder) {
   return `<div class="media">${reorderBtn}<div class="carousel" data-count="${task.media.length}">${slides}</div>${navArrows}${counter}</div>`;
 }
 
+// Мини-прогресс сверху карточки — по прямому запросу пользователя
+// (2026-10-13): «сверху на карточках должен быть виден прогресс». Линейная
+// аппроксимация из 6 шагов: первые два (Текст/Визуал) — реальная готовность
+// материала (caption/media уже на карточке, НЕ зависит от статуса), последние
+// четыре — реальный task.status (тот же, что красит бейдж статуса через
+// statusInfo()). Это упрощение, не точная история: если статус approved/
+// published, шаг «Правки» подсвечивается как пройденный, даже если пост
+// ни разу не возвращали на правки — здесь важна общая картина «на каком
+// этапе пост», а не точный путь, которым он туда пришёл.
+const PROGRESS_STAGES = [
+  { key: 'text', label: 'Текст' },
+  { key: 'visual', label: 'Визуал' },
+  { key: 'waiting', label: 'Провер.' },
+  { key: 'changes', label: 'Правки' },
+  { key: 'approved', label: 'Готово' },
+  { key: 'published', label: 'Публ.' },
+];
+const PROGRESS_STATUS_INDEX = { waiting: 2, changes: 3, approved: 4, published: 5 };
+function progressStages(task) {
+  const current = PROGRESS_STATUS_INDEX[task.status];
+  if (current == null) return null; // неизвестный/внутренний статус — индикатор не показываем
+  const textDone = !!(task.caption && task.caption.trim());
+  const visualDone = !!(task.media && task.media.length);
+  return PROGRESS_STAGES.map((s, i) => {
+    let state;
+    if (i === 0) state = textDone ? 'done' : 'upcoming';
+    else if (i === 1) state = visualDone ? 'done' : 'upcoming';
+    else state = i < current ? 'done' : i === current ? 'active' : 'upcoming';
+    return { key: s.key, label: s.label, state };
+  });
+}
+function progressHtml(task) {
+  const stages = progressStages(task);
+  if (!stages) return '';
+  const steps = stages
+    .map((s) => `<span class="cp-step ${s.state}"><span class="cp-dot"></span><span class="cp-label">${esc(s.label)}</span></span>`)
+    .join('');
+  return `<div class="card-progress">${steps}</div>`;
+}
+
 function cardHtml(task) {
   const st = statusInfo(task.status);
   const busy = busyTaskId === task.id;
@@ -511,6 +551,7 @@ function cardHtml(task) {
     ? `<div class="keywords-note"><span class="keywords-note-icon">💡</span><span class="keywords-note-text">${esc(keywordsText)}</span></div>`
     : '';
   const article = `<article class="card${swipeable ? ' swipeable' : ''}${busy ? ' pending-action' : ''}${urgent ? ' urgent' : ''}${ai ? ' ai' : ''}" id="task-${esc(task.id)}" data-task-id="${esc(task.id)}">
+    ${progressHtml(task)}
     ${aiAvatar}
     <div class="meta">
       <div class="meta-left">

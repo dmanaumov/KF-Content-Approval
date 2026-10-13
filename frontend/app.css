@@ -134,6 +134,32 @@ button{cursor:pointer}
 @media (prefers-reduced-motion: reduce){
   .card.ai{animation:none}
 }
+/* Мини-прогресс сверху карточки (card-progress) — 6 шагов, см. progressHtml()
+   в app.js для точной логики. Полоска-коннектор между точками рисуется через
+   ::before на каждом шаге кроме первого, подсвечивается тем же цветом, что и
+   точка слева от неё, когда тот шаг пройден. */
+.card-progress{display:flex;padding:10px 14px 0}
+.cp-step{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.cp-step::before{content:'';position:absolute;top:4px;right:50%;width:100%;height:2px;background:var(--line);z-index:0}
+.cp-step:first-child::before{display:none}
+.cp-dot{width:9px;height:9px;border-radius:50%;background:var(--line);z-index:1}
+.cp-label{font-size:9px;font-weight:800;color:var(--muted);text-align:center;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.cp-step.done .cp-dot{background:var(--accent)}
+.cp-step.done::before{background:var(--accent)}
+.cp-step.done .cp-label{color:var(--accent)}
+.cp-step.active .cp-dot{background:var(--urgent);box-shadow:0 0 0 3px rgba(255,95,96,.22)}
+.cp-step.active .cp-label{color:var(--ink)}
+/* Компактная версия — для плотного списка /team (.team-task), где месту
+   под подписи нет: только точки с коннектором, без текста. Без собственных
+   отступов — .team-task уже задаёт padding и flex-gap между своими детьми. */
+.card-progress.compact{padding:0}
+.card-progress.compact .cp-step{gap:0}
+.card-progress.compact .cp-dot{width:7px;height:7px}
+.card-progress.compact .cp-label{display:none}
+/* .team-task-check (мультивыбор) закреплён к верхнему краю карточки
+   абсолютным позиционированием — когда сверху появляется компактный
+   прогресс-бар, сдвигаем чекбокс ниже него, чтобы не перекрывались. */
+.team-task.has-progress .team-task-check{top:30px}
 /* Tinder-style swipe (list view only): each non-terminal card sits in a
    .swipe-wrap with two zones behind it that light up as the card is
    dragged — green "✓ СОГЛАСОВАТЬ" on the right, red "✎ ЕСТЬ ПРАВКИ" on the
