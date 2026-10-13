@@ -64,6 +64,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Flat startup delay (2026-10-13) — belt-and-suspenders on top of the
+    # depends_on/service_healthy gate above and waitForDb()'s own in-app
+    # retry (backend/src/index.js): this app is deployed through Dokploy,
+    # which runs the stack via Docker SWARM, not plain `docker compose up`
+    # — and Swarm mode does NOT support `depends_on` (with or without a
+    # condition) at all, it's silently ignored. So on every fresh
+    # deploy/first boot, "app" actually starts at the same time as "db"
+    # regardless of the block above, races Postgres's initdb, and has
+    # already been seen losing that race often enough (schema never
+    # created, "relation ... does not exist" until a manual restart) that a
+    # blind sleep before the app even starts is worth it. Override via
+    # APP_START_DELAY in .env (seconds) if 30s isn't enough on a given host.
+    command: ["sh", "-c", "sleep ${APP_START_DELAY:-30} && exec node src/index.js"]
     volumes:
       # LEGACY — only still needed so the one-time migration in
       # backend/src/projectSettings.js (importLegacyFileTokens) can read the
