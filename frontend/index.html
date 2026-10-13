@@ -7,7 +7,7 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=20">
+  <link rel="stylesheet" href="/app.css?v=21">
 </head>
 <body>
 <div class="page">
@@ -16,26 +16,22 @@
       <div class="head-top">
         <div class="kf"><img src="/kf-logo.png" alt="КФ"></div>
         <div class="head-right">
-          <button id="calendarToggle" class="cal-toggle" type="button" title="Календарь публикаций" aria-label="Календарь публикаций">
-            <span aria-hidden="true">🗓️</span>
-          </button>
           <div class="client-brand">
             <div id="clientLogo" class="client-logo-demo">К</div>
             <strong id="clientName">Загрузка…</strong>
           </div>
         </div>
       </div>
-      <div id="listHead">
-        <div id="weeks" class="week-row"></div>
-        <div class="progress-line">
-          <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
-          <div id="progressText" class="progress-text"></div>
-        </div>
+      <div id="mainTabs" class="main-tabs">
+        <button class="main-tab waiting-tab" data-tab="waiting" type="button">
+          <span>На согласование</span><span id="waitingCount" class="tab-count"></span><span id="urgentBadge" class="tab-fire" hidden></span>
+        </button>
+        <button class="main-tab" data-tab="feed" type="button">Общая лента</button>
+        <button class="main-tab" data-tab="calendar" type="button">Календарь</button>
       </div>
     </header>
 
     <div id="listView">
-      <div id="attention" class="attention" hidden></div>
       <div id="calSubBanner" class="cal-sub-banner" hidden>
         <div class="cal-sub-text">
           <strong>📅 Напоминания в календаре</strong>
@@ -46,12 +42,12 @@
           <button type="button" class="cal-sub-dismiss" data-action="cal-sub-dismiss" aria-label="Скрыть">✕</button>
         </div>
       </div>
-      <div class="filters">
-        <button class="filter active" data-filter="waiting">Ожидают</button>
+      <div id="filtersRow" class="filters" hidden>
+        <button class="filter" data-filter="waiting">Ожидают</button>
         <button class="filter" data-filter="changes">Правки</button>
         <button class="filter" data-filter="approved">Согласовано</button>
         <button class="filter" data-filter="published">Опубликовано</button>
-        <button class="filter" data-filter="">Все</button>
+        <button class="filter active" data-filter="">Все</button>
       </div>
       <div id="loading" class="loading">Загружаем задачи из производственной системы КонтентФермы…</div>
       <main id="stack" class="stack"></main>
@@ -138,7 +134,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/app.js?v=24"></script>
+<script src="/app.js?v=25"></script>
 <script src="/welcome.js?v=1" defer data-audience="client"></script>
 </body>
 </html>

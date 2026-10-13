@@ -25,8 +25,11 @@ let boardId = directBoardId || null;
 let projectFilter = params.get('project') || null; // which client this link is for, on a shared board
 
 let state = { tasks: [], board: null };
-let activeWeek = null;
-let activeFilter = 'waiting'; // default view: only what actually needs the client's attention
+// Верхняя навигация — три таба вместо недель + отдельного баннера-напоминания
+// + иконки календаря в шапке (упрощение интерфейса, 2026-10-13).
+let activeTab = 'waiting'; // 'waiting' | 'feed' — какой список сейчас показан под табами
+let calendarOpen = false; // календарь — отдельный оверлей поверх listView, не третье состояние activeTab
+let activeFilter = ''; // статус-фильтр, используется только во вкладке "Общая лента" ('' = Все)
 let feedbackTaskId = '';
 let busyTaskId = null;
 let editingTextTaskId = '';
@@ -303,6 +306,15 @@ function isUrgent(task) {
   return d !== null && d < 3;
 }
 
+// Для бейджа на табе "На согласование": сколько всего ждёт решения клиента
+// и сколько из них горит. Таб всегда одного (зелёного) цвета — счётчик и
+// 🔥-бейдж просто добавляются/пропадают, без смены цвета всего таба.
+function waitingStats(tasks) {
+  const waiting = tasks.filter((t) => t.status === 'waiting');
+  const urgent = waiting.filter(isUrgent);
+  return { waiting, urgent };
+}
+
 // Two possible sources: an attachment on the Mattermost card itself (Boards'
 // own file storage, keyed by team+board), or a disk.kontentferma.* share
 // link found in the post text/URL and proxied through our own disk-embed
@@ -410,7 +422,13 @@ function cardHtml(task) {
   const ai = isAiPost(task.title);
   const editingText = editingTextTaskId === task.id;
   const canEditText = task.status !== 'approved' && task.status !== 'published';
-  const swipeable = canEditText;
+  // Tinder-style swipe отключён по жалобе клиента (2026-10-09, "неудобно") —
+  // держим весь механизм ниже по файлу нетронутым (на случай если решат
+  // вернуть), просто никогда не помечаем карточку swipeable: без класса
+  // .card.swipeable touch/pointer-обработчики свайпа молча не находят
+  // карточку и ничего не делают. Кнопки "Согласовать"/"Правки/комментарии"
+  // (см. actions ниже) — единственный способ ответить по карточке.
+  const swipeable = false;
   let actions;
   if (task.status === 'approved') {
     actions = '<div class="actions"><div class="approved-box">✓ Согласовано</div></div>';
@@ -508,26 +526,6 @@ function cardHtml(task) {
   </div>`;
 }
 
-// Besides the label, each week entry now also tracks whether it contains
-// something still awaiting client approval (hasWaiting) and, more
-// specifically, something urgent (hasUrgent — publish date within 3 days).
-// hasUrgent is always a subset of hasWaiting (isUrgent() requires
-// status === 'waiting'), so the period pill only needs one border-accent
-// class; the icon (dot vs fire) is chosen from hasUrgent alone.
-function weeksOf(tasks) {
-  const map = new Map();
-  for (const t of tasks) {
-    if (!t.weekStart) continue;
-    if (!map.has(t.weekStart)) {
-      map.set(t.weekStart, { label: t.weekLabel, hasWaiting: false, hasUrgent: false });
-    }
-    const entry = map.get(t.weekStart);
-    if (t.status === 'waiting') entry.hasWaiting = true;
-    if (isUrgent(t)) entry.hasUrgent = true;
-  }
-  return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0])); // newest first
-}
-
 // Calendar view — a month grid built entirely from the already-loaded
 // state.tasks (no extra API call). Only tasks with a publishDate appear on
 // it. Marker rule (agency's spec): urgent (waiting + due soon/overdue) shows
@@ -543,71 +541,6 @@ function calMarkerHtml(task) {
 function scrollToTask(id) {
   const el = document.getElementById(`task-${id}`);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-// Jumps to a specific post: switches to its week, clears any filter so the
-// card is actually rendered, then smooth-scrolls to it. Shared by the
-// attention panel links and anything else that needs "take me to this card".
-function focusTask(id) {
-  const task = state.tasks.find((t) => t.id === id);
-  if (!task) return;
-  if (task.weekStart) activeWeek = task.weekStart;
-  activeFilter = '';
-  document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
-  render();
-  scrollToTask(id);
-}
-
-// Top info strip, two rows:
-//   Row 1 — approval status: burning posts (accent #ff5f60, click → jump to
-//     that card) + total posts awaiting approval (click → jump to the oldest).
-//     Burning only shown if any; if there are waiting but no burning → soft green.
-//   Row 2 — nearest upcoming publication: date — first ~20 chars of the title
-//     (click → jump to that card).
-// Computed across ALL the client's tasks (not the active week).
-function updateAttention() {
-  const el = document.getElementById('attention');
-  const all = clientFacingTasks();
-  if (!all.length) { el.hidden = true; return; }
-
-  const waiting = all.filter((t) => t.status === 'waiting');
-  const urgent = waiting.filter(isUrgent);
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const byDate = (a, b) => (a.publishDate || '9999').localeCompare(b.publishDate || '9999');
-
-  // Row 1.
-  const row1 = [];
-  let stateClass = 'clear';
-  if (urgent.length) {
-    stateClass = 'urgent';
-    const hottest = urgent.slice().sort(byDate)[0];
-    const g = urgent.length;
-    row1.push(`<button class="attention-link" data-scroll="${hottest.id}">🔥 ${g} ${plural(g, 'горящий пост', 'горящих поста', 'горящих постов')} — срочно рассмотреть!</button>`);
-  }
-  if (waiting.length) {
-    if (stateClass !== 'urgent') stateClass = 'waiting';
-    const oldest = waiting.slice().sort(byDate)[0];
-    const w = waiting.length;
-    row1.push(`<button class="attention-link" data-scroll="${oldest.id}">${w} ${plural(w, 'пост', 'поста', 'постов')} на согласовании</button>`);
-  }
-
-  // Row 2 — nearest upcoming publication.
-  const nextPub = all
-    .filter((t) => t.publishDate && t.publishDate >= today)
-    .sort(byDate)[0];
-
-  let html = '';
-  if (row1.length) html += `<div class="attention-row1">${row1.join(' · ')}</div>`;
-  if (nextPub) {
-    const short = nextPub.title.length > 20 ? `${nextPub.title.slice(0, 20)}…` : nextPub.title;
-    html += `<button class="attention-link attention-row2" data-scroll="${nextPub.id}">Ближайшая публикация: ${formatDatePill(nextPub.publishDate)} — ${esc(short)}</button>`;
-  }
-  if (!html) html = '<div class="attention-row1">Все посты согласованы</div>';
-
-  el.className = `attention ${stateClass}`;
-  el.innerHTML = html;
-  el.hidden = false;
 }
 
 function renderCalendar() {
@@ -680,40 +613,27 @@ function renderCalendar() {
 }
 
 // Чистое переключение вида, без истории/URL — используется и открытием по
-// кнопке (openCalendar ниже), и синхронизацией с адресной строкой при её
-// изменении (см. applyCalendarViewFromLocation/popstate ниже), и авто-
-// открытием по "?calend"-ссылке при первой загрузке страницы (там URL уже
-// правильный, пушить в историю ещё раз не нужно).
+// табу "Календарь" (openCalendar ниже), и синхронизацией с адресной строкой
+// при её изменении (см. applyCalendarViewFromLocation/popstate ниже), и
+// авто-открытием по "?calend"-ссылке при первой загрузке страницы (там URL
+// уже правильный, пушить в историю ещё раз не нужно).
+// activeTab ('waiting'/'feed') намеренно не трогается здесь — календарь
+// открывается ПОВЕРХ него, при закрытии возвращается тот же таб, что был.
 function showCalendarView(on) {
-  document.getElementById('listHead').hidden = on;
+  calendarOpen = on;
   document.getElementById('listView').hidden = on;
   document.getElementById('calendarView').hidden = !on;
   hideCalPostPopup();
-  updateCalendarToggleIcon(on);
+  updateMainTabsActive();
   if (on) renderCalendar();
 }
 
-// Иконка в шапке отражает вид, в который попадёшь по клику (не текущий) —
-// в ленте показываем 🗓️ "открыть календарь", в календаре — 📰 "вернуться
-// в ленту". Сам обработчик клика (см. calendarToggleClick ниже) сам решает,
-// какой из двух вызвать, ориентируясь на текущее состояние.
-function updateCalendarToggleIcon(calendarOpen) {
-  const btn = document.getElementById('calendarToggle');
-  const icon = btn.querySelector('span');
-  if (calendarOpen) {
-    icon.textContent = '📰';
-    btn.title = 'Лента публикаций';
-    btn.setAttribute('aria-label', 'Лента публикаций');
-  } else {
-    icon.textContent = '🗓️';
-    btn.title = 'Календарь публикаций';
-    btn.setAttribute('aria-label', 'Календарь публикаций');
-  }
-}
-
-function calendarToggleClick() {
-  const calendarOpen = !document.getElementById('calendarView').hidden;
-  if (calendarOpen) closeCalendar(); else openCalendar();
+// Подсветка активного таба — своя функция (не часть render()), т.к. вызов
+// нужен и из showCalendarView (календарь поверх текущего таба), и из render.
+function updateMainTabsActive() {
+  document.querySelectorAll('.main-tab').forEach((b) =>
+    b.classList.toggle('active', calendarOpen ? b.dataset.tab === 'calendar' : b.dataset.tab === activeTab)
+  );
 }
 
 // Попап с полной информацией по "не начато"-карточке в календаре клиента —
@@ -822,38 +742,41 @@ window.addEventListener('popstate', applyCalendarViewFromLocation);
 
 function render() {
   const tasks = clientFacingTasks();
-  const weeks = weeksOf(tasks);
-  if (!activeWeek || !weeks.some(([w]) => w === activeWeek)) {
-    activeWeek = weeks.length ? weeks[0][0] : null;
-  }
+  const { waiting, urgent } = waitingStats(tasks);
 
-  document.getElementById('weeks').innerHTML = weeks
-    .map(([w, info]) => {
-      const marker = info.hasUrgent
-        ? '<span class="week-marker fire" aria-hidden="true">🔥</span>'
-        : info.hasWaiting
-        ? '<span class="week-marker dot" aria-hidden="true"></span>'
-        : '';
-      const cls = `week${w === activeWeek ? ' active' : ''}${info.hasWaiting ? ' has-waiting' : ''}`;
-      return `<button class="${cls}" data-week="${w}">${marker}${esc(info.label)}</button>`;
-    })
-    .join('');
+  // Бейдж на табе "На согласование" — общее число всегда видно, 🔥 с числом
+  // горящих — только если такие есть. Сам таб цвет не меняет (см. CSS
+  // .waiting-tab) — горящие просто показываются первыми в списке ниже.
+  document.getElementById('waitingCount').textContent = waiting.length ? `· ${waiting.length}` : '';
+  const fireBadge = document.getElementById('urgentBadge');
+  fireBadge.hidden = !urgent.length;
+  if (urgent.length) fireBadge.textContent = `🔥${urgent.length}`;
 
-  const inWeek = tasks.filter((t) => t.weekStart === activeWeek);
-  const approved = inWeek.filter((t) => t.status === 'approved').length;
-  document.getElementById('progressFill').style.width = (inWeek.length ? (approved / inWeek.length) * 100 : 0) + '%';
-  document.getElementById('progressText').textContent = `${approved} из ${inWeek.length} согласовано`;
-
-  // Nothing left to approve anywhere (no 'waiting' task across the whole
-  // board) → celebrate with the mascot and make sure the "Все" filter is
-  // active so the approved posts are actually visible below it.
-  const nothingToApprove = !tasks.some((t) => t.status === 'waiting');
-  if (nothingToApprove && activeFilter) {
+  // Нечего согласовывать нигде → незачем держать клиента на пустом табе,
+  // переключаем на общую ленту: там и поздравление, и уже согласованные посты
+  // видны (раньше это делал сброс activeFilter на "Все").
+  const nothingToApprove = !waiting.length;
+  if (activeTab === 'waiting' && nothingToApprove) {
+    activeTab = 'feed';
     activeFilter = '';
     document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
   }
 
-  const visible = inWeek.filter((t) => !activeFilter || t.status === activeFilter);
+  updateMainTabsActive();
+  document.getElementById('filtersRow').hidden = activeTab !== 'feed';
+
+  let visible;
+  if (activeTab === 'waiting') {
+    visible = waiting.slice().sort((a, b) => {
+      const au = isUrgent(a);
+      const bu = isUrgent(b);
+      if (au !== bu) return au ? -1 : 1; // горящие — первыми
+      return (a.publishDate || '9999').localeCompare(b.publishDate || '9999');
+    });
+  } else {
+    visible = tasks.filter((t) => !activeFilter || t.status === activeFilter);
+  }
+
   const mascot = nothingToApprove
     ? `<div class="all-done">
         <img class="all-done-mascot" src="/mascot.png" alt="КРАСАВА">
@@ -872,7 +795,6 @@ function render() {
     const el = document.getElementById(`task-${deepLinkTaskId}`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
-  updateAttention();
   updateCalendarSubBanner();
 }
 
@@ -887,10 +809,9 @@ async function loadTasks() {
     state.tasks = data.tasks;
     state.board = data.board;
     if (deepLinkTaskId) {
-      const t = state.tasks.find((x) => x.id === deepLinkTaskId);
-      if (t) activeWeek = t.weekStart;
-      // Clear the status filter so the linked card actually renders even if
-      // it's not "waiting" (same as focusTask does for attention-panel links).
+      // Переходим в общую ленту и сбрасываем фильтр, чтобы ссылка показывала
+      // карточку независимо от её статуса (не только "ожидает").
+      activeTab = 'feed';
       activeFilter = '';
       document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
     }
@@ -1113,10 +1034,16 @@ document.querySelector('[data-action="cal-sub-dismiss"]').addEventListener('clic
   document.getElementById('calSubBanner').hidden = true;
 });
 
-document.getElementById('weeks').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-week]');
+document.getElementById('mainTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.main-tab');
   if (!btn) return;
-  activeWeek = btn.dataset.week;
+  const tab = btn.dataset.tab;
+  if (tab === 'calendar') {
+    if (!calendarOpen) openCalendar();
+    return;
+  }
+  if (calendarOpen) closeCalendar();
+  activeTab = tab;
   render();
 });
 
@@ -1179,6 +1106,10 @@ async function uploadFeedbackImage(taskId, file) {
   }
 }
 
+// DISABLED 2026-10-09 (client feedback: "неудобно") — cardHtml() now always
+// sets swipeable=false, so none of this code below ever runs in production;
+// left in place rather than deleted in case the client changes their mind.
+//
 // Tinder-style swipe approval, list view only (the cards in #stack — the
 // calendar view has no cards to swipe). Only non-terminal cards are
 // swipeable (same set that gets the Согласовать/Есть правки buttons): drag
@@ -1528,13 +1459,6 @@ document.getElementById('feedbackImagePreview').addEventListener('click', (e) =>
   }
 });
 
-document.getElementById('attention').addEventListener('click', (e) => {
-  const btn = e.target.closest('.attention-link');
-  if (!btn) return;
-  focusTask(btn.dataset.scroll);
-});
-
-document.getElementById('calendarToggle').addEventListener('click', calendarToggleClick);
 document.getElementById('calBack').addEventListener('click', closeCalendar);
 document.getElementById('calPrev').addEventListener('click', () => {
   calMonth--;
@@ -1563,7 +1487,7 @@ document.getElementById('calendarGrid').addEventListener('click', (e) => {
   hideCalPostPopup();
   closeCalendar();
   if (task) {
-    activeWeek = task.weekStart;
+    activeTab = 'feed';
     activeFilter = '';
     document.querySelectorAll('.filter').forEach((x) => x.classList.toggle('active', x.dataset.filter === ''));
   }

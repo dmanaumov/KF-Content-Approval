@@ -436,6 +436,38 @@ async function updateCerberusMarkdown(boardId, projectId, markdown) {
   );
 }
 
+// Только ИИ-промты проекта (и, если передано, референсы картинок) — MERGE:
+// поле, которого нет в запросе (undefined), не трогаем; '' — очищает.
+// Для восстановления из бэкапа портала my.kontentferma.com через
+// POST /api/automation/projects/:projectId/prompts. Логотип, доступы соцсетей,
+// даты, Цербер и прочее на строке не трогаются.
+async function updatePrompts(boardId, projectId, { strategyPrompt, planningPrompt, postPrompt, imagePrompt, imageReferences }) {
+  const fields = [
+    ['strategy_prompt', strategyPrompt],
+    ['planning_prompt', planningPrompt],
+    ['post_prompt', postPrompt],
+    ['image_prompt', imagePrompt],
+  ].filter(([, v]) => v !== undefined);
+  if (!fields.length && imageReferences === undefined) {
+    throw new Error('Укажите хотя бы один промт: strategyPrompt, planningPrompt, postPrompt или imagePrompt.');
+  }
+  await ensureRow(boardId, projectId);
+  const sets = ['updated_at = now()'];
+  const params = [boardId, projectId];
+  for (const [col, v] of fields) {
+    params.push(textOrEmpty(v));
+    sets.push(`${col} = $${params.length}`);
+  }
+  if (imageReferences !== undefined) {
+    params.push(JSON.stringify(normalizeImageReferences(imageReferences)));
+    sets.push(`image_references = $${params.length}::jsonb`);
+  }
+  await db.requirePool().query(
+    `UPDATE project_settings SET ${sets.join(', ')} WHERE board_id = $1 AND project_id = $2`,
+    params
+  );
+}
+
 // Merge-upsert ONE network's credentials for a project, without touching any
 // other field on the row (other networks, isAiProject, prompts, ...) and
 // without a read-modify-write race — a single atomic UPDATE via Postgres
@@ -643,6 +675,7 @@ module.exports = {
   getSecretsLog,
   updatePlanningDates,
   updateCerberusMarkdown,
+  updatePrompts,
   upsertNetworkCredentials,
   listExpiringCredentials,
   listArchivedProjectIds,

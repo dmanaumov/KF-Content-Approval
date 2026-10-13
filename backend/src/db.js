@@ -16,6 +16,15 @@ const { Pool } = require('pg');
 const config = require('./config');
 
 const pool = config.databaseUrl ? new Pool({ connectionString: config.databaseUrl }) : null;
+// An idle pooled client whose connection dies (Postgres restarting / in
+// recovery, 2026-10-10) makes the Pool emit 'error'; with no listener Node
+// treats that as an uncaught exception and kills the whole app. Log instead —
+// the pool drops that client and the next query opens a fresh connection.
+if (pool) {
+  pool.on('error', (err) => {
+    console.error('[db] idle client error (connection dropped, will reconnect on next query):', err.message);
+  });
+}
 
 function requirePool() {
   if (!pool) {

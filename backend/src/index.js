@@ -30,6 +30,14 @@ const apiKeys = require('./apiKeys');
 const bots = require('./bots');
 const { buildOpenApiSpec } = require('./openapiSpec');
 
+// Safety net (2026-10-10): any promise rejection that escapes an async route
+// handler (Express 4 doesn't catch those) used to crash the entire app — one
+// failed DB query during a Postgres restart took every client cabinet down
+// with it. Log it loudly instead and keep serving everyone else.
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal-avoided] unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
+});
+
 const app = express();
 
 // gzip/brotli-class compression for every text response (JSON API replies,
@@ -5243,6 +5251,56 @@ app.post('/api/automation/projects/:projectId/settings', requireAutomationAuth, 
   }
 });
 
+// POST /api/automation/projects/:projectId/cerberus — body: { markdown }.
+// Только правила «Цербера» проекта (projectSettings.updateCerberusMarkdown),
+// больше ничего на строке не трогаем. '' = Цербер для проекта выключен.
+// Для портала my.kontentferma.com: правка правил в разделе «Цербер» и
+// восстановление из бэкапа портала.
+app.post('/api/automation/projects/:projectId/cerberus', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const id = resolveAutomationProjectId(board, req.params.projectId);
+    const body = req.body || {};
+    if (typeof body.markdown !== 'string') throw badRequest('markdown_required', 'Передайте markdown — строку с правилами (пустая строка выключает Цербер).');
+    await projectSettings.updateCerberusMarkdown(boardId, id, body.markdown);
+    const settings = await getAutomationProjectSettings(boardId, id);
+    res.json({ projectId: id, cerberusMarkdown: settings.cerberusMarkdown });
+  } catch (err) {
+    console.error('[api] automation cerberus update failed:', err.message);
+    res.status(err.httpStatus || 400).json({ error: err.code || 'cerberus_update_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/projects/:projectId/prompts — body: { strategyPrompt?,
+// planningPrompt?, postPrompt?, imagePrompt?, imageReferences? }. MERGE:
+// не переданное поле не трогаем, '' очищает. Только ИИ-промты (и референсы
+// картинок) — логотип, доступы соцсетей, даты и Цербер не трогаются.
+// Для восстановления из бэкапа портала my.kontentferma.com.
+app.post('/api/automation/projects/:projectId/prompts', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const id = resolveAutomationProjectId(board, req.params.projectId);
+    const b = req.body || {};
+    const pick = (k) => (b[k] === undefined || b[k] === null ? undefined : String(b[k]));
+    await projectSettings.updatePrompts(boardId, id, {
+      strategyPrompt: pick('strategyPrompt'),
+      planningPrompt: pick('planningPrompt'),
+      postPrompt: pick('postPrompt'),
+      imagePrompt: pick('imagePrompt'),
+      imageReferences: Array.isArray(b.imageReferences) ? b.imageReferences : undefined,
+    });
+    const settings = await getAutomationProjectSettings(boardId, id);
+    res.json({ projectId: id, ...settings });
+  } catch (err) {
+    console.error('[api] automation prompts update failed:', err.message);
+    res.status(err.httpStatus || 400).json({ error: err.code || 'prompts_update_failed', message: err.message });
+  }
+});
+
 // GET /api/automation/tasks?project=<id>&status=<code|raw>&date=<YYYY-MM-DD|today>
 // status is required — see getAutomationTasks above for the two shapes it
 // accepts. project and date are both optional narrowing.
@@ -6418,8 +6476,23 @@ app.get('/ceo/access', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns
 // 404 (JSON, not a redirect) when the token is unknown/revoked, so the
 // frontend can show a clean "ссылка недействительна" message.
+// resolveToken() hits Postgres — when the DB is down/restarting (2026-10-10:
+// 'the database system is in recovery mode') its rejection used to escape the
+// async handler and crash the whole process. Now: 503 for this request only.
+function dbUnavailable(res, err, asText) {
+  console.error('[api] link token lookup failed (database unavailable):', err.message);
+  const msg = 'Сервис временно недоступен, попробуйте обновить страницу через минуту.';
+  if (asText) return res.status(503).type('text/plain').send(msg);
+  return res.status(503).json({ error: 'database_unavailable', message: msg });
+}
+
 app.get('/api/links/:token', async (req, res) => {
-  const resolved = await projectSettings.resolveToken(req.params.token);
+  let resolved;
+  try {
+    resolved = await projectSettings.resolveToken(req.params.token);
+  } catch (err) {
+    return dbUnavailable(res, err);
+  }
   if (!resolved) {
     return res.status(404).json({
       error: 'link_not_found',
@@ -6449,7 +6522,12 @@ app.get('/api/links/:token', async (req, res) => {
 // tasks does — resolveToken() already pins this to exactly one project, so
 // there's nothing to disambiguate.
 app.get('/api/links/:token/calendar.ics', async (req, res) => {
-  const resolved = await projectSettings.resolveToken(req.params.token);
+  let resolved;
+  try {
+    resolved = await projectSettings.resolveToken(req.params.token);
+  } catch (err) {
+    return dbUnavailable(res, err, true);
+  }
   if (!resolved) {
     return res.status(404).type('text/plain').send('Ссылка недействительна или была отозвана.');
   }
@@ -6531,8 +6609,9 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
   mmFileCache.init(); // same, for Mattermost board attachments — see mattermostFileCache.js
   app.listen(config.port, () => {
     console.log(`KF Approval listening on :${config.port}`);
-    if (!config.mattermostUrl || !config.mattermostToken) {
-      console.warn('[startup] MATTERMOST_URL/MATTERMOST_TOKEN not set — API calls will fail until configured.');
+    const hasMmAuth = !!config.mattermostToken || !!(config.mattermostLoginId && config.mattermostPassword);
+    if (!config.mattermostUrl || !hasMmAuth) {
+      console.warn('[startup] MATTERMOST_URL or Mattermost credentials (MATTERMOST_TOKEN or MATTERMOST_LOGIN_ID/PASSWORD) not set — API calls will fail until configured.');
     }
     if (!config.databaseUrl) {
       console.warn('[startup] DATABASE_URL not set — client links/logo/social-credentials will not work until Postgres is configured.');
