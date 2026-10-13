@@ -1028,10 +1028,17 @@ function updateCalendarSubBanner() {
 function calendarFeedUrls() {
   const httpsUrl = `${location.origin}/api/links/${encodeURIComponent(linkToken)}/calendar.ics`;
   const webcalUrl = httpsUrl.replace(/^https?:/, 'webcal:');
-  return { httpsUrl, webcalUrl };
+  // Google Calendar встраивает фид одной кнопкой через параметр ?cid=:
+  // открывается его диалог «Добавить календарь по URL» с уже проставленной
+  // ссылкой — клиенту остаётся нажать «Добавить календарь». Это и есть тот
+  // «нажал на кнопку — само подключилось», ради которого кнопку делали;
+  // ручная вставка осталась запасной (см. кнопку "Вставить вручную").
+  const googleUrl = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(httpsUrl)}`;
+  return { httpsUrl, webcalUrl, googleUrl };
 }
 document.querySelector('[data-action="cal-sub-subscribe"]').addEventListener('click', () => {
-  const { webcalUrl } = calendarFeedUrls();
+  const { webcalUrl, googleUrl } = calendarFeedUrls();
+  document.getElementById('calSubGoogleLink').href = googleUrl;
   document.getElementById('calSubWebcalLink').href = webcalUrl;
   document.getElementById('calSubModal').classList.add('show');
   // Раздел "Напоминания на телефон и в Telegram" подгружаем прямо перед
@@ -1043,9 +1050,12 @@ document.querySelector('[data-action="close-cal-sub-modal"]').addEventListener('
 });
 document.querySelector('[data-action="cal-sub-copy-link"]').addEventListener('click', async () => {
   const { httpsUrl } = calendarFeedUrls();
+  // Ручная вставка — запасной путь для тех, кто почему-то не захочет
+  // пользоваться кнопкой cid (сейчас кнопка скрыта, показывается по
+  // двойному клику по баннеру).
   try {
     await navigator.clipboard.writeText(httpsUrl);
-    toast('Ссылка скопирована');
+    toast('Ссылка скопирована ' + httpsUrl);
   } catch (_) {
     toast(httpsUrl);
   }

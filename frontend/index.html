@@ -104,10 +104,11 @@
     <h3>Подключить календарь</h3>
     <p>Посты появятся в вашем календаре с реальным статусом (ждёт согласования / согласовано / опубликовано). Календарь обновляет их при каждой синхронизации.</p>
     <div class="cal-sub-modal-actions">
-      <a id="calSubWebcalLink" class="btn approve" href="#">Открыть в приложении календаря</a>
-      <button type="button" class="btn changes" data-action="cal-sub-copy-link">Скопировать ссылку (для Google Calendar)</button>
+      <a id="calSubGoogleLink" class="btn approve" href="#" target="_blank" rel="noopener">Подключить в Google Calendar</a>
+      <a id="calSubWebcalLink" class="btn changes" href="#">Подключить в приложении (iPhone/Android)</a>
+      <button type="button" class="btn changes" data-action="cal-sub-copy-link">Вставить ссылку вручную</button>
     </div>
-    <p class="cal-sub-hint">Google Calendar: «Другие календари» → «+» → «По URL» — и вставить скопированную ссылку.</p>
+    <p class="cal-sub-hint">Нажмите «Подключить в Google Calendar» — откроется Google, там просто жмите «Добавить календарь». Телефон/планшет: «Подключить в приложении». «Вручную» — если первые два варианта не подошли.</p>
     <div class="notify-row" id="notifyRow" hidden></div>
     <div class="sheet-actions">
       <button class="btn changes" data-action="close-cal-sub-modal">Закрыть</button>
@@ -135,7 +136,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/app.js?v=26"></script>
+<script src="/app.js?v=27"></script>
 <script src="/welcome.js?v=1" defer data-audience="client"></script>
 </body>
 </html>
