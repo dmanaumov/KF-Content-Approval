@@ -21,6 +21,7 @@ const mediaOrder = require('./mediaOrder');
 const calendarFeed = require('./calendarFeed');
 const taskCreators = require('./taskCreators');
 const projectAccess = require('./projectAccess');
+const mattermostMigration = require('./mattermostMigration');
 const teamComments = require('./teamComments');
 const socialStats = require('./socialStats');
 const teamAuth = require('./teamAuth');
@@ -1620,6 +1621,46 @@ app.post('/api/ceo/project-access/bootstrap', teamAuth.requireCeoAuth, async (re
     console.error('[api] ceo project-access bootstrap failed:', err.message);
     res.status(500).json({ error: 'bootstrap_failed', message: err.message });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Разовая миграция задач/медиа/переписки Mattermost Boards -> Postgres
+// (app_tasks/app_task_media/app_task_feedback) — кнопка в CEO-интерфейсе
+// (/ceo/migration), решение 2026-10-14. Два шага, как подтверждено
+// пользователем: сначала безопасный предпросмотр (ничего не пишет), потом
+// отдельная, осознанная кнопка реального запуска. См. mattermostMigration.js
+// — там же почему запуск идёт в фоне (не ждём его в HTTP-ответе) и почему
+// он идемпотентен (TRUNCATE + заливка заново при каждом клике).
+app.get('/api/ceo/mattermost-migration/preview', teamAuth.requireCeoAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const report = await mattermostMigration.previewMigration(boardId, { board, cards, blocks });
+    res.json(report);
+  } catch (err) {
+    console.error('[api] mattermost migration preview failed:', err.message);
+    res.status(502).json({ error: 'migration_preview_failed', message: err.message });
+  }
+});
+
+app.post('/api/ceo/mattermost-migration/run', teamAuth.requireCeoAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  if (!(req.body && req.body.confirm === true)) {
+    return res.status(400).json({ error: 'confirm_required', message: 'Нужно подтверждение запуска (confirm: true).' });
+  }
+  try {
+    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const status = mattermostMigration.startRun(boardId, { board, cards, blocks });
+    res.status(202).json(status);
+  } catch (err) {
+    res.status(409).json({ error: 'migration_in_progress', message: err.message });
+  }
+});
+
+app.get('/api/ceo/mattermost-migration/status', teamAuth.requireCeoAuth, (req, res) => {
+  res.json(mattermostMigration.getRunStatus());
 });
 
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
@@ -6076,6 +6117,25 @@ app.post('/api/bot/channels', requireBotAuth, async (req, res) => {
   }
 });
 
+// GET /api/bot/channels — discovery list for the weekly stats job: which
+// channels n8n should actually scrape this run (bot is 'administrator'
+// there AND has a known public @username — see botStore.listReportableChannels
+// for why both conditions are required). Bot-key auth, same as every other
+// /api/bot/* route — n8n calls this first, then for each returned channel
+// scrapes t.me/s/<username> and POSTs the result to /api/bot/channel-posts,
+// and separately polls getChatMemberCount → POST /api/bot/channel-subscribers.
+app.get('/api/bot/channels', requireBotAuth, async (req, res) => {
+  try {
+    const channels = await botStore.listReportableChannels();
+    res.json({
+      channels: channels.map((c) => ({ chatId: c.chat_id, title: c.title, username: c.username })),
+    });
+  } catch (err) {
+    console.error('[api] bot channels list failed:', err.message);
+    res.status(500).json({ error: 'bot_channels_list_failed', message: err.message });
+  }
+});
+
 // POST /api/bot/channel-posts — массовый апсерт постов одного канала после
 // еженедельного скрейпа n8n публичной страницы t.me/s/<username> (Bot API не
 // даёт ни историю постов, ни их просмотры/комментарии — см. комментарий в
@@ -6631,6 +6691,7 @@ app.get('/ceo/access', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.
 // добавлен бот (frontend/telegram-stats.html + GET /api/ceo/telegram/
 // channel-stats above). Same requireCeoAuth as the other bot tabs.
 app.get('/ceo/telegram-stats', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'telegram-stats.html')));
+app.get('/ceo/migration', teamAuth.requireCeoAuth, (req, res) => res.sendFile(path.join(frontendDir, 'migration.html')));
 
 // GET /api/links/:token — resolves a rotatable client link (see above) into
 // the {boardId, projectId, name, logoUrl} it currently points to. Returns

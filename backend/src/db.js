@@ -661,6 +661,102 @@ async function initSchema() {
     );
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS bot_channel_subscriber_stats_chat_idx ON bot_channel_subscriber_stats (chat_id, recorded_at);`);
+
+  // Миграция задач/медиа/переписки с Mattermost Boards на Postgres (решение
+  // 2026-10-14, «мы видим проблему с маттермост» — OOM на хосте, listBlocks
+  // по 5+ секунд, учётка KF Approval упирается в лимит 500 сессий Mattermost
+  // под нагрузкой задач, см. claude/mattermost-boards-oom.md и
+  // claude/mattermost-session-limit.md). Полный план и обоснование —
+  // claude/kf-mattermost-to-postgres-migration.md в проекте. Карточки
+  // правятся ТОЛЬКО через это приложение (никто не заходит в нативный
+  // интерфейс Mattermost Boards) — подтверждено пользователем 2026-10-14,
+  // поэтому это чистый одноразовый перенос, без двусторонней синхронизации.
+  // Командные каналы/чат и task_team_comments («Команда»-чат, уже в
+  // Postgres) сознательно НЕ входят в эту миграцию — остаются как есть.
+  //
+  // app_tasks — замена карточки Mattermost Boards. id — ТЕКСТ, а не
+  // bigserial: сознательно сохраняем старые Mattermost card id при переносе,
+  // чтобы существующие диплинки вида `#tasks?task=<id>` (см.
+  // claude/kf-acl-hot-tasks-task-creation.md — другой проект, тот же
+  // паттерн диплинка) не ломались. board_id — переходное legacy-поле на
+  // время, пока не все роуты переведены на Postgres (фаза 3 миграции);
+  // дата — как везде в этом файле (paid_through_date/start_date выше) —
+  // простой text 'YYYY-MM-DD', не timestamptz, формат уже принят по всему
+  // проекту. status — одно из 'waiting'|'changes'|'approved'|'published'|
+  // 'archived' (как в текущем taskMapper.js), пустая строка — статус не
+  // распознан (соответствует старому поведению status=null). published_url —
+  // ссылка на реально опубликованный пост (свойство "URL" в Mattermost),
+  // ЕСЛИ это не ссылка на disk.kontentferma — такие уходят в
+  // app_task_media вместе с остальным медиа (см. ниже), как и сейчас делает
+  // buildTasks() в taskMapper.js.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_tasks (
+      id text PRIMARY KEY,
+      project_id text NOT NULL,
+      board_id text NOT NULL DEFAULT '',
+      title text NOT NULL DEFAULT '',
+      status text NOT NULL DEFAULT '',
+      format text NOT NULL DEFAULT '',
+      publish_date text NOT NULL DEFAULT '',
+      caption text NOT NULL DEFAULT '',
+      keywords text NOT NULL DEFAULT '',
+      reference text NOT NULL DEFAULT '',
+      published_url text NOT NULL DEFAULT '',
+      assignee_id text NOT NULL DEFAULT '',
+      created_by text NOT NULL DEFAULT '',
+      is_archived boolean NOT NULL DEFAULT false,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS app_tasks_project_idx ON app_tasks (project_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS app_tasks_status_idx ON app_tasks (status);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS app_tasks_publish_date_idx ON app_tasks (publish_date);`);
+  // app_task_media — медиа карточки. Решение 2026-10-14: консолидировать ВСЁ
+  // медиа на disk.kontentferma (Nextcloud, уже есть зрелый пайплайн —
+  // diskUpload.js/diskEmbeds.js) вместо двух параллельных систем хранения
+  // (Mattermost-файлы + disk-ссылки, как сейчас) — Postgres хранит только
+  // ссылку/метаданные, не байты. url — всегда ссылка на disk.kontentferma;
+  // файлы, ранее жившие как Mattermost Boards file-блоки, при переносе
+  // скачиваются и перезаливаются туда же (см. скрипт переноса, фаза 2).
+  // ON DELETE CASCADE — медиа полностью принадлежит задаче, как у
+  // cerberus_feedback выше; метаданные удаляются вместе с задачей, сам файл
+  // на disk.kontentferma это не трогает.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_task_media (
+      id bigserial PRIMARY KEY,
+      task_id text NOT NULL REFERENCES app_tasks (id) ON DELETE CASCADE,
+      url text NOT NULL,
+      kind text NOT NULL DEFAULT '',
+      position integer NOT NULL DEFAULT 0,
+      uploaded_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS app_task_media_task_idx ON app_task_media (task_id, position);`);
+  // app_task_feedback — переписка по согласованию (approve/правки/сообщения
+  // клиенту/системные пометки). Сейчас это один общий поток комментариев
+  // карточки от сервисного бот-аккаунта Mattermost, размеченный текстовыми
+  // маркерами (СОГЛАСОВАНО/ПРАВКИ/СООБЩЕНИЕ/ТЕКСТ ОБНОВЛЁН и т.д.) и
+  // разбираемый regex'ом в taskMapper.js — осознанно заменяем на
+  // структурную колонку kind вместо парсинга маркеров при каждом чтении.
+  // Переносится ПОЛНАЯ история (решение пользователя 2026-10-14), не только
+  // текущее состояние. author_kind разделяет клиента/сотрудника/системную
+  // запись — раньше это разделение было неявным (по regex на маркер +
+  // status==='changes' гейт), теперь явное поле.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_task_feedback (
+      id bigserial PRIMARY KEY,
+      task_id text NOT NULL REFERENCES app_tasks (id) ON DELETE CASCADE,
+      kind text NOT NULL CHECK (kind IN ('approved', 'feedback', 'agency', 'correction', 'message', 'system')),
+      author_kind text NOT NULL DEFAULT '' CHECK (author_kind IN ('', 'client', 'staff', 'system')),
+      author_name text NOT NULL DEFAULT '',
+      text text NOT NULL DEFAULT '',
+      image_url text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS app_task_feedback_task_idx ON app_task_feedback (task_id, created_at);`);
+
   await ensureN8nRole();
 }
 

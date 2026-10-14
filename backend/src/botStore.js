@@ -198,6 +198,25 @@ async function getThread(chatId, limit = 500) {
   return rows;
 }
 
+// n8n-facing discovery list for the weekly scrape job: which channels are
+// actually scrapeable right now (bot is 'administrator' there — a plain
+// 'member' channel was never confirmed as one we're allowed/able to report
+// on) AND have a known public @username (no username → no t.me/s/<username>
+// page to scrape, so including it would just waste a request n8n can't use).
+// Deliberately a separate function from listChats() (which powers the
+// staff-facing "Бот" tab and intentionally shows every chat_type/status for
+// visibility) — this one is the machine-facing, pre-filtered "what do I
+// actually need to do this week" list.
+async function listReportableChannels() {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    `SELECT chat_id, title, username FROM bot_chats
+     WHERE chat_type = 'channel' AND status = 'administrator' AND username <> ''
+     ORDER BY title`
+  );
+  return rows;
+}
+
 // Bulk upsert of one channel's scraped posts (n8n's weekly scrape of
 // t.me/s/<username>, one call per channel, посты за проход). Upsert by PK
 // (chat_id, telegram_message_id) — views/comments/reactions_total only ever
@@ -367,6 +386,7 @@ module.exports = {
   listChats,
   listLeads,
   getThread,
+  listReportableChannels,
   upsertChannelPosts,
   upsertReactionCount,
   recordSubscriberCount,
