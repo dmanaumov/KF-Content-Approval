@@ -44,6 +44,7 @@ const db = require('./db');
 const diskUpload = require('./diskUpload');
 const taskCreators = require('./taskCreators');
 const mediaOrder = require('./mediaOrder');
+const pgTasks = require('./pgTasks');
 const { buildTasks, findPropertyDef } = require('./taskMapper');
 const { extractDiskLinks, stripDiskLinks, parseAndValidateShareUrl } = require('./diskEmbeds');
 
@@ -333,4 +334,100 @@ function startRun(boardId, { board, cards, blocks }) {
   return runState;
 }
 
-module.exports = { previewMigration, startRun, getRunStatus };
+// Фоновая докатка медиафайлов, не перенесённых при последнем запуске
+// основного переноса (runState.report.mediaErrors) — кнопка «Докатить
+// медиа» на /ceo/migration, решение 2026-10-15 (часть Mattermost-файлов
+// не перезаливается из-за рейт-лимита disk.kontentferma — share API 429,
+// см. комментарий в diskUpload.js). Не трогает app_tasks/app_task_feedback,
+// только доливает недостающие строки app_task_media для уже перенесённых
+// задач. Повторный клик безопасен: каждый успешно докатанный файл сразу
+// убирается из runState.report.mediaErrors, так что следующий запуск
+// повторяет только то, что всё ещё не получилось.
+let retryState = { state: 'idle', startedAt: null, finishedAt: null, progress: null, log: [], error: null };
+
+function getMediaRetryStatus() {
+  return retryState;
+}
+
+// targets — снимок runState.report.mediaErrors на момент запуска (список
+// {taskId, fileId, message} из последнего ПЕРЕНОСА, не предпросмотра —
+// предпросмотр ничего не скачивает, поэтому его report.mediaErrors всегда
+// пуст). Карточки/медиа читаем заново из Mattermost — сам Mattermost-файл
+// (и его позиция в списке медиа карточки) за это время не меняется, пока
+// карточками правят только через наше приложение (то же допущение, что и
+// у основного переноса — см. комментарий в начале файла).
+async function runMediaRetry(boardId) {
+  const targets = (runState.report && runState.report.mediaErrors || []).slice();
+  if (!targets.length) {
+    throw new Error('Нет медиафайлов для докатки — список ошибок последнего переноса пуст.');
+  }
+  const [board, cards, blocks] = await Promise.all([
+    mm.getBoard(boardId, config.teamId),
+    mm.listCards(boardId),
+    mm.listBlocks(boardId),
+  ]);
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+  const tasksById = new Map(tasks.map((t) => [t.id, t]));
+  const mediaOrders = await mediaOrder.getMediaOrders(boardId, [...new Set(targets.map((e) => e.taskId))]);
+
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    const entry = { taskId: target.taskId, fileId: target.fileId, ok: false, message: '' };
+    const task = tasksById.get(target.taskId);
+    const orderedMedia = task ? mediaOrder.applyOrder(task.media, mediaOrders.get(task.id)) : [];
+    const pos = task ? orderedMedia.findIndex((m) => m.source === 'mattermost' && m.fileId === target.fileId) : -1;
+    const item = pos === -1 ? null : orderedMedia[pos];
+    if (!task) {
+      entry.message = 'Задача не найдена (удалена с момента последнего переноса).';
+    } else if (!item) {
+      entry.message = 'Файл не найден среди медиа карточки (состав медиа изменился с момента переноса).';
+    } else {
+      try {
+        const url = await reuploadMattermostFile(boardId, item, task.projectLabel || 'Без клиента');
+        await pgTasks.insertMedia(task.id, { url, kind: item.kind || '', position: pos });
+        entry.ok = true;
+        // Убираем из отчёта последнего переноса — повторный клик докатки
+        // не будет повторно трогать уже исправленный файл.
+        if (runState.report) {
+          runState.report.mediaErrors = runState.report.mediaErrors.filter(
+            (e) => !(e.taskId === target.taskId && e.fileId === target.fileId)
+          );
+        }
+      } catch (err) {
+        entry.message = err.message;
+      }
+    }
+    retryState.log.push(entry);
+    retryState.progress = { processed: i + 1, total: targets.length };
+  }
+  return { total: targets.length, succeeded: retryState.log.filter((e) => e.ok).length };
+}
+
+function startMediaRetry(boardId) {
+  if (retryState.state === 'running') {
+    throw new Error('Докатка медиа уже выполняется — подождите её завершения.');
+  }
+  if (runState.state === 'running') {
+    throw new Error('Основной перенос ещё выполняется — подождите его завершения.');
+  }
+  retryState.state = 'running';
+  retryState.startedAt = Date.now();
+  retryState.finishedAt = null;
+  retryState.progress = { processed: 0, total: 0 };
+  retryState.log = [];
+  retryState.error = null;
+  runMediaRetry(boardId)
+    .then(() => {
+      retryState.state = 'done';
+      retryState.finishedAt = Date.now();
+    })
+    .catch((err) => {
+      console.error('[mattermostMigration] докатка медиа упала:', err.message);
+      retryState.state = 'error';
+      retryState.finishedAt = Date.now();
+      retryState.error = err.message;
+    });
+  return retryState;
+}
+
+module.exports = { previewMigration, startRun, getRunStatus, startMediaRetry, getMediaRetryStatus };

@@ -61,6 +61,22 @@
       </div>
     </header>
 
+    <!-- ВРЕМЕННО (снять после закрытия проверки переноса с Mattermost, см.
+         claude/kf-mattermost-to-postgres-migration.md) -->
+    <section id="migrationBanner" class="migration-banner" hidden>
+      <div class="migration-banner-text">
+        <strong>Задачи перенесены на новую базу.</strong> Проверьте, что весь план публикаций по вашим проектам переехал корректно — карточки задач подсвечены цветом (зелёным — всё в порядке, жёлтым — медиа ещё докатывается, красным — по проекту есть замечания).
+      </div>
+      <div id="migrationReviewList" class="migration-review-list"></div>
+      <div id="migrationMediaProgress" class="migration-media-progress" hidden>
+        <div class="migration-media-label">Докатка медиа из Mattermost на диск</div>
+        <div class="progress-line">
+          <div class="progress-track"><div id="migrationMediaFill" class="progress-fill"></div></div>
+          <div id="migrationMediaText" class="progress-text"></div>
+        </div>
+      </div>
+    </section>
+
     <div id="teamProjectFilterRow" class="team-project-filter" hidden>
       <select id="teamProjectFilter" class="field-input">
         <option value="">Все проекты</option>

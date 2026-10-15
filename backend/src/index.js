@@ -21,7 +21,9 @@ const mediaOrder = require('./mediaOrder');
 const calendarFeed = require('./calendarFeed');
 const taskCreators = require('./taskCreators');
 const projectAccess = require('./projectAccess');
+const migrationReview = require('./migrationReview'); // ВРЕМЕННО, см. migrationReview.js
 const mattermostMigration = require('./mattermostMigration');
+const pgTasks = require('./pgTasks');
 const teamComments = require('./teamComments');
 const socialStats = require('./socialStats');
 const teamAuth = require('./teamAuth');
@@ -75,60 +77,31 @@ const teamMediaUpload = multer({ storage: multer.memoryStorage(), limits: { file
 
 // ---------------------------------------------------------------------------
 // In-memory cache only (no database). Keyed by boardId. Cleared on write.
-// ---------------------------------------------------------------------------
-const cache = new Map(); // boardId -> { expires, board, cards, blocks }
+//
+// ФАЗА 3 МИГРАЦИИ (2026-10-14): раньше loadBoard() тащила board+ВСЕ
+// cards+ВСЕ blocks с Mattermost — именно listCards/listBlocks были тем
+// тяжёлым вызовом (5+ сек на этой доске, см. claude/mattermost-boards-oom.md),
+// который и был причиной переноса задач на Postgres (см.
+// claude/kf-mattermost-to-postgres-migration.md). Сами карточки/медиа/
+// переписка теперь читаются и пишутся через pgTasks.js — loadBoard()
+// оставлена ТОЛЬКО для схемы борда (список проектов/клиентов, список
+// статус-опций — getBoard(), дёшево, ~100-300мс), по решению пользователя
+// 2026-10-14 не переносить и эту часть в Postgres. Имя и кеш-форма
+// (`{ board, expires }`) оставлены как есть, чтобы не трогать все места,
+// которые уже деструктурируют только `{ board }` — но `cards`/`blocks`
+// больше НЕ возвращаются: любой пропущенный при переносе вызов вида
+// `const { board, cards, blocks } = await loadBoard(...)` теперь упадёт
+// сразу и явно (cards is undefined), а не тихо покажет пустой список.
+const cache = new Map(); // boardId -> { expires, board }
 
 async function loadBoard(boardId, { fresh = false } = {}) {
   const cached = cache.get(boardId);
   if (!fresh && config.cacheTtlMs > 0 && cached && cached.expires > Date.now()) {
     return cached;
   }
-  // All three fired in parallel, not board+cards followed by a separate
-  // awaited blocks call — on a cold cache (first visit, or any time the
-  // 10s TTL has lapsed) that used to cost a whole extra sequential
-  // round-trip to Mattermost for no reason, since nothing here actually
-  // depends on board/cards finishing first. Child blocks (captions/media/
-  // comments) stay best-effort — this endpoint is unconfirmed on this
-  // server (see mattermostClient.js) — if it fails, cards still show with
-  // title/status/dates, just without those extras, rather than taking down
-  // the whole cabinet.
-  //
-  // PERF LOGGING (2026-09-02, kept on permanently — cheap, one line, no
-  // sensitive data): a cold load of this function is the #1 suspect behind
-  // "Загружаем задачи..." hanging for tens of seconds, but until now there
-  // was no single log line saying which of the three Mattermost calls (or
-  // the poisoned-card fallback inside listCards) actually ate the time —
-  // only the low-level per-request debug dump (config.debug/DEBUG_MATTERMOST
-  // only, and very noisy). This gives a permanent, always-on one-liner with
-  // a per-phase breakdown, so the NEXT slow load is diagnosable straight
-  // from `docker logs`, no need to reproduce it live with debug logging on.
-  const loadStartedAt = Date.now();
-  const timed = (label, promise) => {
-    const startedAt = Date.now();
-    return promise.then(
-      (result) => {
-        console.log(`[perf] loadBoard(${boardId}): ${label} took ${Date.now() - startedAt}ms`);
-        return result;
-      },
-      (err) => {
-        console.log(`[perf] loadBoard(${boardId}): ${label} FAILED after ${Date.now() - startedAt}ms (${err.message})`);
-        throw err;
-      }
-    );
-  };
-  const [board, cards, blocks] = await Promise.all([
-    timed('getBoard', mm.getBoard(boardId, config.teamId)),
-    timed('listCards', mm.listCards(boardId)),
-    timed('listBlocks', mm.listBlocks(boardId)).catch((err) => {
-      console.warn(`[mattermost] listBlocks(${boardId}) unavailable, continuing without captions/media:`, err.message);
-      return [];
-    }),
-  ]);
-  const entry = { board, cards, blocks, expires: Date.now() + config.cacheTtlMs };
+  const board = await mm.getBoard(boardId, config.teamId);
+  const entry = { board, expires: Date.now() + config.cacheTtlMs };
   cache.set(boardId, entry);
-  console.log(
-    `[perf] loadBoard(${boardId}): TOTAL ${Date.now() - loadStartedAt}ms (cards=${cards.length}, blocks=${blocks.length})`
-  );
   return entry;
 }
 
@@ -154,18 +127,11 @@ function formatMoscowTimestamp() {
   return `${get('day')}.${get('month')}.${get('year')} ${get('hour')}:${get('minute')}`;
 }
 
-// Resolved once and cached inside mattermostClient itself — cheap to call
-// repeatedly. Used so taskMapper.js can show only feedback comments posted
-// by our own app's account, not unrelated internal comments left directly
-// on the card in Mattermost.
-async function getFeedbackAuthorId() {
-  try {
-    return await mm.getUserIdByUsername(config.feedbackAuthorUsername);
-  } catch (err) {
-    console.warn(`[app] could not resolve feedbackAuthorUsername "${config.feedbackAuthorUsername}":`, err.message);
-    return null;
-  }
-}
+// getFeedbackAuthorId() удалена (фаза 3 миграции, 2026-10-14) — раньше
+// resolveUsername->userId определял "это комментарий от нашего бота или
+// просто кто-то написал в Mattermost" для buildTasks(). app_task_feedback
+// теперь хранит это явно колонкой kind/author_kind (см. pgTasks.js и
+// mattermostMigration.js), эвристика больше не нужна.
 
 // buildTasks() stays synchronous and can't itself know image-vs-video for a
 // disk.kontentferma link (that takes a network call to the disk server) —
@@ -223,18 +189,10 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
   // of having to reproduce it live.
   const routeStartedAt = Date.now();
   try {
-    // getFeedbackAuthorId() doesn't depend on loadBoard()'s result — fired
-    // together instead of after it. Cheap after the first call ever (it's
-    // cached in-memory in mattermostClient.js), but on a cold container
-    // this used to be a whole extra sequential Mattermost round-trip tacked
-    // onto every load.
     const boardLoadStartedAt = Date.now();
-    const [{ board, cards, blocks }, feedbackAuthorUserId] = await Promise.all([
-      loadBoard(req.params.boardId),
-      getFeedbackAuthorId(),
-    ]);
+    const { board } = await loadBoard(req.params.boardId);
     const boardLoadMs = Date.now() - boardLoadStartedAt;
-    const { tasks, meta } = buildTasks(board, cards, blocks, { projectFilter: req.query.project, feedbackAuthorUserId });
+    const { tasks, meta } = await pgTasks.listTasks(req.params.boardId, board, { projectFilter: req.query.project });
     if (meta.projectPropertyFound && !meta.projectFilterMatched) {
       return res.status(400).json({
         error: 'project_filter_required',
@@ -254,9 +212,8 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
     // undated "Не начато" card has nowhere to show on a calendar anyway.
     const notStartedLabel = normLabelLoose(config.notStartedLabel);
     if (notStartedLabel) {
-      const { tasks: allTasks } = buildTasks(board, cards, blocks, {
+      const { tasks: allTasks } = await pgTasks.listTasks(req.params.boardId, board, {
         projectFilter: req.query.project,
-        feedbackAuthorUserId,
         includeAllStatuses: true,
       });
       const notStarted = allTasks
@@ -267,10 +224,9 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
     const diskKindsStartedAt = Date.now();
     await resolveDiskMediaKinds(tasks);
     const diskKindsMs = Date.now() - diskKindsStartedAt;
-    await mediaOrder.applyStoredOrder(req.params.boardId, tasks);
     console.log(
       `[perf] GET /api/boards/${req.params.boardId}/tasks: TOTAL ${Date.now() - routeStartedAt}ms ` +
-        `(loadBoard+feedbackAuthor=${boardLoadMs}ms, resolveDiskMediaKinds=${diskKindsMs}ms, tasks=${tasks.length})`
+        `(loadBoard=${boardLoadMs}ms, resolveDiskMediaKinds=${diskKindsMs}ms, tasks=${tasks.length})`
     );
     // Access analytics: the client (or a team member/staffer opening the
     // cabinet via an admin link) loaded their tasks — record who/when/device/
@@ -736,7 +692,6 @@ app.get('/api/projects', staffAuth, async (req, res) => {
     if (!projectProp) {
       return res.status(404).json({ error: 'project_property_not_found', message: `Property "${config.projectPropertyName}" not found on this board.` });
     }
-    const { cards, blocks } = await loadBoard(boardId);
     // Аватарки участников на карточке проекта (facepile) — по прямому
     // запросу пользователя (2026-09-25): «мне очень сложно сейчас стало
     // понимать кто имеет доступ к проекту». Один запрос ролей на ВСЮ доску
@@ -782,9 +737,9 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // KPI uses the client-facing set; the bead strip additionally wants
         // posts still in internal production stages (status null), hence the
         // second includeAllStatuses pass (same option the /team cabinet uses).
-        const clientTasks = buildTasks(board, cards, blocks, { projectFilter: o.id }).tasks;
+        const clientTasks = (await pgTasks.listTasks(boardId, board, { projectFilter: o.id })).tasks;
         const scheduleStatus = postsPerMonth ? computeScheduleStatus(clientTasks, postsPerMonth) : null;
-        const allTasks = buildTasks(board, cards, blocks, { projectFilter: o.id, includeAllStatuses: true }).tasks;
+        const allTasks = (await pgTasks.listTasks(boardId, board, { projectFilter: o.id, includeAllStatuses: true })).tasks;
         const posts = postsForMonth(allTasks);
         // Facepile — КТО ИМЕЕТ ДОСТУП к проекту (project_access), чисто
         // информационно про права. НЕ путать с projectManager ниже — тот
@@ -932,7 +887,7 @@ app.delete('/api/projects/:projectId', staffAuth, async (req, res) => {
   if (!boardId) return;
   const projectId = req.params.projectId;
   try {
-    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const { board } = await loadBoard(boardId, { fresh: true });
     const projectProp = findPropertyDef(board, config.projectPropertyName);
     if (!projectProp) {
       return res.status(400).json({ error: 'project_property_not_found', message: `Свойство "${config.projectPropertyName}" не найдено на борде.` });
@@ -942,9 +897,8 @@ app.delete('/api/projects/:projectId', staffAuth, async (req, res) => {
       return res.status(404).json({ error: 'project_not_found', message: 'Проект не найден на борде.' });
     }
     // Any card whose "Проект" points at this option — every status, archived
-    // or not — blocks deletion. count is read-only, no extra Mattermost call
-    // beyond the board/cards/blocks already fetched above.
-    const cardCount = buildTasks(board, cards, blocks, { projectFilter: projectId, skipProjectFilter: false, includeAllStatuses: true }).tasks.length;
+    // or not — blocks deletion.
+    const cardCount = await pgTasks.countTasksForProject(boardId, projectId);
     if (cardCount > 0) {
       return res.status(409).json({
         error: 'project_has_cards',
@@ -1277,16 +1231,15 @@ app.get('/api/ceo/overview', teamAuth.requireCeoAuth, async (req, res) => {
     // with activity: null and the CEO page shows a "недоступно" note.
     let activity = null;
     try {
-      const { board, cards, blocks } = await loadBoard(config.mattermostBoardId);
+      const { board } = await loadBoard(config.mattermostBoardId);
       // БАГ (найден 2026-09-24, жалоба «в "Активность по неделям" всё по
       // нулям» — за все 12 недель, включая текущую): в отличие от ВСЕХ
-      // остальных «дай мне все карточки борда» вызовов buildTasks() в этом
-      // файле, здесь не было skipProjectFilter: true. Без него и без
-      // явного opts.projectFilter taskMapper.buildTasks() трактует это как
-      // «фильтр по проекту не резолвится» и показывает НОЛЬ карточек (см.
-      // комментарий над projectFilterMatched в taskMapper.js) — то есть
-      // weeklyActivity() считала недели по пустому массиву.
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+      // остальных «дай мне все карточки борда» вызовов этого файла, здесь не
+      // было skipProjectFilter: true. Без него и без явного opts.projectFilter
+      // listTasks() трактует это как «фильтр по проекту не резолвится» и
+      // показывает НОЛЬ карточек — то есть weeklyActivity() считала недели по
+      // пустому массиву.
+      const { tasks } = await pgTasks.listTasks(config.mattermostBoardId, board, { skipProjectFilter: true, includeAllStatuses: true });
       activity = weeklyActivity(tasks, 12);
     } catch (err) {
       console.warn('[api] ceo weekly activity unavailable:', err.message);
@@ -1597,8 +1550,8 @@ app.post('/api/ceo/project-access/bootstrap', teamAuth.requireCeoAuth, async (re
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
-    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const { board } = await loadBoard(boardId, { fresh: true });
+    const { tasks } = await pgTasks.listTasks(boardId, board, { skipProjectFilter: true, includeAllStatuses: true });
     const creators = await taskCreators.getCreators(boardId, tasks.map((t) => t.id));
     const members = await mm.listTeamUsers();
     const usernameToId = new Map(members.map((m) => [m.username, m.id]));
@@ -1635,7 +1588,11 @@ app.get('/api/ceo/mattermost-migration/preview', teamAuth.requireCeoAuth, async 
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
-    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const [board, cards, blocks] = await Promise.all([
+      mm.getBoard(boardId, config.teamId),
+      mm.listCards(boardId),
+      mm.listBlocks(boardId),
+    ]);
     const report = await mattermostMigration.previewMigration(boardId, { board, cards, blocks });
     res.json(report);
   } catch (err) {
@@ -1651,7 +1608,11 @@ app.post('/api/ceo/mattermost-migration/run', teamAuth.requireCeoAuth, async (re
     return res.status(400).json({ error: 'confirm_required', message: 'Нужно подтверждение запуска (confirm: true).' });
   }
   try {
-    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
+    const [board, cards, blocks] = await Promise.all([
+      mm.getBoard(boardId, config.teamId),
+      mm.listCards(boardId),
+      mm.listBlocks(boardId),
+    ]);
     const status = mattermostMigration.startRun(boardId, { board, cards, blocks });
     res.status(202).json(status);
   } catch (err) {
@@ -1661,6 +1622,25 @@ app.post('/api/ceo/mattermost-migration/run', teamAuth.requireCeoAuth, async (re
 
 app.get('/api/ceo/mattermost-migration/status', teamAuth.requireCeoAuth, (req, res) => {
   res.json(mattermostMigration.getRunStatus());
+});
+
+// Докатка медиа, не перенесённых основным переносом выше (кнопка «Докатить
+// медиа» на /ceo/migration, решение 2026-10-15) — фон + поллинг статуса,
+// тот же паттерн, что и у /run и /status. Список файлов для докатки берётся
+// из report.mediaErrors последнего ПЕРЕНОСА (см. mattermostMigration.js).
+app.post('/api/ceo/mattermost-migration/retry-media', teamAuth.requireCeoAuth, (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const status = mattermostMigration.startMediaRetry(boardId);
+    res.status(202).json(status);
+  } catch (err) {
+    res.status(409).json({ error: 'media_retry_unavailable', message: err.message });
+  }
+});
+
+app.get('/api/ceo/mattermost-migration/retry-media/status', teamAuth.requireCeoAuth, (req, res) => {
+  res.json(mattermostMigration.getMediaRetryStatus());
 });
 
 // GET /api/analytics/team — session heatmap data for the /stat "команда"
@@ -1746,8 +1726,8 @@ app.get('/api/analytics/team-tasks', requireStatAuth, async (req, res) => {
   if (!boardId) return;
   try {
     const cutoff14 = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    const { board, cards, blocks } = await loadBoard(boardId);
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const { board } = await loadBoard(boardId);
+    const { tasks } = await pgTasks.listTasks(boardId, board, { skipProjectFilter: true, includeAllStatuses: true });
     const members = await mm.listTeamUsers();
     const nameById = new Map(members.map((u) => [u.id, u.name]));
     const rows = new Map(); // worker id -> { name, notDone, done14 }
@@ -2445,12 +2425,10 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
-    const { board, cards, blocks } = await loadBoard(boardId);
-    const feedbackAuthorUserId = await getFeedbackAuthorId();
-    const { tasks, meta } = buildTasks(board, cards, blocks, {
+    const { board } = await loadBoard(boardId);
+    const { tasks, meta } = await pgTasks.listTasks(boardId, board, {
       skipProjectFilter: true,
       includeAllStatuses: true,
-      feedbackAuthorUserId,
     });
     if (!meta.assigneePropertyFound) {
       // Self-diagnosing on purpose — list what's actually on the board right
@@ -2487,7 +2465,6 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       mine = tasks.filter((t) => t.projectId && myRoles.get(t.projectId) !== undefined);
     }
     await resolveDiskMediaKinds(mine);
-    await mediaOrder.applyStoredOrder(boardId, mine);
     // cerberusFired — пиктограмма-значок «сработка Цербера» в списке/
     // календаре (frontend/team.js), тот же визуальный язык, что у значка
     // «Защищено Цербером» в /projects (.cerberus-badge в projects.css).
@@ -2517,6 +2494,7 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     // project as an option (see listArchivedProjectIds in projectSettings.js
     // and the user's request 2026-09-08).
     const archivedProjectIds = await projectSettings.listArchivedProjectIds(boardId);
+    await annotateMigrationStatus(boardId, mine); // ВРЕМЕННО, см. annotateMigrationStatus
     res.json({ tasks: mine, statusOptions: meta.statusOptions, keywordsPropertyFound: meta.keywordsPropertyFound, referencePropertyFound: meta.referencePropertyFound, boardId, archivedProjectIds });
   } catch (err) {
     console.error('[api] team tasks failed:', err.message);
@@ -2534,46 +2512,111 @@ function normLabelLoose(s) {
 // Re-reads one task the way the /team cabinet needs it (every status, not
 // just the 5 client-facing ones) — shared by every /api/team/tasks/:id/*
 // write route below, right after it changes something.
-// BUGFIX 2026-09-22 (live incident): this used to call loadBoard(fresh:true)
-// — a FULL board reload (all cards + all ~3000+ blocks via listBlocks,
-// unpaginated) just to look up the ONE card this function was told to
-// re-fetch. Every write handler already pays for one full reload before its
-// patch (to safely merge properties — see patchCardProperty's comment); this
-// function is called right after, so most writes were paying that ~4-6s
-// listBlocks cost TWICE per action. Switched to mm.getCardWithChildren()
-// (verified live against this server to actually filter server-side, not
-// just get ignored — see its comment in mattermostClient.js) + a standalone
-// mm.getBoard() (cheap — ~100-300ms per [perf] logs — it's a small
-// list-of-this-team's-boards call, not proportional to card count). Same
-// buildTasks() call as before, just fed a single-card cards/blocks slice
-// instead of the whole board's — buildTasks already anticipated exactly this
-// (see its skipProjectFilter comment: "for internal single-card lookups
-// right after a write, where the caller already knows the exact card id").
+// ФАЗА 3 МИГРАЦИИ (2026-10-14): раньше это была пара Mattermost-вызовов
+// (mm.getBoard + mm.getCardWithChildren, см. git history для деталей того
+// BUGFIX'а 2026-09-22) — теперь это один прямой lookup строки в Postgres
+// (pgTasks.getTaskById), board нужен только за схемой (resolve project
+// label/status options).
 async function refetchTeamTask(boardId, taskId) {
-  const [board, { card, children }, feedbackAuthorUserId] = await Promise.all([
-    mm.getBoard(boardId, config.teamId),
-    mm.getCardWithChildren(boardId, taskId),
-    getFeedbackAuthorId(),
-  ]);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
-  const { tasks } = buildTasks(board, [card], children, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-  const updated = tasks.find((t) => t.id === taskId);
+  const { board } = await loadBoard(boardId);
+  const updated = await pgTasks.getTaskById(boardId, board, taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
   await resolveDiskMediaKinds([updated]);
-  await mediaOrder.applyStoredOrder(boardId, [updated]);
   // cerberusFired — see GET /api/team/tasks' comment on the same field. Kept
   // in sync here too: the frontend does a full `currentTasks[i] = updated`
   // replace after every write (see team.js), so if this were omitted the
   // badge would silently disappear from a card the moment anything else on
   // it was edited, until the next full list reload.
   updated.cerberusFired = await teamComments.hasCerberusComment(boardId, taskId);
+  await annotateMigrationStatus(boardId, [updated]); // ВРЕМЕННО, см. annotateMigrationStatus
   return updated;
+}
+
+// ВРЕМЕННО (см. claude/kf-mattermost-to-postgres-migration.md, "докатка
+// медиа" 2026-10-15) — подсветка карточек в /team (зелёный/жёлтый/красный)
+// на время проверки переноса с Mattermost. Ничего не пишет, не трогает
+// задачи без пройденного переноса (report ещё нет -> поле просто не
+// добавляется, подсветки не будет). Удалить вызовы этой функции и её саму
+// вместе с остальным migration-review кодом (migrationReview.js, роуты
+// /api/team/migration-*, team.js/team.css подсветка, баннер в team.html)
+// после закрытия проверки.
+async function annotateMigrationStatus(boardId, tasks) {
+  const runStatus = mattermostMigration.getRunStatus();
+  if (!runStatus.report) return;
+  const missingTaskIds = new Set((runStatus.report.mediaErrors || []).map((e) => e.taskId));
+  const reviews = await migrationReview.getAll(boardId);
+  for (const t of tasks) {
+    const review = reviews.get(t.projectId);
+    t.migrationStatus = review && review.status === 'issues' ? 'issues' : missingTaskIds.has(t.id) ? 'media_pending' : 'ok';
+  }
 }
 
 function teamActorName(req) {
   const u = req.teamSession.user;
   return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'команда';
 }
+
+// ВРЕМЕННЫЕ роуты (см. annotateMigrationStatus выше и migrationReview.js) —
+// баннер в /team: прогресс докатки медиа + подтверждение/замечание по
+// каждому проекту. Открыты любому залогиненному сотруднику (requireTeamAuth,
+// без project-гейта на чтение — это просто статус переноса, не карточки).
+app.get('/api/team/migration-status', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const runStatus = mattermostMigration.getRunStatus();
+    const report = runStatus.report;
+    if (!report) {
+      return res.json({ visible: false });
+    }
+    const retryStatus = mattermostMigration.getMediaRetryStatus();
+    const reviews = await migrationReview.getAll(boardId);
+    res.json({
+      visible: true,
+      missingCount: (report.mediaErrors || []).length,
+      totalMattermostFiles: report.mattermostFilesCount || 0,
+      retryRunning: retryStatus.state === 'running',
+      retryProgress: retryStatus.progress || null,
+      reviews: Object.fromEntries(reviews),
+    });
+  } catch (err) {
+    console.error('[api] team migration-status failed:', err.message);
+    res.status(500).json({ error: 'migration_status_failed', message: err.message });
+  }
+});
+
+app.post('/api/team/migration-review', teamAuth.requireTeamAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const projectId = String((req.body && req.body.projectId) || '').trim();
+  const status = req.body && req.body.status;
+  const note = String((req.body && req.body.note) || '').trim().slice(0, 2000);
+  if (!projectId || !['ok', 'issues'].includes(status)) {
+    return res.status(400).json({ error: 'bad_request', message: 'Нужны projectId и status (ok|issues).' });
+  }
+  if (status === 'issues' && !note) {
+    return res.status(400).json({ error: 'note_required', message: 'Опишите, что именно не так.' });
+  }
+  try {
+    const role = teamAuth.roleFor(req.teamSession.user);
+    if (!role.admin && !role.ceo) {
+      const projectRole = await projectAccess.getRole(boardId, projectId, req.teamSession.user.id);
+      if (projectRole === 'none') {
+        return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этому проекту.' });
+      }
+    }
+    await migrationReview.setReview(boardId, projectId, {
+      status,
+      note,
+      reviewedBy: req.teamSession.user.id,
+      reviewedByName: teamActorName(req),
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[api] team migration-review failed:', err.message);
+    res.status(500).json({ error: 'migration_review_failed', message: err.message });
+  }
+});
 
 // GET /api/team/projects — every "Проект" option (id+label), NOTHING else —
 // powers the project dropdown in the "Запланировать публикацию" create-post
@@ -2655,10 +2698,8 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
   if (!boardId) return;
   try {
     const taskId = String(req.params.taskId || '').trim();
-    const { board, cards, blocks } = await loadBoard(boardId);
-    const feedbackAuthorUserId = await getFeedbackAuthorId();
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-    const task = tasks.find((t) => t.id === taskId);
+    const { board } = await loadBoard(boardId);
+    const task = await pgTasks.getTaskById(boardId, board, taskId);
     if (!task) {
       return res.status(404).json({ error: 'task_not_found', message: 'Карточка не найдена.' });
     }
@@ -2675,8 +2716,8 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
       return res.status(403).json({ error: 'not_allowed', message: 'У вас нет доступа к этой карточке.' });
     }
     await resolveDiskMediaKinds([task]);
-    await mediaOrder.applyStoredOrder(boardId, [task]);
     task.cerberusFired = await teamComments.hasCerberusComment(boardId, taskId); // см. GET /api/team/tasks выше
+    await annotateMigrationStatus(boardId, [task]); // ВРЕМЕННО, см. annotateMigrationStatus
     res.json({ task });
   } catch (err) {
     console.error('[api] team single task failed:', err.message);
@@ -2699,10 +2740,8 @@ async function requireTeamCardAccess(req, res, next) {
   if (!boardId) return;
   const taskId = String(req.params.taskId || '').trim();
   try {
-    const { board, cards, blocks } = await loadBoard(boardId);
-    const feedbackAuthorUserId = await getFeedbackAuthorId();
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-    const task = tasks.find((t) => t.id === taskId);
+    const { board } = await loadBoard(boardId);
+    const task = await pgTasks.getTaskById(boardId, board, taskId);
     if (!task) {
       return res.status(404).json({ error: 'task_not_found', message: 'Карточка не найдена.' });
     }
@@ -3127,14 +3166,10 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, requi
       // concurrent burst — this route had no such guard before, only the
       // n8n-facing /api/automation one did).
       await mediaUploadLimiter(async () => {
-        const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-        const feedbackAuthorUserId = await getFeedbackAuthorId();
-        const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-        const task = tasks.find((t) => t.id === req.params.taskId);
-        if (!task) {
-          res.status(404).json({ error: 'task_not_found' });
-          return;
-        }
+        // requireTeamCardAccess already looked this card up (and checked
+        // access) right before this handler ran — Postgres reads are
+        // immediately consistent, so there's no staleness reason to reload.
+        const task = req.teamCard.task;
         const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
         const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
         const filename = `${dateStr}_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
@@ -3174,11 +3209,7 @@ app.post('/api/team/tasks/:taskId/chat-upload', teamAuth.requireTeamAuth, requir
     if (!boardId) return;
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     try {
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === req.params.taskId);
-      if (!task) return res.status(404).json({ error: 'task_not_found' });
+      const task = req.teamCard.task;
       const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
       const filename = `chat_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
       const shareUrl = await diskUpload.uploadAndShare({
@@ -3273,9 +3304,8 @@ app.post('/api/team/tasks/bulk-delete', teamAuth.requireTeamAuth, async (req, re
 
   let tasksById;
   try {
-    const { board, cards, blocks } = await loadBoard(boardId);
-    const feedbackAuthorUserId = await getFeedbackAuthorId();
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
+    const { board } = await loadBoard(boardId);
+    const { tasks } = await pgTasks.listTasks(boardId, board, { skipProjectFilter: true, includeAllStatuses: true });
     tasksById = new Map(tasks.map((t) => [t.id, t]));
   } catch (err) {
     return res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
@@ -3366,8 +3396,8 @@ app.get('/api/team/schedule', teamAuth.requireTeamAuth, async (req, res) => {
     return res.status(400).json({ error: 'invalid_month', message: 'Ожидался формат YYYY-MM.' });
   }
   try {
-    const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const { board } = await loadBoard(boardId, { fresh: true });
+    const { tasks } = await pgTasks.listTasks(boardId, board, { skipProjectFilter: true, includeAllStatuses: true });
     const byDay = {};
     for (const t of tasks) {
       // publishDate is already a plain 'YYYY-MM-DD' string (see
@@ -3600,7 +3630,7 @@ app.post('/api/team/chat/messages', teamAuth.requireTeamAuth, async (req, res) =
 app.post('/api/boards/:boardId/tasks/:taskId/approve', async (req, res) => {
   try {
     const { boardId, taskId } = req.params;
-    await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СОГЛАСОВАНО`);
+    await pgTasks.addFeedback(taskId, { kind: 'approved', authorKind: 'client', text: '' });
     const updated = await setApprovalStatus(boardId, taskId, 'approved');
     res.json({ task: updated });
   } catch (err) {
@@ -3615,12 +3645,12 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback', async (req, res) => {
   if (!comment) return res.status(400).json({ error: 'comment_required' });
   try {
     const { boardId, taskId } = req.params;
-    // Marker line + the client's actual text in one comment, so it still
-    // shows correctly as "правки" in the cabinet (taskMapper picks the most
-    // recent comment from our own account as task.feedback) while also
-    // giving Mattermost staff the date/time + "ПРАВКИ" marker they asked for.
-    const commentWithMarker = `${formatMoscowTimestamp()} ПРАВКИ\n\n${comment}`;
-    await mm.addCardComment(boardId, taskId, commentWithMarker);
+    // A photo attached via POST .../feedback-image arrives as a trailing
+    // disk.kontentferma link appended to `comment` by the frontend — split
+    // it back out into its own imageUrl, same convention the Mattermost-era
+    // marker comments used (see mattermostMigration.js's classifyComment).
+    const { text, imageUrl } = extractTrailingImageLink(comment);
+    await pgTasks.addFeedback(taskId, { kind: 'feedback', authorKind: 'client', text, imageUrl });
     const updated = await setApprovalStatus(boardId, taskId, 'changes');
     res.json({ task: updated });
   } catch (err) {
@@ -3651,10 +3681,8 @@ app.post('/api/boards/:boardId/tasks/:taskId/feedback-image', (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     try {
       const { boardId, taskId } = req.params;
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === taskId);
+      const { board } = await loadBoard(boardId);
+      const task = await pgTasks.getTaskById(boardId, board, taskId);
       if (!task) return res.status(404).json({ error: 'task_not_found' });
       const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
       const filename = `feedback_${Date.now().toString(36)}${extMatch ? extMatch[0] : ''}`;
@@ -3707,60 +3735,42 @@ app.post('/api/boards/:boardId/tasks/:taskId/media-order', async (req, res) => {
   }
 });
 
+// Pulls a trailing disk.kontentferma share link off the end of client
+// feedback text into its own imageUrl — same convention the Mattermost-era
+// marker comments used (see mattermostMigration.js's classifyComment /
+// extractAttachment), kept so a photo attached via POST .../feedback-image
+// (whose link the frontend appends as a trailing line before the client
+// submits the comment) lands in app_task_feedback.image_url as structured
+// data instead of staying embedded in the prose.
+function extractTrailingImageLink(text) {
+  if (!text) return { text: '', imageUrl: '' };
+  const links = extractDiskLinks(text);
+  const lastLink = links[links.length - 1];
+  if (lastLink && text.trim().endsWith(lastLink)) {
+    const validated = parseAndValidateShareUrl(lastLink);
+    if (validated) {
+      return { text: stripDiskLinks(text, [lastLink]).trim(), imageUrl: validated };
+    }
+  }
+  return { text, imageUrl: '' };
+}
+
+// ФАЗА 3 МИГРАЦИИ (2026-10-14): раньше это была merge-properties PATCH на
+// Mattermost-карточку + полный переподнятый reload + сверка "а статус
+// реально поменялся?" (см. git history, если понадобится тот код для
+// справки) — Postgres UPDATE не нуждается ни в merge-гонке (нет общего
+// "properties" JSON-блоба, который можно затереть), ни в повторном чтении
+// для проверки (запись немедленно consistent).
 async function setApprovalStatus(boardId, taskId, statusKey) {
-  const { board, cards } = await loadBoard(boardId);
-  const approvalProp = findPropertyDef(board, config.approvalPropertyName);
-  if (!approvalProp) {
-    throw new Error(
-      `Card property "${config.approvalPropertyName}" not found on board ${boardId}. ` +
-        `Add a select property with this exact name and options matching statusOptionLabels in config.js.`
-    );
-  }
   const targetLabel = config.statusOptionLabels[statusKey];
-  const optionId = optionIdByLabel(approvalProp, targetLabel);
-  if (!optionId) {
-    throw new Error(
-      `Option "${targetLabel}" not found on property "${config.approvalPropertyName}" (board ${boardId}).`
-    );
+  if (!targetLabel) {
+    throw new Error(`Unknown status key "${statusKey}" — no matching entry in config.statusOptionLabels.`);
   }
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before update.`);
-  // Merge the one changed property into the card's FULL current properties —
-  // see the big comment on mattermostClient.patchCardProperty for why: the
-  // real PATCH body (`updatedFields.properties`) replaces the whole
-  // properties object, so sending just the changed property would silently
-  // wipe out project/date/post-text/etc. on the card.
-  const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: optionId };
-  const patchResult = await mm.patchCardProperty(boardId, taskId, mergedProperties);
-  if (config.debug) {
-    console.log(`[mattermost:debug] patchCardProperty(${boardId},${taskId}) response →`, JSON.stringify(patchResult).slice(0, 1000));
-  }
-  invalidate(boardId);
-  const { board: freshBoard, cards: freshCards, blocks } = await loadBoard(boardId, { fresh: true });
-  // skipProjectFilter: we already know the exact card id (client only ever
-  // learns it from their own, already-filtered task list) — no need to
-  // re-apply the project filter here, and doing so would break this lookup
-  // on shared boards since we don't carry the client's `project` through.
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(freshBoard, freshCards, blocks, { skipProjectFilter: true, feedbackAuthorUserId });
-  const updated = tasks.find((t) => t.id === taskId);
+  await pgTasks.setStatusLabel(taskId, targetLabel);
+  const { board } = await loadBoard(boardId);
+  const updated = await pgTasks.getTaskById(boardId, board, taskId);
   if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after update.`);
-  // IMPORTANT: a 200 from PATCH does not prove Mattermost actually changed
-  // anything — this was silently failing in production (UI said "Согласовано",
-  // Boards itself stayed unchanged). Verify by re-reading the card and
-  // comparing its actual status, and fail loudly if it didn't take, instead
-  // of reporting false success back to the client.
-  if (updated.status !== statusKey) {
-    throw new Error(
-      `Mattermost принял запрос на изменение статуса (PATCH вернул успех), но после повторного чтения ` +
-        `карточки ${taskId} статус остался "${updated.statusLabel || '(нет)'}", а не "${targetLabel}". ` +
-        `Похоже, PATCH на этом сервере не применяется по факту — либо аккаунт, от имени которого идёт ` +
-        `запрос (см. MATTERMOST_LOGIN_ID/MATTERMOST_TOKEN), не имеет прав редактировать эту карточку/борд, ` +
-        `либо формат запроса отличается от ожидаемого (см. docs/MATTERMOST_INTEGRATION.md §4).`
-    );
-  }
   await resolveDiskMediaKinds([updated]);
-  await mediaOrder.applyStoredOrder(boardId, [updated]);
   return updated;
 }
 
@@ -3769,132 +3779,26 @@ async function setApprovalStatus(boardId, taskId, statusKey) {
 // route (see addTeamMediaLink) or hand-pasted by staff directly in
 // Mattermost. saveDescriptionText below must never touch/delete these, or
 // saving the caption would silently drop whatever media was attached.
-function isPureDiskLinkBlock(block) {
-  const title = String(block.title || (block.fields && block.fields.text) || '').trim();
-  return !!(title && parseAndValidateShareUrl(title));
-}
-
-// Shared by updateTaskText (client) and updateTaskTextTeam (team): rewrites
-// the card's PROSE description, leaving any pure-disk-link blocks (media)
-// completely alone. `blocks` must already be fresh (caller loads it).
-async function saveDescriptionText(boardId, taskId, blocks, text) {
-  const allTextBlocks = (blocks || [])
-    .filter((b) => b.parentId === taskId && !b.deleteAt && b.type === 'text')
-    .sort((a, b) => (a.createAt || 0) - (b.createAt || 0));
-  const proseBlocks = allTextBlocks.filter((b) => !isPureDiskLinkBlock(b));
-
-  const nowMs = Date.now();
-  let proseBlockId;
-  if (proseBlocks.length) {
-    proseBlockId = proseBlocks[0].id;
-    await mm.patchBlock(boardId, proseBlockId, { title: text });
-    for (const extra of proseBlocks.slice(1)) {
-      await mm.deleteBlock(boardId, extra.id);
-    }
-  } else {
-    const tempId = `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    const createResult = await mm.addBlocks(boardId, [
-      {
-        id: tempId,
-        boardId,
-        parentId: taskId,
-        type: 'text',
-        title: text,
-        schema: 1,
-        createAt: nowMs,
-        updateAt: nowMs,
-        fields: {},
-      },
-    ], 'addDescriptionBlock');
-    // ROOT CAUSE (2026-09-08, reported live — card cgznfo8aejjrpjrjusc8bdkqnhy:
-    // bytesSaved matched what was sent, so the text genuinely reached
-    // Mattermost, but the card rendered EMPTY in Mattermost's own Boards UI).
-    // Same underlying issue already documented above createAutomationTask's
-    // cardId/actualCardId fix (2026-08-25): Mattermost Boards does NOT honor
-    // a client-supplied block id on insert — it reassigns its OWN
-    // server-generated id, including for this text block. This code used to
-    // just keep trusting the LOCAL tempId as if it were the real one and
-    // patch contentOrder to point at it below — a contentOrder entry for an
-    // id that doesn't exist in Mattermost is exactly as good as no entry at
-    // all, so the card's real body block (under ITS real, server-assigned
-    // id) never made it into contentOrder. This app's own caption reader
-    // (extractDescriptionText in taskMapper.js) scans children by parentId
-    // regardless of contentOrder — so GET .../tasks' `caption` and
-    // bytesSaved both looked correct the whole time — but Mattermost's own
-    // Boards UI renders ONLY blocks listed in contentOrder. The BUGFIX
-    // 2026-08-27 self-heal below only ever re-added whatever id THIS
-    // variable already held, so it could never catch this — it was healing
-    // the symptom (missing contentOrder entry) with the wrong id already
-    // baked in. Fix: read the real id back out of addBlocks' own response,
-    // exactly like createAutomationTask already does for the card id.
-    const createdBlocks = Array.isArray(createResult) ? createResult : [];
-    const createdTextBlock = createdBlocks.find((b) => b.type === 'text') || createdBlocks[0];
-    if (!createdTextBlock) {
-      console.error(
-        `[api] saveDescriptionText(${boardId},${taskId}): addBlocks response didn't include the new text block ` +
-          `(got: ${JSON.stringify(createResult).slice(0, 300)}) — falling back to the locally-generated id, ` +
-          `contentOrder may end up pointing at a non-existent block again.`
-      );
-    }
-    proseBlockId = (createdTextBlock && createdTextBlock.id) || tempId;
-  }
-
-  // BUGFIX 2026-08-27 (reported live, card
-  // https://messager.kontentferma.com/.../crc16ork6i3yo9ku8nayxom4xwy — was
-  // created with empty opts.text, so createAutomationTask left
-  // fields.contentOrder:[] on it, and the text added afterward via
-  // POST .../text never got added to contentOrder either): runs on EVERY
-  // save, not just when a brand-new block is created — a card can already
-  // have a real, correctly-worded prose block that's simply missing from
-  // contentOrder (exactly this bug, from an earlier /text call before this
-  // fix existed), and the plain title-patch above does nothing to repair
-  // that. This app's OWN caption reader (extractDescriptionText in
-  // taskMapper.js) scans children by parentId regardless of contentOrder, so
-  // GET .../tasks/:id's `caption` and bytesSaved both looked correct the
-  // whole time — but Mattermost's OWN Boards UI renders ONLY blocks listed
-  // in contentOrder (same rule already documented for createAutomationTask
-  // above), so the post body showed up empty there. Self-healing: if the
-  // prose block isn't in contentOrder yet, prepend it (leave already-correct
-  // orders untouched — cheap no-op skip, and doesn't fight any manual
-  // reordering staff did directly in Mattermost).
-  const cardBlock = (blocks || []).find((b) => b.id === taskId && b.type === 'card');
-  const existingOrder = cardBlock && cardBlock.fields && Array.isArray(cardBlock.fields.contentOrder) ? cardBlock.fields.contentOrder : [];
-  if (!existingOrder.includes(proseBlockId)) {
-    await mm.patchBlock(boardId, taskId, { updatedFields: { contentOrder: [proseBlockId, ...existingOrder] } });
-  }
-}
-
+// ФАЗА 3 МИГРАЦИИ (2026-10-14): isPureDiskLinkBlock/saveDescriptionText
+// удалены — они существовали только из-за того, что Mattermost хранил
+// подпись карточки как "текстовый дочерний блок" и поэтому нуждался в
+// отдельной эвристике, чтобы не затереть блок, который на самом деле был
+// медиа-ссылкой (см. git history, если понадобится тот код для справки).
+// Postgres чисто разделяет app_tasks.caption (только проза) и
+// app_task_media (структурированные строки медиа) — этой путаницы больше
+// нет вовсе.
 async function updateTaskText(boardId, taskId, text) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before text update.`);
-
-  await saveDescriptionText(boardId, taskId, blocks, text);
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ЗАКАЗЧИК СКОРРЕКТИРОВАЛ ТЕКСТ. ОБНОВЛЕНА ВЕРСИЯ`);
-  await setApprovalStatus(boardId, taskId, 'changes');
-
-  invalidate(boardId);
-  const { board: freshBoard, cards: freshCards, blocks: freshBlocks } = await loadBoard(boardId, { fresh: true });
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(freshBoard, freshCards, freshBlocks, { skipProjectFilter: true, feedbackAuthorUserId });
-  const updated = tasks.find((t) => t.id === taskId);
-  if (!updated) throw new Error(`Card ${taskId} not found on board ${boardId} after text update.`);
-  await resolveDiskMediaKinds([updated]);
-  await mediaOrder.applyStoredOrder(boardId, [updated]);
-  return updated;
+  await pgTasks.updateFields(taskId, { caption: text });
+  await pgTasks.addFeedback(taskId, { kind: 'correction', authorKind: 'client', text: '' });
+  return setApprovalStatus(boardId, taskId, 'changes');
 }
 
 // Team's own version of updateTaskText: same description rewrite, but no
 // "flip to changes"/client-facing marker comment — a team member editing
 // their own draft isn't a client correction.
 async function updateTaskTextTeam(boardId, taskId, text, actorName) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before text update.`);
-
-  await saveDescriptionText(boardId, taskId, blocks, text);
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ТЕКСТ ОБНОВЛЁН (${actorName || 'команда'})`);
-  invalidate(boardId);
+  await pgTasks.updateFields(taskId, { caption: text });
+  await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: actorName || 'команда', text: '' });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -3906,13 +3810,10 @@ async function updateTaskTextTeam(boardId, taskId, text, actorName) {
 // that's still in an internal-only production stage, not just the 5
 // client-facing ones.
 async function reorderTaskMedia(boardId, taskId, newOrderIds) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-  const task = tasks.find((t) => t.id === taskId);
+  const { board } = await loadBoard(boardId);
+  const task = await pgTasks.getTaskById(boardId, board, taskId);
   if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before media reorder.`);
-  await resolveDiskMediaKinds([task]);
-  await mediaOrder.applyStoredOrder(boardId, [task]); // current effective ("before") order
+  await resolveDiskMediaKinds([task]); // current effective ("before") order
 
   const beforeIds = task.media.map((m) => m.id);
   const beforeSet = new Set(beforeIds);
@@ -3939,7 +3840,7 @@ async function reorderTaskMedia(boardId, taskId, newOrderIds) {
       return `${label}: было на месте ${beforePos.get(id)} → стало на месте ${afterPos.get(id)}`;
     });
 
-  await mediaOrder.setMediaOrder(boardId, taskId, newOrderIds);
+  await pgTasks.reorderMedia(taskId, newOrderIds);
   return { moved };
 }
 
@@ -3952,11 +3853,11 @@ async function reorderTaskMedia(boardId, taskId, newOrderIds) {
 async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
   const { moved } = await reorderTaskMedia(boardId, taskId, newOrderIds);
   if (moved.length) {
-    await mm.addCardComment(
-      boardId,
-      taskId,
-      `${formatMoscowTimestamp()} ЗАКАЗЧИК ИЗМЕНИЛ ПОРЯДОК МЕДИА:\n${moved.map((l) => `• ${l}`).join('\n')}`
-    );
+    await pgTasks.addFeedback(taskId, {
+      kind: 'correction',
+      authorKind: 'client',
+      text: moved.map((l) => `• ${l}`).join('\n'),
+    });
   }
   return setApprovalStatus(boardId, taskId, 'changes');
 }
@@ -3967,13 +3868,13 @@ async function updateTaskMediaOrder(boardId, taskId, newOrderIds) {
 async function updateTaskMediaOrderTeam(boardId, taskId, newOrderIds, actorName) {
   const { moved } = await reorderTaskMedia(boardId, taskId, newOrderIds);
   if (moved.length) {
-    await mm.addCardComment(
-      boardId,
-      taskId,
-      `${formatMoscowTimestamp()} ПОРЯДОК МЕДИА ИЗМЕНЁН (${actorName || 'команда'}):\n${moved.map((l) => `• ${l}`).join('\n')}`
-    );
+    await pgTasks.addFeedback(taskId, {
+      kind: 'system',
+      authorKind: 'staff',
+      authorName: actorName || 'команда',
+      text: moved.map((l) => `• ${l}`).join('\n'),
+    });
   }
-  invalidate(boardId);
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -3991,42 +3892,20 @@ async function updateTaskMediaOrderTeam(boardId, taskId, newOrderIds, actorName)
 //     exact distinction) or strip just that URL substring out of a prose
 //     block via stripDiskLinks() + patchBlock.
 async function deleteTaskMedia(boardId, taskId, mediaId, actorName) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-  const task = tasks.find((t) => t.id === taskId);
-  if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before media delete.`);
-  const media = task.media.find((m) => m.id === mediaId);
+  // ФАЗА 3 МИГРАЦИИ (2026-10-14): раньше было два параллельных media-id-
+  // механизма (стабильный id Mattermost-блока vs контент-хэш disk-ссылки),
+  // с разной логикой удаления для каждого (см. git history) — теперь всё
+  // медиа живёт в одной таблице app_task_media с единым bigserial id, так
+  // что удаление — простой single-table DELETE.
+  const media = await pgTasks.getMedia(taskId, mediaId);
   if (!media) throw new Error(`Материал ${mediaId} не найден на карточке ${taskId} — возможно, уже удалён.`);
-
-  if (media.source === 'mattermost') {
-    await mm.deleteBlock(boardId, media.id);
-  } else {
-    const shareUrl = media.shareUrl;
-    const textBlocks = (blocks || []).filter((b) => b.parentId === taskId && !b.deleteAt && b.type === 'text');
-    let removedAny = false;
-    for (const b of textBlocks) {
-      const title = String(b.title || (b.fields && b.fields.text) || '');
-      const matchingRaw = extractDiskLinks(title).filter((l) => parseAndValidateShareUrl(l) === shareUrl);
-      if (!matchingRaw.length) continue;
-      if (isPureDiskLinkBlock(b)) {
-        await mm.deleteBlock(boardId, b.id);
-      } else {
-        await mm.patchBlock(boardId, b.id, { title: stripDiskLinks(title, matchingRaw) });
-      }
-      removedAny = true;
-    }
-    if (!removedAny) {
-      throw new Error(`Не удалось найти текстовый блок со ссылкой на материал ${mediaId} на карточке ${taskId}.`);
-    }
-  }
-
-  await mm.addCardComment(
-    boardId,
-    taskId,
-    `${formatMoscowTimestamp()} МАТЕРИАЛ УДАЛЁН (${actorName || 'команда'}): ${media.name || (media.source === 'disk' ? media.shareUrl : media.id)}`
-  );
-  invalidate(boardId);
+  await pgTasks.deleteMedia(taskId, mediaId);
+  await pgTasks.addFeedback(taskId, {
+    kind: 'system',
+    authorKind: 'staff',
+    authorName: actorName || 'команда',
+    text: media.url,
+  });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -4046,10 +3925,12 @@ async function deleteTaskMedia(boardId, taskId, mediaId, actorName) {
 // into" lookup only needs THIS one card, not all 862 — mm.getCardWithChildren
 // gives both cheaply (verified live against this server, see its comment).
 async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
-  const [board, { card }] = await Promise.all([
-    mm.getBoard(boardId, config.teamId),
-    mm.getCardWithChildren(boardId, taskId),
-  ]);
+  // Опция всё ещё проверяется против схемы борда (Mattermost остаётся
+  // источником для СПИСКА допустимых меток — findPropertyDef/optionIdByLabel
+  // — см. решение пользователя 2026-10-14 в pgTasks.js), чтобы опечатка/
+  // устаревшая метка не улетела молча — сама запись статуса теперь идёт
+  // прямиком в Postgres, PATCH на Mattermost-карточку больше не нужен.
+  const { board } = await loadBoard(boardId);
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   if (!approvalProp) {
     throw new Error(`Card property "${config.approvalPropertyName}" not found on board ${boardId}.`);
@@ -4059,18 +3940,9 @@ async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
     const available = (approvalProp.options || []).map((o) => `«${o.value}»`).join(', ') || '(нет опций)';
     throw new Error(`Опция "${rawLabel}" не найдена в свойстве "${config.approvalPropertyName}". Доступные опции: ${available}.`);
   }
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before status update.`);
-  const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: optionId };
-  await mm.patchCardProperty(boardId, taskId, mergedProperties);
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СТАТУС ИЗМЕНЁН (${actorName || 'команда'}): ${rawLabel}`);
-  invalidate(boardId);
+  await pgTasks.setStatusLabel(taskId, rawLabel);
+  await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: actorName || 'команда', text: rawLabel });
   const updated = await refetchTeamTask(boardId, taskId);
-  if (normLabelLoose(updated.statusLabel) !== normLabelLoose(rawLabel)) {
-    throw new Error(
-      `Mattermost принял запрос на изменение статуса, но после повторного чтения карточки ${taskId} статус ` +
-        `остался "${updated.statusLabel || '(нет)'}", а не "${rawLabel}". Проверьте права аккаунта, от имени которого работает приложение.`
-    );
-  }
   // Карточка перешла в состояние, ждущее действия КЛИЕНТА ("На согласование"
   // или "Корректировка") — напомнить по всем каналам, на которые клиент
   // подписался (Web Push + Telegram, см. reminders.js). Fire-and-forget:
@@ -4084,34 +3956,14 @@ async function setStatusByRawLabel(boardId, taskId, rawLabel, actorName) {
 // Sets an arbitrary free-text property (currently just "Ключевые
 // слова/мысли") — team-only, never shown to clients, so no marker comment.
 async function updateTaskKeywords(boardId, taskId, text) {
-  const { board, cards } = await loadBoard(boardId, { fresh: true });
-  const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
-  if (!keywordsProp) {
-    const available = (board.cardProperties || []).map((p) => `«${p.name}»`).join(', ') || '(не удалось получить список свойств)';
-    throw new Error(`Свойство "${config.keywordsPropertyName}" не найдено на борде. Реальные свойства борда: ${available}.`);
-  }
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before keywords update.`);
-  const mergedProperties = { ...(card.properties || {}), [keywordsProp.id]: text };
-  await mm.patchCardProperty(boardId, taskId, mergedProperties);
-  invalidate(boardId);
+  await pgTasks.updateFields(taskId, { keywords: text });
   return refetchTeamTask(boardId, taskId);
 }
 
 // Sets the "Референс" free-text property — mirrors updateTaskKeywords above
 // exactly (own property, same board, same patch/reread flow).
 async function updateTaskReference(boardId, taskId, text) {
-  const { board, cards } = await loadBoard(boardId, { fresh: true });
-  const referenceProp = findPropertyDef(board, config.referencePropertyName);
-  if (!referenceProp) {
-    const available = (board.cardProperties || []).map((p) => `«${p.name}»`).join(', ') || '(не удалось получить список свойств)';
-    throw new Error(`Свойство "${config.referencePropertyName}" не найдено на борде. Реальные свойства борда: ${available}.`);
-  }
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before reference update.`);
-  const mergedProperties = { ...(card.properties || {}), [referenceProp.id]: text };
-  await mm.patchCardProperty(boardId, taskId, mergedProperties);
-  invalidate(boardId);
+  await pgTasks.updateFields(taskId, { reference: text });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -4235,27 +4087,21 @@ async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {
   if (key && !SOCIAL_LABELS[key]) {
     throw new Error(`Неизвестная соцсеть "${networkKey}". Доступные: ${Object.keys(SOCIAL_LABELS).join(', ')}.`);
   }
-  // NOT fresh — каждая правка в /team уже заканчивается свежим чтением
-  // борда в refetchTeamTask ниже (которое и возвращает итоговую карточку),
-  // а здесь нам нужен лишь текущий title, чтобы пересобрать префикс;
-  // кэш на 10с (config.cacheTtlMs) заведомо актуальнее, чем платить ещё
-  // одним полным чтением БОРДА ради одной строки (см. PERF LOGGING в
-  // loadBoard — холодное чтение на борде с сотнями блоков — это секунды).
-  const { cards } = await loadBoard(boardId);
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before network update.`);
+  const { board } = await loadBoard(boardId);
+  const task = await pgTasks.getTaskById(boardId, board, taskId);
+  if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before network update.`);
   // AI_TAG_RE ('[ai]', see app.js) is never anchored at the very start of a
   // real title the way the social prefix is, so it's untouched here — no
   // need to strip/reinsert it the way stripAiTag does for display.
-  const bareTitle = String(card.title || '').replace(SOCIAL_PREFIX_RE, '');
+  const bareTitle = String(task.title || '').replace(SOCIAL_PREFIX_RE, '');
   const newTitle = key ? `${key}: ${bareTitle}` : bareTitle;
-  await mm.patchBlock(boardId, taskId, { title: newTitle });
-  await mm.addCardComment(
-    boardId,
-    taskId,
-    `${formatMoscowTimestamp()} СОЦСЕТЬ ИЗМЕНЕНА (${actorName || 'команда'}): ${key ? SOCIAL_LABELS[key] : '—'}`
-  );
-  invalidate(boardId);
+  await pgTasks.updateFields(taskId, { title: newTitle });
+  await pgTasks.addFeedback(taskId, {
+    kind: 'system',
+    authorKind: 'staff',
+    authorName: actorName || 'команда',
+    text: key ? SOCIAL_LABELS[key] : '—',
+  });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -4267,17 +4113,13 @@ async function updateTaskNetwork(boardId, taskId, networkKey, actorName) {
 async function updateTaskTitle(boardId, taskId, newBareTitle, actorName) {
   const trimmed = String(newBareTitle || '').trim();
   if (!trimmed) throw new Error('Название не может быть пустым.');
-  // NOT fresh — см. комментарий в updateTaskNetwork: итоговое актуальное
-  // состояние возвращает refetchTeamTask ниже, здесь читаем только текущий
-  // префикс из кэша, чтобы пересобрать заголовок.
-  const { cards } = await loadBoard(boardId);
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before title update.`);
-  const existingPrefix = String(card.title || '').match(SOCIAL_PREFIX_RE);
+  const { board } = await loadBoard(boardId);
+  const task = await pgTasks.getTaskById(boardId, board, taskId);
+  if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} before title update.`);
+  const existingPrefix = String(task.title || '').match(SOCIAL_PREFIX_RE);
   const newTitle = existingPrefix ? `${existingPrefix[0]}${trimmed}` : trimmed;
-  await mm.patchBlock(boardId, taskId, { title: newTitle });
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} НАЗВАНИЕ ИЗМЕНЕНО (${actorName || 'команда'})`);
-  invalidate(boardId);
+  await pgTasks.updateFields(taskId, { title: newTitle });
+  await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: actorName || 'команда', text: '' });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -4290,19 +4132,10 @@ async function updateTaskDate(boardId, taskId, dateStr) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     throw new Error(`Некорректная дата "${dateStr}" — ожидался формат YYYY-MM-DD.`);
   }
-  // NOT fresh — см. комментарий в updateTaskNetwork: итоговое актуальное
-  // состояние возвращает refetchTeamTask ниже.
-  const { board, cards } = await loadBoard(boardId);
-  const dateProp = findPropertyDef(board, config.publishDatePropertyName);
-  if (!dateProp) {
-    throw new Error(`Свойство "${config.publishDatePropertyName}" не найдено на борде ${boardId}.`);
-  }
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} before date update.`);
-  const epochMs = Date.parse(`${dateStr}T00:00:00.000Z`);
-  const mergedProperties = { ...(card.properties || {}), [dateProp.id]: JSON.stringify({ from: epochMs }) };
-  await mm.patchCardProperty(boardId, taskId, mergedProperties);
-  invalidate(boardId);
+  // app_tasks.publish_date хранит ровно этот 'YYYY-MM-DD' как есть — больше
+  // никакой эпоха-мс JSON-обёртки ({"from": epochMs}), которую требовал
+  // Mattermost-формат даты (см. parsePropertyDate в taskMapper.js).
+  await pgTasks.updateFields(taskId, { publish_date: dateStr });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -4310,22 +4143,8 @@ async function updateTaskDate(boardId, taskId, dateStr) {
 // dedicated text block (see isPureDiskLinkBlock) — never mixed into the
 // prose caption block, so a later caption edit can never delete it.
 async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
-  const nowMs = Date.now();
-  await mm.addBlocks(boardId, [
-    {
-      id: `${nowMs.toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-      boardId,
-      parentId: taskId,
-      type: 'text',
-      title: shareUrl,
-      schema: 1,
-      createAt: nowMs,
-      updateAt: nowMs,
-      fields: {},
-    },
-  ], 'addTeamMediaLink');
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ДОБАВЛЕН МАТЕРИАЛ (${actorName || 'команда'}): ${shareUrl}`);
-  invalidate(boardId);
+  await pgTasks.insertMedia(taskId, { url: shareUrl });
+  await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: actorName || 'команда', text: shareUrl });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -4343,12 +4162,11 @@ async function addTeamMediaLink(boardId, taskId, shareUrl, actorName) {
 // frontend/projects.js): by the time a request reaches this route, the
 // asking has already happened — this just deletes.
 async function deleteTask(boardId, taskId, actorName) {
-  const { cards } = await loadBoard(boardId, { fresh: true });
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw new Error(`Card ${taskId} not found on board ${boardId} — возможно, уже удалена.`);
-  await mm.deleteBlock(boardId, taskId);
-  console.log(`[api] team task deleted: board=${boardId} task=${taskId} title="${card.title}" actor=${actorName || 'команда'}`);
-  invalidate(boardId);
+  const { board } = await loadBoard(boardId);
+  const task = await pgTasks.getTaskById(boardId, board, taskId);
+  if (!task) throw new Error(`Card ${taskId} not found on board ${boardId} — возможно, уже удалена.`);
+  await pgTasks.deleteTaskRow(taskId);
+  console.log(`[api] team task deleted: board=${boardId} task=${taskId} title="${task.title}" actor=${actorName || 'команда'}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -4635,12 +4453,11 @@ async function getAutomationTasks(boardId, { project, status, date } = {}) {
       `status обязателен — один из кодов (${Object.keys(config.statusOptionLabels).join('/')}) или точный текст статуса в Mattermost.`
     );
   }
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
+  const { board } = await loadBoard(boardId);
   const opts = project
-    ? { projectFilter: project, includeAllStatuses: true, feedbackAuthorUserId }
-    : { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId };
-  const { tasks, meta } = buildTasks(board, cards, blocks, opts);
+    ? { projectFilter: project, includeAllStatuses: true }
+    : { skipProjectFilter: true, includeAllStatuses: true };
+  const { tasks, meta } = await pgTasks.listTasks(boardId, board, opts);
   if (project && !meta.projectFilterMatched) {
     throw badRequest('project_not_found', `project "${project}" не найден в свойстве "Проект".`);
   }
@@ -4667,7 +4484,6 @@ async function getAutomationTasks(boardId, { project, status, date } = {}) {
   }
 
   await resolveDiskMediaKinds(matched);
-  await mediaOrder.applyStoredOrder(boardId, matched);
 
   // cerberusSkip — команда нажала «Не согласен» хотя бы на одном замечании
   // Цербера по этой карточке (см. POST /api/team/tasks/:taskId/
@@ -4702,10 +4518,8 @@ async function getAutomationTasks(boardId, { project, status, date } = {}) {
 // can find a card in ANY internal production stage, not just the 5
 // client-facing statuses — same reasoning as refetchTeamTask.
 async function getAutomationTaskById(boardId, taskId) {
-  const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-  const feedbackAuthorUserId = await getFeedbackAuthorId();
-  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-  const task = tasks.find((t) => t.id === taskId);
+  const { board } = await loadBoard(boardId);
+  const task = await pgTasks.getTaskById(boardId, board, taskId);
   if (!task) {
     const err = new Error(`Карточка ${taskId} не найдена на борде.`);
     err.code = 'task_not_found';
@@ -4713,7 +4527,6 @@ async function getAutomationTaskById(boardId, taskId) {
     throw err;
   }
   await resolveDiskMediaKinds([task]);
-  await mediaOrder.applyStoredOrder(boardId, [task]);
   const settings = await projectSettings.getSettings(boardId, task.projectId);
   const networkMatch = String(task.title || '').match(SOCIAL_PREFIX_RE);
   // cerberusSkip — см. комментарий в getAutomationTasks выше, тот же флаг,
@@ -4866,17 +4679,15 @@ function isPaidThroughExpired(paidThroughDate) {
 async function publishAutomationTask(boardId, taskId, url) {
   const trimmedUrl = String(url || '').trim();
   if (!trimmedUrl) throw badRequest('url_required', 'url обязателен — ссылка на реально опубликованный пост.');
-  const { board, cards } = await loadBoard(boardId, { fresh: true });
+  const { board } = await loadBoard(boardId);
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
-  const urlProp = findPropertyDef(board, config.urlPropertyName);
   if (!approvalProp) throw badRequest('approval_property_not_found', `Свойство "${config.approvalPropertyName}" не найдено на борде.`);
   const publishedLabel = config.statusOptionLabels.published;
-  const publishedOptionId = optionIdByLabel(approvalProp, publishedLabel);
-  if (!publishedOptionId) {
+  if (!optionIdByLabel(approvalProp, publishedLabel)) {
     throw badRequest('published_option_not_found', `Опция "${publishedLabel}" не найдена в свойстве "${config.approvalPropertyName}".`);
   }
-  const card = cards.find((c) => c.id === taskId);
-  if (!card) throw badRequest('task_not_found', `Карточка ${taskId} не найдена.`);
+  const task = await pgTasks.getTaskById(boardId, board, taskId);
+  if (!task) throw badRequest('task_not_found', `Карточка ${taskId} не найдена.`);
 
   // Hard stop on autoposting once the project's paid-through date has passed
   // (project_settings.paid_through_date, staff-set in the "Редактировать"
@@ -4887,10 +4698,8 @@ async function publishAutomationTask(boardId, taskId, url) {
   // /api/automation/tasks — an automation that already queued this publish
   // call gets a clear, loud rejection instead of the task just silently
   // vanishing from future listings.
-  const projectProp = findPropertyDef(board, config.projectPropertyName);
-  const projectId = projectProp ? (card.properties || {})[projectProp.id] || null : null;
-  if (projectId) {
-    const projectSettingsRow = await projectSettings.getSettings(boardId, projectId);
+  if (task.projectId) {
+    const projectSettingsRow = await projectSettings.getSettings(boardId, task.projectId);
     if (isPaidThroughExpired(projectSettingsRow.paidThroughDate)) {
       const err = new Error(
         `Публикация остановлена: у проекта истёк оплаченный период (оплачено до ${projectSettingsRow.paidThroughDate}). ` +
@@ -4902,19 +4711,10 @@ async function publishAutomationTask(boardId, taskId, url) {
     }
   }
 
-  const mergedProperties = { ...(card.properties || {}), [approvalProp.id]: publishedOptionId };
-  if (urlProp) mergedProperties[urlProp.id] = trimmedUrl;
-  await mm.patchCardProperty(boardId, taskId, mergedProperties);
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} ОПУБЛИКОВАНО (${AUTOMATION_ACTOR}): ${trimmedUrl}`);
-  invalidate(boardId);
-  const updated = await refetchTeamTask(boardId, taskId);
-  if (updated.status !== 'published') {
-    throw new Error(
-      `Mattermost принял запрос, но после повторного чтения карточки ${taskId} статус остался "${updated.statusLabel || '(нет)'}", ` +
-        `а не "${publishedLabel}". Проверьте права аккаунта, от имени которого работает приложение.`
-    );
-  }
-  return updated;
+  await pgTasks.setStatusLabel(taskId, publishedLabel);
+  await pgTasks.updateFields(taskId, { published_url: trimmedUrl });
+  await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: AUTOMATION_ACTOR, text: trimmedUrl });
+  return refetchTeamTask(boardId, taskId);
 }
 
 // Creates a brand-new task card — for content-generation automations that
@@ -4948,13 +4748,9 @@ async function publishAutomationTask(boardId, taskId, url) {
 // POST /api/team/tasks) passes nothing here and keeps its original
 // always-fresh-board behavior unchanged.
 async function createAutomationTask(boardId, opts, preloadedBoard) {
-  const board = preloadedBoard || (await loadBoard(boardId, { fresh: true })).board;
+  const board = preloadedBoard || (await loadBoard(boardId)).board;
   const approvalProp = findPropertyDef(board, config.approvalPropertyName);
   const projectProp = findPropertyDef(board, config.projectPropertyName);
-  const publishDateProp = findPropertyDef(board, config.publishDatePropertyName);
-  const assigneeProp = findPropertyDef(board, config.assigneePropertyName);
-  const keywordsProp = findPropertyDef(board, config.keywordsPropertyName);
-  const referenceProp = findPropertyDef(board, config.referencePropertyName);
 
   const title = String(opts.title || '').trim();
   if (!title) throw badRequest('title_required', 'title обязателен.');
@@ -5005,23 +4801,26 @@ async function createAutomationTask(boardId, opts, preloadedBoard) {
     }
   }
 
-  let statusOptionId = null;
+  // Статус всё ещё проверяется против схемы борда (Mattermost остаётся
+  // источником для списка допустимых меток, см. pgTasks.js) — сама запись
+  // идёт сырой меткой прямиком в Postgres.
+  let statusLabel = '';
   if (opts.status) {
     if (!approvalProp) throw badRequest('approval_property_not_found', `Свойство "${config.approvalPropertyName}" не найдено на борде.`);
-    statusOptionId = optionIdByLabel(approvalProp, opts.status);
-    if (!statusOptionId) {
+    const optionId = optionIdByLabel(approvalProp, opts.status);
+    if (!optionId) {
       const available = (approvalProp.options || []).map((o) => `«${o.value}»`).join(', ') || '(нет опций)';
       throw badRequest('status_not_found', `Статус "${opts.status}" не найден. Доступные: ${available}.`);
     }
+    statusLabel = optionLabelById(approvalProp, optionId);
   }
 
-  let publishDateValue = null;
+  let publishDateValue = '';
   if (opts.publishDate) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.publishDate)) {
       throw badRequest('invalid_publish_date', `Некорректная дата "${opts.publishDate}" — ожидался формат YYYY-MM-DD.`);
     }
-    if (!publishDateProp) throw badRequest('publish_date_property_not_found', `Свойство "${config.publishDatePropertyName}" не найдено на борде.`);
-    publishDateValue = JSON.stringify({ from: Date.parse(`${opts.publishDate}T00:00:00.000Z`) });
+    publishDateValue = opts.publishDate;
   }
 
   const mediaUrls = Array.isArray(opts.media) ? opts.media.map((u) => String(u || '').trim()).filter(Boolean) : [];
@@ -5032,111 +4831,43 @@ async function createAutomationTask(boardId, opts, preloadedBoard) {
     validatedMedia.push(validated);
   }
 
-  const nowMs = Date.now();
-  const genId = (offset) => `${(nowMs + offset).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  const cardId = genId(0);
-  const descId = genId(1);
   const text = String(opts.text || '').trim();
-
-  const properties = {};
-  properties[projectProp.id] = projectId;
-  if (statusOptionId) properties[approvalProp.id] = statusOptionId;
-  if (publishDateValue) properties[publishDateProp.id] = publishDateValue;
-  // Best-effort: an automation caller never sends assigneeUserId, and even
-  // for a team-cabinet caller a misconfigured/renamed "Исполнитель" property
-  // shouldn't block card creation outright — the card just comes back
-  // unassigned (team member won't see it in "my tasks" until fixed, but
-  // nothing is lost/duplicated, and every other property still gets set).
-  if (opts.assigneeUserId && assigneeProp) {
-    properties[assigneeProp.id] = String(opts.assigneeUserId);
-  }
-  // opts.keywords (optional, free text): "Ключевые слова/мысли" — the ONLY
-  // place a post's topic/brief/keywords live in Mattermost (see taskMapper.js
-  // — this property is NOT the post text/body, see the `text` var below for
-  // that). Best-effort, same reasoning as assigneeProp above — a missing/
-  // renamed property shouldn't block card creation, just skip setting it.
-  if (opts.keywords != null && keywordsProp) {
-    properties[keywordsProp.id] = String(opts.keywords);
-  }
-  // opts.reference (optional, free text): "Референс" — ссылка-пример поста/
-  // визуала, свой отдельный от keywords/text property. Same best-effort
-  // treatment.
-  if (opts.reference != null && referenceProp) {
-    properties[referenceProp.id] = String(opts.reference);
-  }
-
   const fullTitle = network ? `${network}: ${title}` : title;
+  const actorLabel = opts.actorLabel || AUTOMATION_ACTOR;
 
-  const blocks = [
-    {
-      id: cardId,
-      boardId,
-      parentId: boardId,
-      type: 'card',
-      title: fullTitle,
-      schema: 1,
-      createAt: nowMs,
-      updateAt: nowMs,
-      fields: { properties, contentOrder: text ? [descId] : [], icon: '', isTemplate: false },
-    },
-  ];
-  if (text) {
-    blocks.push({
-      id: descId, boardId, parentId: cardId, type: 'text', title: text,
-      schema: 1, createAt: nowMs + 1, updateAt: nowMs + 1, fields: {},
-    });
-  }
-  validatedMedia.forEach((shareUrl, i) => {
-    blocks.push({
-      id: genId(2 + i), boardId, parentId: cardId, type: 'text', title: shareUrl,
-      schema: 1, createAt: nowMs + 2 + i, updateAt: nowMs + 2 + i, fields: {},
-    });
+  // ФАЗА 3 МИГРАЦИИ (2026-10-14): раньше здесь был Mattermost Blocks-API
+  // createResult/createdCard/actualCardId workaround (Boards не уважает
+  // клиентский id блока при вставке — см. git history) плюс multi-retry
+  // re-read loop (400/800/1600мс) на случай read-after-write lag. Postgres
+  // сразу возвращает РЕАЛЬНЫЙ id строки и сразу консистентен — ни то, ни
+  // другое больше не нужно.
+  const taskId = await pgTasks.createTaskRow({
+    project_id: projectId,
+    board_id: boardId,
+    title: fullTitle,
+    publish_date: publishDateValue,
+    caption: text,
+    // opts.keywords/opts.reference (optional free text) — "Ключевые
+    // слова/мысли" и "Референс", отдельные от текста поля (см. старые
+    // keywordsProp/referenceProp best-effort комментарии в git history).
+    keywords: opts.keywords != null ? String(opts.keywords) : '',
+    reference: opts.reference != null ? String(opts.reference) : '',
+    // opts.assigneeUserId (optional) — единственный вызывающий, которому это
+    // нужно, это POST /api/team/tasks (всегда свой собственный id, иначе
+    // карточка не попадёт в "мои задачи" создателя); автоматизация этого
+    // никогда не передаёт.
+    assignee_id: opts.assigneeUserId ? String(opts.assigneeUserId) : '',
+    created_by: actorLabel,
   });
-
-  // ROOT CAUSE (confirmed live, 2026-08-25): Mattermost Boards does NOT
-  // honor the client-supplied block id on insert — it reassigns its own
-  // server-generated id to every block, including the card itself. This
-  // app's OWN addCardComment already relies on the server's returned id
-  // (it never re-looks-up its own comment by id afterward, so the mismatch
-  // was invisible there) — createAutomationTask is the first place that
-  // needs to look a just-created block back up, and doing that with the
-  // locally-generated `cardId` was the actual bug: it doesn't exist in
-  // Mattermost under that id, so the reread always failed. Fix: read the
-  // real id back out of addBlocks' own response instead of trusting cardId.
-  const createResult = await mm.addBlocks(boardId, blocks, 'createAutomationTask');
-  const createdBlocks = Array.isArray(createResult) ? createResult : [];
-  const createdCard = createdBlocks.find((b) => b.type === 'card');
-  if (!createdCard) {
-    // Response didn't come back in the shape we expect — surface exactly
-    // what Mattermost sent instead of silently falling back to a
-    // definitely-wrong id, so this is diagnosable from the error alone.
-    throw new Error(
-      `Mattermost принял запрос на создание карточки, но в ответе не нашлось блока с type:"card" — ` +
-        `получено: ${JSON.stringify(createResult).slice(0, 1000)}. Обратитесь за диагностикой.`
-    );
+  if (statusLabel) {
+    await pgTasks.setStatusLabel(taskId, statusLabel);
   }
-  const actualCardId = createdCard.id;
-
-  await mm.addCardComment(boardId, actualCardId, `${formatMoscowTimestamp()} КАРТОЧКА СОЗДАНА (${opts.actorLabel || AUTOMATION_ACTOR})`);
-  invalidate(boardId);
-
-  // Small retry margin kept as a safety net for genuine read-after-write
-  // lag on top of the id fix above — cheap, and harmless if unneeded.
-  const REREAD_DELAYS_MS = [400, 800, 1600];
-  let created = null;
-  for (const delayMs of REREAD_DELAYS_MS) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    invalidate(boardId);
-    created = await refetchTeamTask(boardId, actualCardId).catch(() => null);
-    if (created) break;
+  for (let i = 0; i < validatedMedia.length; i++) {
+    await pgTasks.insertMedia(taskId, { url: validatedMedia[i], position: i });
   }
-  if (!created) {
-    throw new Error(
-      `Карточка ${actualCardId} создана в Mattermost (запрос прошёл без ошибки), но не нашлась при повторном чтении ` +
-        `борда даже после нескольких попыток — проверьте карточку в Mattermost вручную (она может существовать) и ` +
-        `НЕ повторяйте запрос на всякий случай, это создаст дубликат. Сообщите об этой ошибке для диагностики.`
-    );
-  }
+  await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: actorLabel, text: '' });
+
+  const created = await refetchTeamTask(boardId, taskId);
   // Новый пост сразу создан в состоянии, ждущем действия клиента
   // ("На согласование"/"Корректировка") — это ровно тот кейс, ради которого
   // клиент подписался на уведомления ("мне сегодня надо срочно что-то
@@ -5669,11 +5400,11 @@ app.get('/api/automation/cerberus-feedback', requireAutomationAuth, async (req, 
   const host = req.get('host');
   const internalBase = host ? `${proto}://${host}` : '';
   try {
-    const [{ board, cards, blocks }, comments] = await Promise.all([
-      loadBoard(boardId, { fresh: true }),
+    const [{ board }, comments] = await Promise.all([
+      loadBoard(boardId),
       teamComments.listAllCerberusComments(boardId),
     ]);
-    const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+    const { tasks } = await pgTasks.listTasks(boardId, board, { skipProjectFilter: true, includeAllStatuses: true });
     const taskById = new Map(tasks.map((t) => [String(t.id), t]));
     let items = comments.map((c) => {
       const t = taskById.get(String(c.taskId)) || null;
@@ -5830,10 +5561,8 @@ app.post('/api/automation/tasks/:taskId/media-upload', requireAutomationAuth, (r
       // Queued behind mediaUploadLimiter — see its definition above for why
       // (n8n bursts, Nextcloud under concurrent load).
       await mediaUploadLimiter(async () => {
-        const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-        const feedbackAuthorUserId = await getFeedbackAuthorId();
-        const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-        const task = tasks.find((t) => t.id === req.params.taskId);
+        const { board } = await loadBoard(boardId);
+        const task = await pgTasks.getTaskById(boardId, board, req.params.taskId);
         if (!task) {
           res.status(404).json({ error: 'task_not_found' });
           return;
@@ -6008,10 +5737,8 @@ app.post('/api/automation/tasks/:taskId/media-import', requireAutomationAuth, as
     // (n8n bursts, Nextcloud under concurrent load); media-import ends in the
     // exact same uploadAndShare() call against disk.kontentferma.
     await mediaUploadLimiter(async () => {
-      const { board, cards, blocks } = await loadBoard(boardId, { fresh: true });
-      const feedbackAuthorUserId = await getFeedbackAuthorId();
-      const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true, feedbackAuthorUserId });
-      const task = tasks.find((t) => t.id === req.params.taskId);
+      const { board } = await loadBoard(boardId);
+      const task = await pgTasks.getTaskById(boardId, board, req.params.taskId);
       if (!task) {
         res.status(404).json({ error: 'task_not_found' });
         return;
@@ -6326,9 +6053,7 @@ async function sendClientMessage(boardId, taskId, text, actorName, imageUrl) {
   const trimmed = String(text || '').trim();
   const image = String(imageUrl || '').trim();
   if (!trimmed && !image) throw new Error('Сообщение не может быть пустым.');
-  const body = image ? `${trimmed}${trimmed ? '\n' : ''}${image}` : trimmed;
-  await mm.addCardComment(boardId, taskId, `${formatMoscowTimestamp()} СООБЩЕНИЕ (${actorName || 'команда'})\n\n${body}`);
-  invalidate(boardId);
+  await pgTasks.addFeedback(taskId, { kind: 'agency', authorKind: 'staff', authorName: actorName || 'команда', text: trimmed, imageUrl: image });
   return refetchTeamTask(boardId, taskId);
 }
 
@@ -6520,7 +6245,15 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/api/debug/boards/:boardId/find', async (req, res) => {
   if (!config.debug) return res.status(404).json({ error: 'set DEBUG_MATTERMOST=true to enable' });
   try {
-    const { board, cards, blocks } = await loadBoard(req.params.boardId, { fresh: true });
+    // Этот диагностический роут сознательно читает Mattermost НАПРЯМУЮ, а не
+    // через loadBoard() — его единственная цель - показать raw-данные
+    // Mattermost (cards/blocks), которые loadBoard() с фазы 3 миграции
+    // больше не прокидывает (см. его комментарий выше).
+    const [board, cards, blocks] = await Promise.all([
+      mm.getBoard(req.params.boardId, config.teamId),
+      mm.listCards(req.params.boardId),
+      mm.listBlocks(req.params.boardId),
+    ]);
     const q = (req.query.title || '').trim().toLowerCase();
     // ?project=<optionId> — filter by the "Проект" property's raw value
     // instead of/in addition to title, so you can dump every card for one
@@ -6853,8 +6586,8 @@ app.get('/api/links/:token/calendar.ics', async (req, res) => {
     return res.status(404).type('text/plain').send('Ссылка недействительна или была отозвана.');
   }
   try {
-    const { board, cards, blocks } = await loadBoard(resolved.boardId);
-    const { tasks } = buildTasks(board, cards, blocks, { projectFilter: resolved.projectId });
+    const { board } = await loadBoard(resolved.boardId);
+    const { tasks } = await pgTasks.listTasks(resolved.boardId, board, { projectFilter: resolved.projectId });
     // Все клиенто-видимые карточки проекта (не только "waiting") — сам фид
     // решает, что показывать в календаре и как (см. pickFeedTasks в
     // calendarFeed.js): планируемые посты с реальным статусом в SUMMARY,

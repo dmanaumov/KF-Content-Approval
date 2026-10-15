@@ -757,6 +757,29 @@ async function initSchema() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS app_task_feedback_task_idx ON app_task_feedback (task_id, created_at);`);
 
+  // project_migration_review — ВРЕМЕННАЯ таблица на время проверки переноса
+  // с Mattermost (см. claude/kf-mattermost-to-postgres-migration.md,
+  // решение 2026-10-15): баннер в /team просит каждый проект подтвердить,
+  // что план публикаций переехал корректно, либо оставить замечание
+  // (кнопки «Всё норм»/«Есть замечания» — backend/src/migrationReview.js).
+  // Один ряд на проект — новое подтверждение/замечание просто перезаписывает
+  // предыдущее (любой сотрудник с доступом к проекту может нажать, это не
+  // голосование). Можно удалить целиком (вместе с migrationReview.js,
+  // соответствующими роутами /api/team/migration-*, подсветкой карточек в
+  // team.js/team.css и баннером в team.html) после закрытия проверки.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_migration_review (
+      board_id text NOT NULL,
+      project_id text NOT NULL,
+      status text NOT NULL CHECK (status IN ('ok', 'issues')),
+      note text NOT NULL DEFAULT '',
+      reviewed_by text NOT NULL DEFAULT '',
+      reviewed_by_name text NOT NULL DEFAULT '',
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (board_id, project_id)
+    );
+  `);
+
   await ensureN8nRole();
 }
 

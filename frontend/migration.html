@@ -69,6 +69,21 @@
       <div id="runError" class="error-box" hidden></div>
       <div id="runResult"></div>
     </section>
+
+    <section class="stat-section">
+      <h2>Докатка медиа</h2>
+      <div class="cred-intro" id="retryIntro" style="margin-top:0">Доступно после переноса, если часть медиафайлов не перенеслась (видно в отчёте выше).</div>
+      <button id="retryMediaBtn" class="btn approve" disabled>Докатить медиа</button>
+      <div id="retryProgress" hidden>
+        <div class="progress-line">
+          <div class="progress-track"><div id="retryProgressFill" class="progress-fill"></div></div>
+          <div id="retryProgressText" class="progress-text">0 / 0</div>
+        </div>
+      </div>
+      <div id="retryError" class="error-box" hidden></div>
+      <div id="retryResult" class="cred-intro" hidden></div>
+      <div id="retryLog" style="max-height:260px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;margin-top:8px" hidden></div>
+    </section>
   </main>
 </div>
 

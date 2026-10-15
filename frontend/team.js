@@ -87,6 +87,12 @@ const FILTERS_KEY = 'kf.team.filters.v1';
 // проекта (не label — id стабилен, если проект переименуют), персистится
 // в localStorage тем же паттерном, что и FILTERS_KEY.
 let projectFilterId = '';
+
+// ВРЕМЕННО — баннер миграции с Mattermost (/team), см. loadMigrationStatus()
+// и claude/kf-mattermost-to-postgres-migration.md. Снять вместе с остальным
+// migration-* кодом после закрытия проверки.
+let migrationMissingTaskIds = new Set();
+let migrationReviews = new Map();
 const PROJECT_FILTER_KEY = 'kf.team.projectFilter.v1';
 try { projectFilterId = localStorage.getItem(PROJECT_FILTER_KEY) || ''; } catch (e) {}
 
@@ -291,6 +297,11 @@ const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
 const teamFilters = document.getElementById('teamFilters');
+const migrationBanner = document.getElementById('migrationBanner');
+const migrationReviewList = document.getElementById('migrationReviewList');
+const migrationMediaProgress = document.getElementById('migrationMediaProgress');
+const migrationMediaFill = document.getElementById('migrationMediaFill');
+const migrationMediaText = document.getElementById('migrationMediaText');
 const teamListSelectToggle = document.getElementById('teamListSelectToggle');
 const teamListSelectBar = document.getElementById('teamListSelectBar');
 const teamListSelectCount = document.getElementById('teamListSelectCount');
@@ -521,7 +532,10 @@ function taskRowHtml(task) {
     ? `<span class="team-task-check${selectedTaskIds.has(task.id) ? ' checked' : ''}" aria-hidden="true"></span>`
     : '';
   const selectedCls = selectMode && selectedTaskIds.has(task.id) ? ' selected' : '';
-  return `<div class="team-task${urgent ? ' urgent' : ''}${selectedCls}" data-task-id="${esc(task.id)}">
+  // ВРЕМЕННО — подсветка по migrationStatus с сервера (ok/media_pending/
+  // issues), см. loadMigrationStatus() и annotateMigrationStatus в index.js.
+  const migCls = task.migrationStatus ? ` mig-${task.migrationStatus}` : '';
+  return `<div class="team-task${urgent ? ' urgent' : ''}${selectedCls}${migCls}" data-task-id="${esc(task.id)}">
     ${checkboxHtml}
     <div class="team-task-top">
       <div>
@@ -537,6 +551,139 @@ function taskRowHtml(task) {
     </div>
   </div>`;
 }
+
+// ========================= ВРЕМЕННО: баннер миграции с Mattermost =========================
+// См. claude/kf-mattermost-to-postgres-migration.md ("докатка медиа",
+// решение 2026-10-15). Снять целиком (этот блок + DOM-рефы выше +
+// migCls в taskRowHtml + markup в team.html + стили в team.css) после
+// закрытия проверки переноса.
+
+function migrationProjectsSeen() {
+  const seen = new Map(); // id -> label, те же проекты, что в фильтре выше
+  currentTasks.forEach((t) => {
+    if (t.projectId && !archivedProjectIds.has(t.projectId) && !seen.has(t.projectId)) {
+      seen.set(t.projectId, t.projectLabel || t.projectId);
+    }
+  });
+  return seen;
+}
+
+function migrationReviewRowHtml(projectId, label) {
+  const review = migrationReviews.get(projectId);
+  let stateHtml;
+  if (!review) {
+    stateHtml = 'Пока не проверено.';
+  } else if (review.status === 'ok') {
+    stateHtml = `✅ Подтвердил(а) ${esc(review.reviewedByName || 'кто-то из команды')}.`;
+  } else {
+    stateHtml = `⚠️ Замечание от ${esc(review.reviewedByName || 'кого-то из команды')}: ${esc(review.note || '')}`;
+  }
+  return `<div class="migration-review-row" data-project="${esc(projectId)}">
+    <span class="migration-review-project">${esc(label)}</span>
+    <button type="button" class="btn approve" data-mig-action="ok">Всё норм</button>
+    <button type="button" class="btn" data-mig-action="issues-toggle">Есть замечания</button>
+    <span class="migration-review-state">${stateHtml}</span>
+    <textarea class="migration-review-note" placeholder="Что именно не так?" hidden></textarea>
+    <button type="button" class="btn approve" data-mig-action="issues-submit" hidden>Отправить замечание</button>
+  </div>`;
+}
+
+function renderMigrationReviewRows() {
+  const projects = migrationProjectsSeen();
+  if (!projects.size) {
+    migrationReviewList.innerHTML = '';
+    return;
+  }
+  migrationReviewList.innerHTML = [...projects.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1], 'ru'))
+    .map(([id, label]) => migrationReviewRowHtml(id, label))
+    .join('');
+}
+
+async function submitMigrationReview(projectId, status, note) {
+  try {
+    const res = await fetch('/api/team/migration-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, status, note }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    migrationReviews.set(projectId, { status, note, reviewedByName: (currentUser && [currentUser.first_name, currentUser.last_name].filter(Boolean).join(' ')) || currentUser?.username || 'вы' });
+    renderMigrationReviewRows();
+    // Пересчитываем подсветку карточек этого проекта локально, без
+    // перезагрузки списка — issues красит независимо от медиа, ok снимает
+    // красный, но жёлтый (недокатанное медиа) остаётся, если он есть.
+    currentTasks.forEach((t) => {
+      if (t.projectId !== projectId) return;
+      t.migrationStatus = status === 'issues' ? 'issues' : migrationMissingTaskIds.has(t.id) ? 'media_pending' : 'ok';
+    });
+    renderTasks();
+    toast(status === 'issues' ? 'Замечание отправлено.' : 'Спасибо, отметили проект как проверенный.');
+  } catch (err) {
+    toast('Не удалось отправить: ' + err.message);
+  }
+}
+
+migrationReviewList.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mig-action]');
+  if (!btn) return;
+  const row = btn.closest('.migration-review-row');
+  const projectId = row.dataset.project;
+  const action = btn.dataset.migAction;
+  if (action === 'ok') {
+    submitMigrationReview(projectId, 'ok', '');
+  } else if (action === 'issues-toggle') {
+    const note = row.querySelector('.migration-review-note');
+    const submitBtn = row.querySelector('[data-mig-action="issues-submit"]');
+    note.hidden = !note.hidden;
+    submitBtn.hidden = note.hidden;
+    if (!note.hidden) note.focus();
+  } else if (action === 'issues-submit') {
+    const note = row.querySelector('.migration-review-note');
+    const text = note.value.trim();
+    if (!text) {
+      toast('Напишите, что именно не так.');
+      return;
+    }
+    submitMigrationReview(projectId, 'issues', text);
+  }
+});
+
+async function loadMigrationStatus() {
+  try {
+    const res = await fetch('/api/team/migration-status');
+    if (!res.ok) { migrationBanner.hidden = true; return; }
+    const data = await res.json();
+    if (!data.visible) { migrationBanner.hidden = true; return; }
+    migrationBanner.hidden = false;
+    migrationReviews = new Map(Object.entries(data.reviews || {}));
+    renderMigrationReviewRows();
+    if (data.missingCount > 0) {
+      migrationMediaProgress.hidden = false;
+      const p = data.retryProgress;
+      const done = data.totalMattermostFiles - data.missingCount;
+      const pct = data.totalMattermostFiles ? Math.round((done / data.totalMattermostFiles) * 100) : 0;
+      migrationMediaFill.style.width = pct + '%';
+      migrationMediaText.textContent = p && p.total
+        ? `докатывается… ${p.processed} / ${p.total}`
+        : `докатано ${done} из ${data.totalMattermostFiles}, осталось ${data.missingCount}`;
+    } else {
+      migrationMediaProgress.hidden = false;
+      migrationMediaFill.style.width = '100%';
+      migrationMediaText.textContent = 'все медиафайлы на месте';
+    }
+    // currentTasks уже приходят с migrationStatus от сервера (см.
+    // annotateMigrationStatus в index.js) — тут только держим в курсе
+    // локальный Set для submitMigrationReview выше. missingTaskIds сервер
+    // не шлёт отдельно (это уже отражено в task.migrationStatus), поэтому
+    // восстанавливаем множество прямо из текущих задач.
+    migrationMissingTaskIds = new Set(currentTasks.filter((t) => t.migrationStatus === 'media_pending').map((t) => t.id));
+  } catch (err) {
+    // тихо — баннер просто не покажется
+  }
+}
+// ======================= /ВРЕМЕННО: баннер миграции с Mattermost ==========================
 
 function renderChips() {
   const seen = [];
@@ -683,6 +830,7 @@ async function loadTasks() {
     renderProjectFilterOptions();
     renderNetworkFilterOptions();
     renderTasks();
+    loadMigrationStatus(); // ВРЕМЕННО, см. loadMigrationStatus()
     if (teamCalendarView && !teamCalendarView.hidden) renderTeamCalendarGrid();
     if (modalTaskId) renderModal(); // держим открытую карточку в актуальном состоянии после фонового обновления списка
     if (pendingDeepLinkTaskId) {

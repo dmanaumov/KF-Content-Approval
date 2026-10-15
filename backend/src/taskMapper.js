@@ -467,4 +467,17 @@ function buildTasks(board, cards, childBlocks = [], opts = {}) {
   };
 }
 
-module.exports = { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById };
+module.exports = {
+  buildTasks,
+  findPropertyDef,
+  optionIdByLabel,
+  optionLabelById,
+  // Экспортированы дополнительно (2026-10-14) для pgTasks.js — фаза 3
+  // переноса с Mattermost на Postgres переиспользует эти чистые функции
+  // вместо того чтобы дублировать их логику на новых Postgres-строках.
+  normLabel,
+  statusEnumFromLabel,
+  mondayOf,
+  weekLabel,
+  resolveProjectOptionId,
+};
