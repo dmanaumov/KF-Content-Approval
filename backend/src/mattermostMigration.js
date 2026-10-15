@@ -5,23 +5,40 @@
 // migration.md в проекте «Мои IT дела» и claude/mattermost-boards-oom.md /
 // claude/mattermost-session-limit.md — чем это вызвано.
 //
-// Используется из index.js двумя CEO-роутами (requireCeoAuth):
+// Используется из index.js тремя CEO-роутами (requireCeoAuth):
 //   GET  /api/ceo/mattermost-migration/preview — ТОЛЬКО считает, что
 //        получится перенести (карточки/медиа/переписка по типам), ничего
 //        не пишет в Postgres и не трогает файлы Mattermost — безопасно
 //        нажимать сколько угодно раз перед реальным запуском.
 //   POST /api/ceo/mattermost-migration/run — запускает реальный перенос В
-//        ФОНЕ (не ждёт его в самом HTTP-ответе — при ~1000+ карточках и
-//        перезаливке медиа на диск это легко занимает минуты, что дольше
-//        любого разумного HTTP/реверс-прокси таймаута) и сразу отвечает
-//        202. Прогресс/результат — через GET .../status (поллинг с
-//        кнопки в CEO-интерфейсе). Сам перенос ИДЕМПОТЕНТЕН: каждый запуск
-//        полностью очищает все три таблицы (TRUNCATE ... CASCADE) и
-//        заливает их заново с нуля — повторный клик не задваивает данные,
-//        просто пересобирает их заново (это безопасно именно потому, что
-//        подтверждено: карточки правятся ТОЛЬКО через наше приложение,
-//        никто не трогает нативный интерфейс Mattermost Boards между
-//        запусками).
+//        ФОНЕ и сразу отвечает 202. Прогресс/результат — через GET
+//        .../status (поллинг с кнопки в CEO-интерфейсе).
+//   POST /api/ceo/mattermost-migration/retry-media — вручную (пере)запускает
+//        докатку того, что осталось в report.mediaErrors — см. ниже.
+//
+// РЕШЕНИЕ 2026-10-15 (по следам реального прогона: 971 карточка перенеслась
+// за ~2-3 часа, потому что перезаливка каждого Mattermost-файла на диск шла
+// СИНХРОННО внутри одной транзакции — и 208/371 файлов упали с disk.
+// kontentferma (share API: 429) под устойчивой нагрузкой такого долгого
+// прогона): перенос карточек и докатка медиа РАЗДЕЛЕНЫ.
+//   1) runMigration() теперь БЫСТРЫЙ — TRUNCATE + заливка карточек/
+//      переписки/уже-дисковых медиа одной транзакцией, без ожидания
+//      Mattermost-файлов (gatherMigrationData вызывается с fastMedia:true —
+//      все Mattermost-файлы попадают не в строки app_task_media, а в
+//      отдельный список data.pendingMedia).
+//   2) Сразу после commit — ФОНОВО стартует докатка ВСЕХ Mattermost-файлов
+//      (runBackfill/startBackfillJob) с собственным ретраем (5 попыток,
+//      эскалирующий бэкофф 1/5/10/30/60с — см. reuploadMattermostFileWithBackoff),
+//      которая доливает строки app_task_media по мере успеха. Тот же
+//      движок, что и у ручной кнопки «Докатить медиа» (для того, что
+//      осталось в report.mediaErrors после всех попыток).
+//   Перенос ИДЕМПОТЕНТЕН как и раньше (TRUNCATE ... CASCADE на каждый
+//   запуск) — повторный клик не задваивает данные. Но: пока это всё ещё
+//   Mattermost как источник правды (до деплоя фазы 3 переподключения
+//   роутов) — см. claude/kf-mattermost-to-postgres-migration.md, там же
+//   предупреждение, что ПОСЛЕ деплоя фазы 3 повторный запуск этого
+//   переноса станет разрушительным (снесёт данные, появившиеся напрямую в
+//   Postgres и которых больше нет в Mattermost).
 //
 // Данные вытягиваются через buildTasks() (taskMapper.js) с теми же опциями,
 // что уже использует существующий одноразовый импорт ролей
@@ -144,12 +161,54 @@ async function reuploadMattermostFile(boardId, mediaItem, folderName) {
   });
 }
 
-// Общий проход по всем карточкам борда — используется preview (download:
-// false, считает/классифицирует, ничего не скачивает и не пишет) и run
-// (download: true, реально скачивает Mattermost-файлы и перезаливает их).
+// Пауза перед каждой следующей попыткой reuploadMattermostFile при фоновой
+// докатке — решение 2026-10-15 (пользователь, по следам 208/371 файлов,
+// упавших в первом прогоне с ошибкой "share API: 429"): встроенный ретрай
+// в diskUpload.js (fetchWithAuthRetry429 — 2 попытки, короткий фиксированный
+// бэкофф) рассчитан на единичную живую загрузку, а не на то, чтобы
+// пересидеть устойчивую нагрузку миграции на сотнях файлов. 5 попыток,
+// эскалирующий бэкофф 1/5/10/30/60с между ними (итого до 6 попыток: первая
+// сразу + 5 повторов). Каждая попытка — ПОЛНЫЙ повтор reuploadMattermostFile
+// (скачать с Mattermost заново + выложить на диск + расшарить): Mattermost
+// не узкое место (рейт-лимитит именно диск), так что передогрузка байтов не
+// страшна, а так проще, чем пробрасывать номер попытки внутрь diskUpload.js.
+// СОЗНАТЕЛЬНО не трогали сам fetchWithAuthRetry429 — он общий с живыми
+// роутами /team и /api/automation, и растягивать ретрай живой одиночной
+// загрузки до ~1.5 минут в худшем случае ради миграционного сценария не
+// нужно (пользователь просил это именно "для фоновой заливки ВСЕХ МЕДИА",
+// не для обычной загрузки с кабинета).
+const BACKFILL_RETRY_DELAYS_MS = [1000, 5000, 10000, 30000, 60000];
+
+async function reuploadMattermostFileWithBackoff(boardId, mediaItem, folderName) {
+  let lastErr;
+  for (let attempt = 0; attempt <= BACKFILL_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, BACKFILL_RETRY_DELAYS_MS[attempt - 1]));
+    }
+    try {
+      return await reuploadMattermostFile(boardId, mediaItem, folderName);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+// Общий проход по всем карточкам борда — три режима:
+//   (ничего не передано / download:false) — ПРЕДПРОСМОТР: ничего не
+//     скачивает, Mattermost-медиа считает как плейсхолдер (чтобы показать
+//     реалистичные итоговые цифры), ничего не пишет.
+//   fastMedia:true — БЫСТРЫЙ перенос карточек (решение 2026-10-15, см.
+//     комментарий в начале файла): Mattermost-медиа НЕ скачивается и НЕ
+//     попадает в t.media — вместо этого копится в result.pendingMedia для
+//     последующей фоновой докатки (runBackfill ниже).
+//   download:true — старый синхронный режим (скачивает прямо здесь,
+//     копит неудачи в result.mediaErrors). Больше не используется
+//     runMigration() ниже, но оставлен — дешёвый, самодостаточный путь на
+//     случай, если синхронный перенос медиа когда-то снова понадобится.
 // onProgress({processed,total}) — для фонового прогресса run() (см.
 // startRun ниже); preview может его не передавать.
-async function gatherMigrationData(boardId, board, cards, blocks, { download, onProgress } = {}) {
+async function gatherMigrationData(boardId, board, cards, blocks, { download, fastMedia, onProgress } = {}) {
   const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
   const taskIds = tasks.map((t) => t.id);
   const [creators, teamUsers, mediaOrders] = await Promise.all([
@@ -163,6 +222,7 @@ async function gatherMigrationData(boardId, board, cards, blocks, { download, on
   const result = {
     tasks: [],
     mediaErrors: [],
+    pendingMedia: [], // см. fastMedia выше — {taskId, position, folderName, mediaItem}
     counts: { tasks: 0, media: 0, mattermostFiles: 0, diskLinks: 0, feedback: {} },
   };
 
@@ -175,7 +235,11 @@ async function gatherMigrationData(boardId, board, cards, blocks, { download, on
       const item = orderedMedia[pos];
       if (item.source === 'mattermost') {
         result.counts.mattermostFiles++;
-        if (download) {
+        if (fastMedia) {
+          // Строку в app_task_media пока не пишем — url ещё не известен,
+          // сам файл докатится фоном сразу после commit (см. runMigration).
+          result.pendingMedia.push({ taskId: task.id, position: pos, folderName, mediaItem: item });
+        } else if (download) {
           try {
             const url = await reuploadMattermostFile(boardId, item, folderName);
             mediaRows.push({ url, kind: item.kind || '', position: pos });
@@ -232,11 +296,18 @@ async function gatherMigrationData(boardId, board, cards, blocks, { download, on
 function summarize(data) {
   return {
     tasksCount: data.counts.tasks,
-    mediaCount: data.counts.media,
+    // mattermostFiles+diskLinks — верно во всех режимах (оба счётчика
+    // инкрементируются безусловно, до ветвления по fastMedia/download) —
+    // не полагаемся на counts.media, которое в fastMedia-режиме учитывает
+    // только уже-дисковые строки.
+    mediaCount: data.counts.mattermostFiles + data.counts.diskLinks,
     mattermostFilesCount: data.counts.mattermostFiles,
     diskLinksCount: data.counts.diskLinks,
     feedbackByKind: data.counts.feedback,
     mediaErrors: data.mediaErrors,
+    // Сколько Mattermost-файлов ещё ждут фоновой докатки (fastMedia-режим) —
+    // 0 в preview/download-режимах, т.к. там pendingMedia не используется.
+    pendingMediaCount: (data.pendingMedia || []).length,
   };
 }
 
@@ -246,15 +317,15 @@ async function previewMigration(boardId, { board, cards, blocks }) {
   return summarize(data);
 }
 
-// Реальный перенос: TRUNCATE трёх таблиц + полная заливка заново, одной
-// транзакцией (всё или ничего — чтобы не оставить таблицы в половинчатом
-// состоянии, если перенос упадёт на середине). Частичная неудача
-// ПЕРЕЗАЛИВКИ ОДНОГО медиафайла — не повод валить всю транзакцию (это
-// частый, ожидаемый сбой — сеть/429 от диска/битый fileId на стороне
-// Mattermost), она просто копится в mediaErrors отчёта для ручного
-// разбора; остальные медиа и сама карточка переносятся как обычно.
+// Реальный перенос карточек — БЫСТРЫЙ (решение 2026-10-15, см. комментарий
+// в начале файла): TRUNCATE трёх таблиц + заливка карточек/переписки/уже-
+// дисковых медиа одной транзакцией, без ожидания Mattermost-файлов — те
+// копятся в data.pendingMedia и докатываются фоном ПОСЛЕ commit (см.
+// startRun ниже). Возвращает {report, pendingMedia} — report идёт в
+// runState.report как раньше, pendingMedia сразу передаётся в фоновую
+// докатку вызывающим кодом.
 async function runMigration(boardId, { board, cards, blocks }, onProgress) {
-  const data = await gatherMigrationData(boardId, board, cards, blocks, { download: true, onProgress });
+  const data = await gatherMigrationData(boardId, board, cards, blocks, { fastMedia: true, onProgress });
   const pool = db.requirePool();
   const client = await pool.connect();
   try {
@@ -294,107 +365,66 @@ async function runMigration(boardId, { board, cards, blocks }, onProgress) {
   } finally {
     client.release();
   }
-  return summarize(data);
+  return { report: summarize(data), pendingMedia: data.pendingMedia };
 }
 
-// Фоновый запуск + статус для поллинга — см. комментарий в начале файла:
-// POST .../run не ждёт реальный перенос (легко минуты на ~1000+ карточек),
-// он только стартует его и сразу отвечает; кнопка в CEO-интерфейсе
-// опрашивает GET .../status, пока state не станет 'done'/'error'.
-let runState = { state: 'idle', startedAt: null, finishedAt: null, progress: null, report: null, error: null };
-
-function getRunStatus() {
-  return runState;
-}
-
-function startRun(boardId, { board, cards, blocks }) {
-  if (runState.state === 'running') {
-    throw new Error('Перенос уже выполняется — подождите его завершения.');
-  }
-  runState.state = 'running';
-  runState.startedAt = Date.now();
-  runState.finishedAt = null;
-  runState.progress = { processed: 0, total: 0 };
-  runState.report = null;
-  runState.error = null;
-  runMigration(boardId, { board, cards, blocks }, (p) => {
-    runState.progress = p;
-  })
-    .then((report) => {
-      runState.state = 'done';
-      runState.finishedAt = Date.now();
-      runState.report = report;
-    })
-    .catch((err) => {
-      console.error('[mattermostMigration] перенос упал:', err.message);
-      runState.state = 'error';
-      runState.finishedAt = Date.now();
-      runState.error = err.message;
-    });
-  return runState;
-}
-
-// Фоновая докатка медиафайлов, не перенесённых при последнем запуске
-// основного переноса (runState.report.mediaErrors) — кнопка «Докатить
-// медиа» на /ceo/migration, решение 2026-10-15 (часть Mattermost-файлов
-// не перезаливается из-за рейт-лимита disk.kontentferma — share API 429,
-// см. комментарий в diskUpload.js). Не трогает app_tasks/app_task_feedback,
-// только доливает недостающие строки app_task_media для уже перенесённых
-// задач. Повторный клик безопасен: каждый успешно докатанный файл сразу
-// убирается из runState.report.mediaErrors, так что следующий запуск
-// повторяет только то, что всё ещё не получилось.
+// ========================= Фоновая докатка медиа =========================
+// Общий движок для двух сценариев:
+//  1) АВТОМАТИЧЕСКИ сразу после быстрого переноса карточек (startRun ниже)
+//     — targets уже полностью разрешены (из того же прохода
+//     gatherMigrationData — data.pendingMedia), повторного чтения
+//     Mattermost не требуется.
+//  2) Вручную кнопкой «Докатить медиа» на /ceo/migration — для того, что
+//     осталось в runState.report.mediaErrors (например, файл не осилил все
+//     попытки даже в фоновом прогоне, или сервер перезапускался и потерял
+//     pendingMedia из пункта 1 — report.mediaErrors в этом случае тоже
+//     пуст, см. предупреждение в claude/kf-mattermost-to-postgres-
+//     migration.md про in-memory состояние) — targets сначала нужно
+//     разрешить (resolveMediaErrorTargets ниже), т.к. в mediaErrors хранится
+//     только {taskId, fileId}, без kind/position/folderName.
+// Каждый файл — reuploadMattermostFileWithBackoff (см. выше). retryState —
+// общий прогресс/лог для поллинга (GET .../retry-media/status), один на
+// оба сценария: кнопка в CEO-интерфейсе показывает и автоматическую, и
+// ручную докатку одинаково.
 let retryState = { state: 'idle', startedAt: null, finishedAt: null, progress: null, log: [], error: null };
 
 function getMediaRetryStatus() {
   return retryState;
 }
 
-// targets — снимок runState.report.mediaErrors на момент запуска (список
-// {taskId, fileId, message} из последнего ПЕРЕНОСА, не предпросмотра —
-// предпросмотр ничего не скачивает, поэтому его report.mediaErrors всегда
-// пуст). Карточки/медиа читаем заново из Mattermost — сам Mattermost-файл
-// (и его позиция в списке медиа карточки) за это время не меняется, пока
-// карточками правят только через наше приложение (то же допущение, что и
-// у основного переноса — см. комментарий в начале файла).
-async function runMediaRetry(boardId) {
-  const targets = (runState.report && runState.report.mediaErrors || []).slice();
-  if (!targets.length) {
-    throw new Error('Нет медиафайлов для докатки — список ошибок последнего переноса пуст.');
-  }
-  const [board, cards, blocks] = await Promise.all([
-    mm.getBoard(boardId, config.teamId),
-    mm.listCards(boardId),
-    mm.listBlocks(boardId),
-  ]);
-  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
-  const tasksById = new Map(tasks.map((t) => [t.id, t]));
-  const mediaOrders = await mediaOrder.getMediaOrders(boardId, [...new Set(targets.map((e) => e.taskId))]);
-
+// targets — уже разрешённые {taskId, position, folderName, mediaItem} (или
+// {..., mediaItem: null, message} для таргетов, которые не удалось
+// разрешить — см. resolveMediaErrorTargets).
+async function runBackfill(boardId, targets) {
   for (let i = 0; i < targets.length; i++) {
-    const target = targets[i];
-    const entry = { taskId: target.taskId, fileId: target.fileId, ok: false, message: '' };
-    const task = tasksById.get(target.taskId);
-    const orderedMedia = task ? mediaOrder.applyOrder(task.media, mediaOrders.get(task.id)) : [];
-    const pos = task ? orderedMedia.findIndex((m) => m.source === 'mattermost' && m.fileId === target.fileId) : -1;
-    const item = pos === -1 ? null : orderedMedia[pos];
-    if (!task) {
-      entry.message = 'Задача не найдена (удалена с момента последнего переноса).';
-    } else if (!item) {
-      entry.message = 'Файл не найден среди медиа карточки (состав медиа изменился с момента переноса).';
+    const t = targets[i];
+    const fileId = t.mediaItem ? t.mediaItem.fileId : t.fileId;
+    const entry = { taskId: t.taskId, fileId, ok: false, message: '' };
+    if (!t.mediaItem) {
+      entry.message = t.message || 'Файл не найден.';
     } else {
       try {
-        const url = await reuploadMattermostFile(boardId, item, task.projectLabel || 'Без клиента');
-        await pgTasks.insertMedia(task.id, { url, kind: item.kind || '', position: pos });
+        const url = await reuploadMattermostFileWithBackoff(boardId, t.mediaItem, t.folderName);
+        await pgTasks.insertMedia(t.taskId, { url, kind: t.mediaItem.kind || '', position: t.position });
         entry.ok = true;
-        // Убираем из отчёта последнего переноса — повторный клик докатки
-        // не будет повторно трогать уже исправленный файл.
+        // Если этот файл также числился в отчёте последнего переноса как
+        // ошибка (сценарий 2 выше, или повторная докатка после частичного
+        // сбоя) — убираем, чтобы следующий запуск не трогал его снова.
         if (runState.report) {
-          runState.report.mediaErrors = runState.report.mediaErrors.filter(
-            (e) => !(e.taskId === target.taskId && e.fileId === target.fileId)
+          runState.report.mediaErrors = (runState.report.mediaErrors || []).filter(
+            (e) => !(e.taskId === entry.taskId && e.fileId === entry.fileId)
           );
         }
       } catch (err) {
         entry.message = err.message;
+        // Фиксируем неудачу в report.mediaErrors — это единственное, что
+        // переживает ДО следующего перезапуска сервера (см. предупреждение
+        // выше) и то, чем пользуется ручная кнопка «Докатить медиа».
+        if (runState.report) {
+          if (!runState.report.mediaErrors) runState.report.mediaErrors = [];
+          const exists = runState.report.mediaErrors.some((e) => e.taskId === entry.taskId && e.fileId === entry.fileId);
+          if (!exists) runState.report.mediaErrors.push({ taskId: entry.taskId, fileId: entry.fileId, message: err.message });
+        }
       }
     }
     retryState.log.push(entry);
@@ -403,20 +433,23 @@ async function runMediaRetry(boardId) {
   return { total: targets.length, succeeded: retryState.log.filter((e) => e.ok).length };
 }
 
-function startMediaRetry(boardId) {
+// targets уже полностью разрешены (синхронный, немедленный старт — тот же
+// паттерн, что у startRun: выставляем 'running' и возвращаем retryState
+// сразу, сама работа идёт в фоне).
+function startBackfillJob(boardId, targets) {
   if (retryState.state === 'running') {
     throw new Error('Докатка медиа уже выполняется — подождите её завершения.');
   }
-  if (runState.state === 'running') {
-    throw new Error('Основной перенос ещё выполняется — подождите его завершения.');
+  if (!targets.length) {
+    throw new Error('Нет медиафайлов для докатки.');
   }
   retryState.state = 'running';
   retryState.startedAt = Date.now();
   retryState.finishedAt = null;
-  retryState.progress = { processed: 0, total: 0 };
+  retryState.progress = { processed: 0, total: targets.length };
   retryState.log = [];
   retryState.error = null;
-  runMediaRetry(boardId)
+  runBackfill(boardId, targets)
     .then(() => {
       retryState.state = 'done';
       retryState.finishedAt = Date.now();
@@ -428,6 +461,133 @@ function startMediaRetry(boardId) {
       retryState.error = err.message;
     });
   return retryState;
+}
+
+// Разрешает {taskId, fileId}-записи из runState.report.mediaErrors в
+// полноценные targets — перечитывает Mattermost заново (kind/position/
+// folderName не сохраняются между прогонами). Та же логика, что раньше
+// была прямо внутри ручной докатки.
+async function resolveMediaErrorTargets(boardId) {
+  const errors = (runState.report && runState.report.mediaErrors) || [];
+  if (!errors.length) return [];
+  const [board, cards, blocks] = await Promise.all([
+    mm.getBoard(boardId, config.teamId),
+    mm.listCards(boardId),
+    mm.listBlocks(boardId),
+  ]);
+  const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
+  const tasksById = new Map(tasks.map((t) => [t.id, t]));
+  const mediaOrders = await mediaOrder.getMediaOrders(boardId, [...new Set(errors.map((e) => e.taskId))]);
+  return errors.map((e) => {
+    const task = tasksById.get(e.taskId);
+    const orderedMedia = task ? mediaOrder.applyOrder(task.media, mediaOrders.get(task.id)) : [];
+    const pos = task ? orderedMedia.findIndex((m) => m.source === 'mattermost' && m.fileId === e.fileId) : -1;
+    const item = pos === -1 ? null : orderedMedia[pos];
+    return {
+      taskId: e.taskId,
+      fileId: e.fileId,
+      position: pos,
+      folderName: task ? task.projectLabel || 'Без клиента' : '',
+      mediaItem: item,
+      message: !task
+        ? 'Задача не найдена (удалена с момента последнего переноса).'
+        : !item
+          ? 'Файл не найден среди медиа карточки (состав медиа изменился с момента переноса).'
+          : '',
+    };
+  });
+}
+
+// Ручная кнопка «Докатить медиа» — синхронно проверяет и стартует (как и
+// раньше), сама работа (чтение Mattermost + загрузка) идёт в фоне.
+function startMediaRetry(boardId) {
+  if (retryState.state === 'running') {
+    throw new Error('Докатка медиа уже выполняется — подождите её завершения.');
+  }
+  if (runState.state === 'running') {
+    throw new Error('Основной перенос ещё выполняется — подождите его завершения.');
+  }
+  const pendingErrors = (runState.report && runState.report.mediaErrors) || [];
+  if (!pendingErrors.length) {
+    throw new Error('Нет медиафайлов для докатки — список ошибок последнего переноса пуст.');
+  }
+  retryState.state = 'running';
+  retryState.startedAt = Date.now();
+  retryState.finishedAt = null;
+  retryState.progress = null;
+  retryState.log = [];
+  retryState.error = null;
+  resolveMediaErrorTargets(boardId)
+    .then((targets) => {
+      retryState.progress = { processed: 0, total: targets.length };
+      return runBackfill(boardId, targets);
+    })
+    .then(() => {
+      retryState.state = 'done';
+      retryState.finishedAt = Date.now();
+    })
+    .catch((err) => {
+      console.error('[mattermostMigration] докатка медиа упала:', err.message);
+      retryState.state = 'error';
+      retryState.finishedAt = Date.now();
+      retryState.error = err.message;
+    });
+  return retryState;
+}
+// ======================= /Фоновая докатка медиа ===========================
+
+// Фоновый запуск + статус для поллинга — см. комментарий в начале файла:
+// POST .../run не ждёт реальный перенос, он только стартует его и сразу
+// отвечает; кнопка в CEO-интерфейсе опрашивает GET .../status, пока state
+// не станет 'done'/'error'. С 2026-10-15 сама транзакция быстрая (карточки
+// без медиа-файлов) — после её commit сразу стартует фоновая докатка
+// media (см. startBackfillJob выше), поэтому runState и retryState почти
+// всегда переходят в 'running' практически одновременно.
+let runState = { state: 'idle', startedAt: null, finishedAt: null, progress: null, report: null, error: null };
+
+function getRunStatus() {
+  return runState;
+}
+
+function startRun(boardId, { board, cards, blocks }) {
+  if (runState.state === 'running') {
+    throw new Error('Перенос уже выполняется — подождите его завершения.');
+  }
+  if (retryState.state === 'running') {
+    throw new Error('Докатка медиа ещё идёт в фоне — дождитесь её завершения, прежде чем запускать перенос заново (иначе она попытается дописать медиа для задач, которые вот-вот пересоздадутся TRUNCATE).');
+  }
+  runState.state = 'running';
+  runState.startedAt = Date.now();
+  runState.finishedAt = null;
+  runState.progress = { processed: 0, total: 0 };
+  runState.report = null;
+  runState.error = null;
+  runMigration(boardId, { board, cards, blocks }, (p) => {
+    runState.progress = p;
+  })
+    .then(({ report, pendingMedia }) => {
+      runState.state = 'done';
+      runState.finishedAt = Date.now();
+      runState.report = report;
+      // Карточки уже в базе — сразу фоном поднимаем докатку ВСЕХ
+      // Mattermost-медиа этого прогона (решение 2026-10-15). targets уже
+      // полностью разрешены (тот же проход gatherMigrationData), повторного
+      // чтения Mattermost не требуется.
+      if (pendingMedia && pendingMedia.length) {
+        try {
+          startBackfillJob(boardId, pendingMedia);
+        } catch (err) {
+          console.error('[mattermostMigration] не удалось автоматически запустить докатку медиа после переноса:', err.message);
+        }
+      }
+    })
+    .catch((err) => {
+      console.error('[mattermostMigration] перенос упал:', err.message);
+      runState.state = 'error';
+      runState.finishedAt = Date.now();
+      runState.error = err.message;
+    });
+  return runState;
 }
 
 module.exports = { previewMigration, startRun, getRunStatus, startMediaRetry, getMediaRetryStatus };

@@ -47,21 +47,29 @@ function esc(v) {
 
 // mediaErrors, оставшиеся в отчёте ПОСЛЕДНЕГО переноса, — это именно то,
 // что докатает кнопка «Докатить медиа» (успешно докатанные файлы сервер
-// сам убирает из report.mediaErrors, см. mattermostMigration.js).
+// сам убирает из report.mediaErrors, см. mattermostMigration.js). С
+// 2026-10-15 докатка ВСЕХ Mattermost-медиа стартует автоматически сразу
+// после быстрого переноса карточек (см. pollStatus ниже) — эта кнопка
+// теперь нужна для РУЧНОГО повтора того, что осталось в mediaErrors
+// (например, после перезапуска сервера, см. claude/kf-mattermost-to-
+// postgres-migration.md).
 function updateRetryAvailability(report) {
   const left = (report && report.mediaErrors && report.mediaErrors.length) || 0;
   retryMediaBtn.disabled = left === 0;
   retryIntro.textContent = left
-    ? `Не перенеслось ${left} медиафайл(ов) — можно докатить их отдельно.`
-    : 'Все медиафайлы на месте, докатывать нечего.';
+    ? `Не докатано ${left} медиафайл(ов) — можно докатить их отдельно.`
+    : 'Докатка (если нужна) запускается автоматически после переноса. Эта кнопка — для повторной попытки, если что-то осталось недокатанным.';
 }
 
 function renderReport(report) {
   const feedbackRows = Object.entries(report.feedbackByKind || {})
     .map(([kind, count]) => `<li>${esc(kind)}: ${count}</li>`)
     .join('');
+  const pendingBlock = report.pendingMediaCount
+    ? `<div class="loading" style="margin-top:8px">Докатка ${report.pendingMediaCount} Mattermost-медиафайлов идёт в фоне — см. «Докатка медиа» ниже.</div>`
+    : '';
   const errorsBlock = report.mediaErrors && report.mediaErrors.length
-    ? `<div class="error-box" style="margin-top:8px">Не удалось перенести ${report.mediaErrors.length} медиафайл(ов) — задача всё равно переносится, без этого файла:<ul>${report.mediaErrors
+    ? `<div class="error-box" style="margin-top:8px">Не удалось докатить ${report.mediaErrors.length} медиафайл(ов) даже после всех попыток:<ul>${report.mediaErrors
         .slice(0, 20)
         .map((e) => `<li>задача ${esc(e.taskId)}, файл ${esc(e.fileId)}: ${esc(e.message)}</li>`)
         .join('')}</ul>${report.mediaErrors.length > 20 ? `…и ещё ${report.mediaErrors.length - 20}.` : ''}</div>`
@@ -73,6 +81,7 @@ function renderReport(report) {
     </ul>
     <div>Переписка по типам:</div>
     <ul>${feedbackRows || '<li>нет записей</li>'}</ul>
+    ${pendingBlock}
     ${errorsBlock}
   `;
 }
@@ -147,6 +156,14 @@ async function pollStatus() {
       updateRetryAvailability(status.report);
       showToast('Перенос завершён');
       runIdle.hidden = false;
+      // С 2026-10-15 докатка медиа стартует на сервере автоматически сразу
+      // после переноса карточек — покажем её прогресс сразу, не дожидаясь
+      // ручного клика по «Докатить медиа».
+      if (status.report && status.report.pendingMediaCount) {
+        retryLog.hidden = false;
+        retryProgress.hidden = false;
+        pollRetryStatus(0);
+      }
     } else if (status.state === 'error') {
       runError.hidden = false;
       runError.textContent = 'Перенос завершился ошибкой: ' + status.error;
