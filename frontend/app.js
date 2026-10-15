@@ -826,6 +826,12 @@ async function loadTasks() {
     if (!res.ok) throw new Error(data.message || data.error || 'Ошибка загрузки');
     state.tasks = data.tasks;
     state.board = data.board;
+    // Плашка "идут технические работы" (2026-10-15, прямой запрос
+    // пользователя) — пока на борде идёт перенос с Mattermost или докатка
+    // медиа (см. migrationInProgress в GET /api/boards/:boardId/tasks),
+    // предупреждаем клиента, что карточки могут быть неполными, вместо
+    // того чтобы он решил, что мы просто что-то потеряли.
+    document.getElementById('techWorksBanner').hidden = !data.migrationInProgress;
     if (deepLinkTaskId) {
       // Переходим в общую ленту и сбрасываем фильтр, чтобы ссылка показывала
       // карточку независимо от её статуса (не только "ожидает").

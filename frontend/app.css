@@ -77,6 +77,9 @@ button{cursor:pointer}
 .attention-row1 .attention-link{font-size:14px;font-weight:800}
 .attention-row2{font-size:12px;color:var(--muted);font-weight:650}
 
+.tech-works-banner{background:#FFF8E1;border:1px solid #F0C419;border-radius:18px;padding:13px 16px;margin:0 0 12px;display:flex;flex-direction:column;gap:2px}
+.tech-works-banner strong{font-size:14px;color:#7A5E00}
+.tech-works-banner span{font-size:12px;color:#5C4B00;font-weight:600}
 .cal-sub-banner{background:#E8F4EA;border:1px solid #BFDFC5;border-radius:18px;padding:13px 16px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .cal-sub-text{display:flex;flex-direction:column;gap:2px;min-width:0}
 .cal-sub-text strong{font-size:14px;color:#2E7D4F}
@@ -480,6 +483,9 @@ button{cursor:pointer}
   .attention.urgent{background:#2E1B19}
   .attention.waiting{background:#1D2B1F}
   .attention.clear{background:#222626}
+  .tech-works-banner{background:#2A2410;border-color:#5C4B00}
+  .tech-works-banner strong{color:#F0C419}
+  .tech-works-banner span{color:#E8D98A}
   .cal-sub-banner{background:#1D2B1F;border-color:#2E4A34}
   .cal-sub-text strong{color:#6FCF97}
   .cal-sub-dismiss:hover{background:rgba(255,255,255,.08)}

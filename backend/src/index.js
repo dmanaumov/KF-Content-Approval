@@ -233,10 +233,20 @@ app.get('/api/boards/:boardId/tasks', async (req, res) => {
     // which project (see analytics.js; deduped to once per ~session).
     const who = analytics.identify(req);
     analytics.note(who.role, { project: projectLabelFor(board, req.query.project), actor: who.actor, actorName: who.actorName, path: req.path }, req, res);
+    // migrationInProgress — показываем клиентам (app.js) плашку "идут
+    // технические работы, данные могут быть неполными", пока либо идёт сам
+    // перенос с Mattermost, либо фоновая докатка медиа ещё не закончена
+    // (см. mattermostMigration.js) — по прямому запросу пользователя
+    // 2026-10-15, чтобы клиенты не пугались неполных карточек во время
+    // миграции.
+    const migrationInProgress =
+      mattermostMigration.getRunStatus().state === 'running' ||
+      mattermostMigration.getMediaRetryStatus().state === 'running';
     res.json({
       board: { id: req.params.boardId, title: board.title || '' },
       tasks,
       meta,
+      migrationInProgress,
     });
   } catch (err) {
     console.error('[api] GET tasks failed:', err.message);
@@ -2486,14 +2496,33 @@ app.get('/api/staff/me', async (req, res) => {
 // in ANY status (unlike the client cabinet, which only shows the 5
 // client-facing states — see buildTasks' opts.includeAllStatuses).
 app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
+  // ДИАГНОСТИКА (2026-10-15, прямой запрос пользователя после нескольких
+  // необъяснённых эпизодов "задач нет", пока сами данные в Postgres на
+  // месте) — логируем каждый вызов этого роута: сколько строк реально
+  // вернул SQL (независимая COUNT-проверка в обход всего остального кода,
+  // чтобы сразу было видно, где именно теряются задачи — в самом запросе
+  // к Postgres или где-то после), сколько осталось после скоупинга по
+  // ролям, и полный stack трейс при ошибке вместо одной строки message.
+  // Снять после того, как источник выяснится — не постоянная диагностика.
+  const teamTasksReqId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  console.log(`[team-tasks ${teamTasksReqId}] запрос начат, user=${req.teamSession && req.teamSession.user ? req.teamSession.user.username : '?'}, boardId=${boardId}`);
   try {
+    let rawCount = null;
+    try {
+      const pool = db.requirePool();
+      const { rows: countRows } = await pool.query('SELECT COUNT(*)::int AS n FROM app_tasks WHERE board_id = $1', [boardId]);
+      rawCount = countRows[0] ? countRows[0].n : null;
+    } catch (countErr) {
+      console.error(`[team-tasks ${teamTasksReqId}] независимая COUNT-проверка не удалась:`, countErr.message);
+    }
     const { board } = await loadBoard(boardId);
     const { tasks, meta } = await pgTasks.listTasks(boardId, board, {
       skipProjectFilter: true,
       includeAllStatuses: true,
     });
+    console.log(`[team-tasks ${teamTasksReqId}] COUNT(*) в базе=${rawCount}, pgTasks.listTasks вернул=${tasks.length}, assigneePropertyFound=${meta.assigneePropertyFound}`);
     if (!meta.assigneePropertyFound) {
       // Self-diagnosing on purpose — list what's actually on the board right
       // in the error, instead of sending whoever hits this to dig through
@@ -2528,6 +2557,7 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
       const myRoles = await projectAccess.getRolesForUser(boardId, myId);
       mine = tasks.filter((t) => t.projectId && myRoles.get(t.projectId) !== undefined);
     }
+    console.log(`[team-tasks ${teamTasksReqId}] seesAll=${seesAll}, после скоупинга по ролям осталось=${mine.length}`);
     await resolveDiskMediaKinds(mine);
     // cerberusFired — пиктограмма-значок «сработка Цербера» в списке/
     // календаре (frontend/team.js), тот же визуальный язык, что у значка
@@ -2559,9 +2589,10 @@ app.get('/api/team/tasks', teamAuth.requireTeamAuth, async (req, res) => {
     // and the user's request 2026-09-08).
     const archivedProjectIds = await projectSettings.listArchivedProjectIds(boardId);
     await annotateMigrationStatus(boardId, mine); // ВРЕМЕННО, см. annotateMigrationStatus
+    console.log(`[team-tasks ${teamTasksReqId}] отдаём клиенту tasks.length=${mine.length}`);
     res.json({ tasks: mine, statusOptions: meta.statusOptions, keywordsPropertyFound: meta.keywordsPropertyFound, referencePropertyFound: meta.referencePropertyFound, boardId, archivedProjectIds });
   } catch (err) {
-    console.error('[api] team tasks failed:', err.message);
+    console.error(`[team-tasks ${teamTasksReqId}] team tasks failed:`, err.stack || err.message);
     res.status(502).json({ error: 'mattermost_unavailable', message: err.message });
   }
 });
@@ -6737,14 +6768,6 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
 (async () => {
   try {
     await waitForDb();
-    if (config.mattermostBoardId) {
-      // Восстанавливаем migration report после рестарта контейнера — без
-      // этого баннер в /team и цветная подсветка проектов в /projects
-      // остаются пустыми до следующего ручного действия (см.
-      // hydrateRunStateFromDb/persistReport в mattermostMigration.js,
-      // 2026-10-15). Best-effort — не блокирует остальной старт при ошибке.
-      await mattermostMigration.hydrateRunStateFromDb(config.mattermostBoardId);
-    }
     await teamAuth.restoreSessions();
     await analytics.pruneOldLogs();
     await projectSettings.importLegacyFileTokens();
@@ -6759,6 +6782,22 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
   mmFileCache.init(); // same, for Mattermost board attachments — see mattermostFileCache.js
   app.listen(config.port, () => {
     console.log(`KF Approval listening on :${config.port}`);
+    if (config.mattermostBoardId) {
+      // Восстанавливаем migration report ПОСЛЕ того, как сервер уже начал
+      // слушать порт — НЕ await'ится в startup-цепочке выше (баг,
+      // исправлен 2026-10-15 в тот же день, когда обнаружен). Когда в
+      // Postgres ещё нет сохранённого report (первый раз с этим кодом),
+      // hydrateRunStateFromDb() делает живой поход в Mattermost за всей
+      // доской (getBoard+listCards+listBlocks) — на борде с сотнями карточек
+      // и текущей нагрузкой на Mattermost это заняло почти 5 минут, и ВСЕ
+      // запросы (включая /team и клиентский кабинет) всё это время висели,
+      // потому что порт ещё не слушался. Теперь это фоновая, не блокирующая
+      // операция — сервер отвечает сразу, баннер/подсветка появятся чуть
+      // позже отдельно, без простоя всего остального.
+      mattermostMigration.hydrateRunStateFromDb(config.mattermostBoardId).catch((err) => {
+        console.error('[startup] hydrateRunStateFromDb failed (баннер в /team будет скрыт, пока не пройдёт докатка):', err.message);
+      });
+    }
     const hasMmAuth = !!config.mattermostToken || !!(config.mattermostLoginId && config.mattermostPassword);
     if (!config.mattermostUrl || !hasMmAuth) {
       console.warn('[startup] MATTERMOST_URL or Mattermost credentials (MATTERMOST_TOKEN or MATTERMOST_LOGIN_ID/PASSWORD) not set — API calls will fail until configured.');
