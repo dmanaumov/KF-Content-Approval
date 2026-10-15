@@ -388,15 +388,30 @@ function mediaHtml(task, canReorder) {
   }
   const slides = task.media
     .map((m, i) => {
+      // Большой файл (2026-10-15, порог 30 МБ) — оригинал уже сохранён
+      // (m.fullUrl), но ночная докатка ещё не прислала сжатое превью
+      // (см. PATCH /api/automation/.../media/:mediaId/preview в index.js).
+      // Показываем явный плейсхолдер вместо попытки отрисовать пустой url
+      // как картинку/видео — иначе выглядело бы как сломанное медиа.
+      if (m.pendingCompression) {
+        return `<div class="slide file-link media-pending"><div><b>Готовим превью…</b><br><span>Файл принят, сжатая версия для согласования появится в течение ночи.</span></div></div>`;
+      }
       const fileUrl = mediaFileUrl(m);
+      // Кнопка «Полный размер» — ссылка на оригинал во внешнем хранилище
+      // проекта, см. project_settings.storage_url. Показываем ТОЛЬКО когда
+      // m.fullUrl реально есть — обычное медиа (подавляющее большинство)
+      // его не имеет и кнопки не получает.
+      const fullSizeBtn = m.fullUrl
+        ? `<a class="media-full-link" href="${esc(m.fullUrl)}" target="_blank" rel="noopener" title="Открыть файл в полном размере">Полный размер</a>`
+        : '';
       if (m.kind === 'image') {
         // src намеренно НЕ ставим тут (и не loading="lazy" — см.
         // primeMediaQueue() выше): порядок загрузки решает наша собственная
         // приоритетная очередь по data-media-index, не браузерная эвристика.
-        return `<div class="slide"><img data-src="${fileUrl}" data-media-index="${i}" alt=""></div>`;
+        return `<div class="slide"><img data-src="${fileUrl}" data-media-index="${i}" alt="">${fullSizeBtn}</div>`;
       }
       if (m.kind === 'video') {
-        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}" data-media-index="${i}"></video></div></div>`;
+        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}" data-media-index="${i}"></video></div>${fullSizeBtn}</div>`;
       }
       // Unknown/generic file: for a disk link, send the client to the
       // original share page (Nextcloud's own preview UI) rather than our

@@ -233,6 +233,10 @@
 .tm-media-kind{position:absolute;bottom:5px;right:5px;background:rgba(23,32,31,.65);color:#fff;font-size:9px;font-weight:800;border-radius:6px;padding:2px 5px}
 .tm-media-link-badge{position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.92);border:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#33413F;box-shadow:0 2px 6px rgba(0,0,0,.18)}
 .tm-media-link-badge.copied{background:var(--accent);color:#fff}
+/* Большой файл (2026-10-15) — ссылка на полноразмерный оригинал во внешнем
+   хранилище проекта; свободный угол (низ-лево — верх занят .tm-media-pos/
+   .tm-media-link-badge, низ-право — .tm-media-kind). */
+.tm-media-full-badge{position:absolute;bottom:5px;left:5px;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.92);border:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#33413F;box-shadow:0 2px 6px rgba(0,0,0,.18);text-decoration:none}
 .tm-media-empty{grid-column:1/-1;background:#F7F8F8;border:1px dashed #C7CECD;border-radius:16px;padding:26px 14px;text-align:center;color:var(--muted);font-size:12.5px}
 .tm-media-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .tm-media-toolbar-title{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
@@ -601,6 +605,7 @@
   .tm-ai-pop-option:active{background:#1D192E}
   .tm-media-thumb{background:#222525}
   .tm-media-link-badge{color:#ECEEEE}
+  .tm-media-full-badge{color:#ECEEEE}
   .tm-media-empty{background:#222626}
   .tm-reorder-toggle{background:#262222}
   .tm-reorder-row{background:#222626}

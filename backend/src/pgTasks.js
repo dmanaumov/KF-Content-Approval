@@ -50,6 +50,13 @@ function rowToTask(row, mediaRows, feedbackRows, projectProp) {
     // не нужно перепроверять то, что уже знаем.
     kind: m.kind || null,
     name: '',
+    // Большие файлы (2026-10-15, порог 30 МБ) — см. db.js на app_task_media.
+    // fullUrl пустой почти всегда (обычное медиа); заполнен только когда
+    // n8n прислал его через media-large. pendingCompression=true значит
+    // url ещё пуст (превью не готово) — фронт обязан отрисовать плейсхолдер,
+    // а не пытаться показать это как обычную картинку/видео.
+    fullUrl: m.full_url || '',
+    pendingCompression: !!m.pending_compression,
   }));
   const clientComments = feedbackRows
     .filter((f) => CLIENT_FEEDBACK_KINDS.has(f.kind))
@@ -275,7 +282,7 @@ async function getMedia(taskId, mediaId) {
 // position не передан -> в конец списка. kind '' (неизвестно) для любой
 // только что добавленной disk-ссылки — ровно как раньше у diskMedia,
 // resolveDiskMediaKinds() на чтении сам разберётся.
-async function insertMedia(taskId, { url, kind = '', position = null }) {
+async function insertMedia(taskId, { url, kind = '', position = null, fullUrl = '', pendingCompression = false }) {
   const pool = db.requirePool();
   let pos = position;
   if (pos == null) {
@@ -286,10 +293,26 @@ async function insertMedia(taskId, { url, kind = '', position = null }) {
     pos = rows[0].next;
   }
   const { rows } = await pool.query(
-    'INSERT INTO app_task_media (task_id, url, kind, position) VALUES ($1,$2,$3,$4) RETURNING id',
-    [taskId, url, kind, pos]
+    `INSERT INTO app_task_media (task_id, url, kind, position, full_url, pending_compression)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [taskId, url, kind, pos, fullUrl, !!pendingCompression]
   );
   return String(rows[0].id);
+}
+
+// n8n-докатка: ночью кладёт готовое сжатое превью (<=10 МБ) для медиа,
+// созданного ранее через insertMedia({ fullUrl, pendingCompression: true })
+// — см. POST /api/automation/tasks/:taskId/media-large в index.js. Снимает
+// pending_compression, чтобы approval-кабинет перестал рисовать плейсхолдер.
+// Возвращает false, если media_id не найден (чужая задача/уже удалено) —
+// роут в index.js превращает это в 404, а не в молчаливый no-op.
+async function setMediaPreview(taskId, mediaId, previewUrl) {
+  const pool = db.requirePool();
+  const { rowCount } = await pool.query(
+    'UPDATE app_task_media SET url = $1, pending_compression = false WHERE id = $2 AND task_id = $3',
+    [previewUrl, mediaId, taskId]
+  );
+  return rowCount > 0;
 }
 
 async function deleteMedia(taskId, mediaId) {
@@ -344,6 +367,7 @@ module.exports = {
   generateTaskId,
   getMedia,
   insertMedia,
+  setMediaPreview,
   deleteMedia,
   reorderMedia,
   addFeedback,

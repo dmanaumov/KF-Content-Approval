@@ -70,6 +70,17 @@ async function initSchema() {
       ADD COLUMN IF NOT EXISTS post_prompt text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS image_prompt text NOT NULL DEFAULT '';
   `);
+  // storage_url — ссылка на внешнее хранилище проекта (Google Диск или
+  // аналог), 2026-10-15, прямой запрос пользователя: для файлов 350+ МБ
+  // хранить оригинал у себя дорого, поэтому n8n сам копирует такие файлы
+  // туда и шлёт нам только ссылку (см. POST /api/automation/tasks/:taskId/
+  // media-large в index.js). Пустая строка = хранилище не настроено — в
+  // этом случае крупные файлы для проекта принимать нельзя (решение
+  // пользователя: отклонять с понятной ошибкой, а не тихо игнорировать).
+  await pool.query(`
+    ALTER TABLE project_settings
+      ADD COLUMN IF NOT EXISTS storage_url text NOT NULL DEFAULT '';
+  `);
   // Explicit "is this an AI project" toggle — a staff-set checkbox (see the
   // "Настройки" tab's edit popup, next to the logo field), NOT derived from
   // whether the 4 AI prompts below happen to be filled in. Added because the
@@ -733,6 +744,21 @@ async function initSchema() {
     );
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS app_task_media_task_idx ON app_task_media (task_id, position);`);
+  // full_url/pending_compression — большие файлы (порог 30 МБ, решение
+  // пользователя 2026-10-15): оригинал живёт на внешнем хранилище проекта
+  // (project_settings.storage_url), `url` в этой таблице — всегда маленькая
+  // (<=10 МБ) версия для согласования, которую ночью кладёт n8n (см.
+  // PATCH /api/automation/tasks/:taskId/media/:mediaId/preview). До того,
+  // как preview готов, pending_compression=true, url='' — approval-кабинет
+  // (frontend/app.js) показывает плейсхолдер вместо этого медиа, а не
+  // пытается открыть пустой url. full_url всегда ведёт на полноразмерный
+  // оригинал — именно его, а не url, automation API отдаёт для публикации
+  // в соцсеть.
+  await pool.query(`
+    ALTER TABLE app_task_media
+      ADD COLUMN IF NOT EXISTS full_url text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS pending_compression boolean NOT NULL DEFAULT false;
+  `);
   // app_task_feedback — переписка по согласованию (approve/правки/сообщения
   // клиенту/системные пометки). Сейчас это один общий поток комментариев
   // карточки от сервисного бот-аккаунта Mattermost, размеченный текстовыми

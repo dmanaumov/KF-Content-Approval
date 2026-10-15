@@ -235,12 +235,22 @@ button{cursor:pointer}
 .media{margin:4px 12px 0;border-radius:19px;overflow:hidden;background:#EEF1F0;position:relative;aspect-ratio:4/5}
 .carousel{display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
 .carousel::-webkit-scrollbar{display:none}
-.slide{flex:0 0 100%;width:100%;height:100%;scroll-snap-align:start;scroll-snap-stop:always;display:flex;align-items:center;justify-content:center;background:#EEF1F0;overflow:hidden}
+.slide{position:relative;flex:0 0 100%;width:100%;height:100%;scroll-snap-align:start;scroll-snap-stop:always;display:flex;align-items:center;justify-content:center;background:#EEF1F0;overflow:hidden}
 .slide img{width:100%;height:100%;object-fit:contain;display:block;background:#EEF1F0}
 .video-frame{background:#101313;width:100%;height:100%}
 .video-frame video{width:100%;height:100%;display:block;object-fit:contain;background:#101313;touch-action:manipulation}
 .file-link{min-height:100%;width:100%;padding:26px;display:grid;place-items:center;text-align:center}
 .file-link a{color:var(--accent);font-weight:800;text-decoration:none}
+/* Большой файл (2026-10-15, порог 30 МБ) — кнопка на полноразмерный
+   оригинал (поверх превью-картинки/видео слайда, см. mediaHtml() в app.js)
+   и плейсхолдер на то время, пока ночная докатка ещё не прислала сжатую
+   версию. .slide выше получил position:relative специально под эту кнопку
+   — без него она бы цеплялась за .media и не ехала вместе со своим слайдом. */
+.media-full-link{position:absolute;bottom:10px;right:10px;z-index:2;padding:6px 13px;border-radius:999px;background:rgba(15,25,24,.62);color:#fff;font-size:11.5px;font-weight:800;text-decoration:none}
+.media-full-link:active{background:rgba(15,25,24,.8)}
+.media-pending div{color:var(--muted)}
+.media-pending b{color:inherit;font-weight:800}
+.media-pending span{font-size:13px;line-height:1.4}
 .dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(15,25,24,.62);color:#fff;border-radius:999px;padding:5px 9px;font-size:11px;pointer-events:none}
 .media-reorder-btn{position:absolute;top:10px;right:10px;z-index:2;width:34px;height:34px;border:0;border-radius:999px;background:rgba(15,25,24,.62);color:#fff;display:grid;place-items:center;cursor:pointer}
 .media-reorder-btn svg{width:17px;height:17px;display:block}
@@ -503,6 +513,7 @@ button{cursor:pointer}
   .media{background:#222624}
   .slide{background:#222624}
   .slide img{background:#222624}
+  .media-pending div{color:#93A19C}
   .mo-thumb{background:#222624}
   .mo-btn{background:#222525;color:#ECEEEE}
   .caption-edit{background:#2E1919}

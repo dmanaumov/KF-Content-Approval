@@ -2299,14 +2299,26 @@ function renderModalTabbar() {
 function mediaThumbHtml(m, i) {
   const url = mediaFileUrl(m);
   let inner;
-  if (m.kind === 'image') inner = `<img src="${url}" alt="" loading="lazy">`;
+  // Большой файл (2026-10-15, порог 30 МБ) — оригинал уже принят
+  // (m.fullUrl), но ночная докатка ещё не прислала сжатое превью (<=10 МБ)
+  // для согласования: m.url/m.kind пока пустые/'pending', показывать как
+  // обычное изображение/видео нечего.
+  if (m.pendingCompression) {
+    inner = `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:4px;text-align:center;font-size:10.5px;color:var(--muted)">Сжимаем…</div>`;
+  } else if (m.kind === 'image') inner = `<img src="${url}" alt="" loading="lazy">`;
   else if (m.kind === 'video') inner = `<video muted preload="metadata" data-src="${url}"></video>`;
   else inner = `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:4px;text-align:center;font-size:10.5px;color:var(--muted)">${esc(m.name || 'Файл')}</div>`;
   const kindBadge = m.kind === 'video' ? '<span class="tm-media-kind">▶ видео</span>' : '';
   const linkBadge = m.source === 'disk' && m.shareUrl
     ? `<button type="button" class="tm-media-link-badge" data-action="copy-media" data-id="${esc(m.id)}" title="Материал на disk.kontentferma — нажмите, чтобы скопировать дату, тему и ссылку">🔗</button>`
     : '';
-  return `<div class="tm-media-thumb"><span class="tm-media-pos">${i + 1}</span>${inner}${kindBadge}${linkBadge}</div>`;
+  // Ссылка на полноразмерный оригинал во внешнем хранилище проекта —
+  // показываем независимо от того, готово ли превью (m.fullUrl есть с
+  // самого приёма файла, задолго до сжатия).
+  const fullBadge = m.fullUrl
+    ? `<a class="tm-media-full-badge" href="${esc(m.fullUrl)}" target="_blank" rel="noopener" title="Открыть файл в полном размере">⤢</a>`
+    : '';
+  return `<div class="tm-media-thumb"><span class="tm-media-pos">${i + 1}</span>${inner}${kindBadge}${linkBadge}${fullBadge}</div>`;
 }
 
 function reorderRowHtml(m, i, total) {

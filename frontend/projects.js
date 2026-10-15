@@ -1555,6 +1555,7 @@ async function openEdit(projectId, label) {
     }
     document.getElementById('editLogoUrl').value = data.logoUrl || '';
     updateLogoPreview();
+    document.getElementById('editStorageUrl').value = data.storageUrl || '';
     document.getElementById('editIsAiProject').checked = !!data.isAiProject;
     document.getElementById('editIsArchived').checked = !!data.isArchived;
     document.getElementById('editStartDate').value = data.startDate || '';
@@ -1904,12 +1905,14 @@ async function saveEdit() {
   }
 
   const logoUrl = document.getElementById('editLogoUrl').value.trim();
+  const storageUrl = document.getElementById('editStorageUrl').value.trim();
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(editingProjectId)}/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         logoUrl,
+        storageUrl,
         socialCredentials,
         isAiProject: document.getElementById('editIsAiProject').checked,
         isArchived: document.getElementById('editIsArchived').checked,

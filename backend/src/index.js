@@ -4555,6 +4555,11 @@ async function getAutomationProjectSettings(boardId, projectId) {
     imagePrompt: settings.imagePrompt,
     imageReferences: settings.imageReferences,
     cerberusMarkdown: settings.cerberusMarkdown,
+    // Ссылка на внешнее хранилище (Google Диск/аналог) для файлов 350+ МБ,
+    // 2026-10-15 — n8n читает её здесь, чтобы решить, можно ли копировать
+    // туда большой файл ПЕРЕД тем, как звать media-large ниже (а не только
+    // узнавать об отсутствии постфактум из ошибки media-large).
+    storageUrl: settings.storageUrl,
   };
 }
 
@@ -5906,6 +5911,92 @@ app.post('/api/automation/tasks/:taskId/media-import', requireAutomationAuth, as
     const payload = { error: err.code || 'media_import_failed', message: err.message };
     if (err.upstreamStatus) payload.upstreamStatus = err.upstreamStatus;
     res.status(status).json(payload);
+  }
+});
+
+// Порог "большого файла" — 30 МБ (решение пользователя, 2026-10-15). Это
+// НЕ проверяется здесь байт-в-байт (мы не скачиваем файл — см. ниже, почему),
+// это справочная константа для n8n/документации: ответственность за решение
+// "обычный media-upload/media-import или media-large" лежит на n8n-сценарии,
+// который и знает реальный размер файла до копирования.
+const LARGE_MEDIA_THRESHOLD_BYTES = 30 * 1024 * 1024;
+
+// POST /api/automation/tasks/:taskId/media-large — body: { fullUrl, kind?,
+// position? }. Для файлов 350+ МБ (прямой запрос пользователя, 2026-10-15):
+// хранить оригинал у себя дорого, поэтому ЭТОТ сервер НИКОГДА не скачивает
+// и не трогает байты самого файла — n8n сам копирует его во внешнее
+// хранилище проекта (project_settings.storage_url) и присылает сюда только
+// готовую ссылку. Создаёт медиа-запись с full_url=fullUrl,
+// pending_compression=true, url='' — approval-кабинет покажет плейсхолдер
+// до того, как ночная докатка пришлёт сжатое превью (см. PATCH .../preview
+// ниже). kind проставляется в 'pending', а не '' — иначе rowToTask()
+// отдаёт kind:null, и resolveDiskMediaKinds() в этом же файле попробует
+// прощупать shareUrl='' как будто это обычный disk-файл с неизвестным
+// типом (бессмысленный запрос, т.к. url пока пуст).
+//
+// Отклоняет (409), если у проекта НЕ настроен storage_url — по прямому
+// решению пользователя: тихого "всё равно примем" или попытки обойтись без
+// хранилища тут нет, лучше явная ошибка, которую n8n может показать
+// человеку, чем молча потерянный большой файл.
+app.post('/api/automation/tasks/:taskId/media-large', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const fullUrl = String((req.body && req.body.fullUrl) || '').trim();
+    if (!fullUrl) throw badRequest('full_url_required', 'fullUrl обязателен — ссылка на полноразмерный файл во внешнем хранилище.');
+    try {
+      const parsed = new URL(fullUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('bad protocol');
+    } catch {
+      throw badRequest('invalid_full_url', 'fullUrl должен быть обычной http(s)-ссылкой.');
+    }
+    const { board } = await loadBoard(boardId);
+    const task = await pgTasks.getTaskById(boardId, board, req.params.taskId);
+    if (!task) return res.status(404).json({ error: 'task_not_found' });
+    const settings = await projectSettings.getSettings(boardId, task.projectId);
+    if (!settings.storageUrl) {
+      const err = new Error('Для проекта не настроена ссылка на хранилище (Google Диск) — добавьте её в настройках проекта перед отправкой больших файлов.');
+      err.code = 'storage_not_configured';
+      err.httpStatus = 409;
+      throw err;
+    }
+    const kind = String((req.body && req.body.kind) || '').trim() || 'pending';
+    const position = req.body && req.body.position != null ? Number(req.body.position) : null;
+    await pgTasks.insertMedia(req.params.taskId, { url: '', kind, position, fullUrl, pendingCompression: true });
+    await pgTasks.addFeedback(req.params.taskId, {
+      kind: 'system',
+      authorKind: 'staff',
+      authorName: AUTOMATION_ACTOR,
+      text: `Принят большой файл (оригинал на внешнем хранилище) — ждём сжатую версию для согласования: ${fullUrl}`,
+    });
+    const updated = await refetchTeamTask(boardId, req.params.taskId);
+    res.status(202).json({ task: updated });
+  } catch (err) {
+    console.error('[api] automation media-large failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'media_large_failed', message: err.message });
+  }
+});
+
+// PATCH /api/automation/tasks/:taskId/media/:mediaId/preview — body:
+// { previewUrl }. Ночная докатка (n8n) зовёт это ПОСЛЕ того, как сама
+// скачала оригинал по full_url, сжала его до <=10 МБ и залила результат
+// (куда угодно, обычно — тем же путём, что обычный media-upload, на
+// disk.kontentferma) — отдаёт нам готовую ссылку на сжатую версию.
+// Снимает pending_compression, после чего approval-кабинет показывает
+// обычное медиа вместо плейсхолдера.
+app.patch('/api/automation/tasks/:taskId/media/:mediaId/preview', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const previewUrl = String((req.body && req.body.previewUrl) || '').trim();
+    if (!previewUrl) throw badRequest('preview_url_required', 'previewUrl обязателен — ссылка на сжатую (<=10 МБ) версию файла.');
+    const ok = await pgTasks.setMediaPreview(req.params.taskId, req.params.mediaId, previewUrl);
+    if (!ok) return res.status(404).json({ error: 'media_not_found', message: 'Медиа с таким id не найдено у этой карточки.' });
+    const updated = await refetchTeamTask(boardId, req.params.taskId);
+    res.json({ task: updated });
+  } catch (err) {
+    console.error('[api] automation media preview update failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'media_preview_failed', message: err.message });
   }
 });
 

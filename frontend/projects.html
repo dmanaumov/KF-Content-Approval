@@ -99,6 +99,10 @@
         <span>Так будет выглядеть лого в кабинете клиента</span>
       </div>
 
+      <label class="field-label" for="editStorageUrl">Хранилище для больших файлов (Google Диск или аналог)</label>
+      <input id="editStorageUrl" class="field-input" type="text" placeholder="https://drive.google.com/drive/folders/... — папка проекта, куда автоматизация будет копировать файлы 30+ МБ">
+      <div class="cred-intro">Если не задано — файлы крупнее 30 МБ для этого проекта принимать не будем (автоматизация получит явную ошибку). Оригинал остаётся тут, в согласователе клиенту показываем сжатую версию — ссылка на полный размер будет отдельной кнопкой на самом медиа.</div>
+
       <label class="ai-flag-check">
         <input id="editIsAiProject" type="checkbox">
         <img class="ai-flag-avatar" src="/ai-avatar.png" alt="">
@@ -373,7 +377,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/projects.js?v=26"></script>
+<script src="/projects.js?v=27"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>
