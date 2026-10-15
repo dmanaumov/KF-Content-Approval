@@ -43,9 +43,20 @@ services:
     #   - "5432:5432"
     networks:
       default:
+      # ПЕРЕИМЕНОВАНО 2026-10-15 (критичный прод-баг) — алиас 'db' в общей
+      # dokploy-network конфликтовал с ОДНОИМЁННЫМИ 'db'-сервисами других
+      # проектов на этом же Dokploy-хосте (my-kf, perf-kf, smm-saas и др. —
+      # все явно склонированы с одного шаблона). Docker DNS на общей сети
+      # отдавал то этот контейнер, то чужой — приложение иногда коннектилось
+      # к ЧУЖОЙ базе другого проекта и тихо получало 0 строк вместо ошибки
+      # (совпадали POSTGRES_USER/POSTGRES_DB по умолчанию). Рестарт/редеплой
+      # APP не лечил — проблема на уровне DNS сети, не внутри процесса.
+      # Уникальный алиас ниже полностью убирает коллизию. Если n8n (см.
+      # docs/N8N_AUTOMATION.md) подключается через 'db' на dokploy-network —
+      # обнови там Host на 'smm-tool-yg4ifn-pg'.
       dokploy-network:
         aliases:
-          - db
+          - smm-tool-yg4ifn-pg
 
   app:
     build:
@@ -56,10 +67,16 @@ services:
     env_file:
       - .env
     environment:
-      # Built from the POSTGRES_* vars above so there's one password to set
-      # (see .env.example). "db" resolves via Docker's internal DNS to the
-      # service above.
-      DATABASE_URL: postgres://${POSTGRES_USER:-kfapproval}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kfapproval}
+      # Если DATABASE_URL задан в .env (или в Dokploy → Environment) —
+      # используется он целиком, как есть. Это даёт возможность в будущем
+      # перенести Postgres в отдельную сущность/хост без правок этого
+      # файла — достаточно будет поменять значение переменной на сервере.
+      # Если DATABASE_URL НЕ задан — собираем строку сами из POSTGRES_*
+      # выше и адреса 'smm-tool-yg4ifn-pg' (см. комментарий у сервиса db
+      # выше: это НЕ 'db' специально — общий алиас 'db' на dokploy-network
+      # конфликтовал с одноимёнными сервисами других проектов на этом же
+      # Dokploy-хосте и был источником критичного прод-бага 2026-10-15).
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-kfapproval}:${POSTGRES_PASSWORD}@smm-tool-yg4ifn-pg:5432/${POSTGRES_DB:-kfapproval}}
     restart: unless-stopped
     depends_on:
       db:

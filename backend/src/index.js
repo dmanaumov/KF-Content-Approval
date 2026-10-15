@@ -2816,6 +2816,14 @@ app.get('/api/team/tasks/:taskId', teamAuth.requireTeamAuth, async (req, res) =>
     const { board } = await loadBoard(boardId);
     const task = await pgTasks.getTaskById(boardId, board, taskId);
     if (!task) {
+      // ДИАГНОСТИКА — см. тот же блок в requireTeamCardAccess ниже.
+      try {
+        const pool = db.requirePool();
+        const { rows: rawRows } = await pool.query('SELECT id, board_id, status FROM app_tasks WHERE board_id = $1 AND id = $2', [boardId, taskId]);
+        console.error(`[team-card-404] (single GET) boardId=${boardId}, taskId=${taskId}, user=${req.teamSession && req.teamSession.user ? req.teamSession.user.username : '?'}, raw SELECT нашёл строк=${rawRows.length}${rawRows.length ? `, status=${rawRows[0].status}` : ''}`);
+      } catch (rawErr) {
+        console.error(`[team-card-404] (single GET) boardId=${boardId}, taskId=${taskId}, независимая проверка тоже упала:`, rawErr.message);
+      }
       return res.status(404).json({ error: 'task_not_found', message: 'Карточка не найдена.' });
     }
     const role = teamAuth.roleFor(req.teamSession.user);
@@ -2858,6 +2866,17 @@ async function requireTeamCardAccess(req, res, next) {
     const { board } = await loadBoard(boardId);
     const task = await pgTasks.getTaskById(boardId, board, taskId);
     if (!task) {
+      // ДИАГНОСТИКА (2026-10-15, см. [team-tasks] в GET /api/team/tasks) —
+      // та же независимая проверка, но для одной карточки: если raw-SELECT
+      // находит строку, а pgTasks.getTaskById — нет, значит баг в
+      // rowsToTasks/статус-фильтре, а не в самом SELECT или в данных.
+      try {
+        const pool = db.requirePool();
+        const { rows: rawRows } = await pool.query('SELECT id, board_id, status FROM app_tasks WHERE board_id = $1 AND id = $2', [boardId, taskId]);
+        console.error(`[team-card-404] boardId=${boardId}, taskId=${taskId}, user=${req.teamSession && req.teamSession.user ? req.teamSession.user.username : '?'}, raw SELECT нашёл строк=${rawRows.length}${rawRows.length ? `, status=${rawRows[0].status}` : ''}`);
+      } catch (rawErr) {
+        console.error(`[team-card-404] boardId=${boardId}, taskId=${taskId}, независимая проверка тоже упала:`, rawErr.message);
+      }
       return res.status(404).json({ error: 'task_not_found', message: 'Карточка не найдена.' });
     }
     const role = teamAuth.roleFor(req.teamSession.user);
