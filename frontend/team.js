@@ -574,15 +574,24 @@ function migrationReviewRowHtml(projectId, label) {
   if (!review) {
     stateHtml = 'Пока не проверено.';
   } else if (review.status === 'ok') {
-    stateHtml = `✅ Подтвердил(а) ${esc(review.reviewedByName || 'кто-то из команды')}.`;
+    stateHtml = `✅ Подтвердил(а) ${esc(review.reviewedByName || 'кто-то из команды')}, ${esc(formatDateTime(review.updatedAt) || '')}.`;
   } else {
-    stateHtml = `⚠️ Замечание от ${esc(review.reviewedByName || 'кого-то из команды')}: ${esc(review.note || '')}`;
+    stateHtml = `⚠️ Замечание от ${esc(review.reviewedByName || 'кого-то из команды')} (${esc(formatDateTime(review.updatedAt) || '')}): ${esc(review.note || '')}`;
   }
+  // «Всё норм» — двухшаговое подтверждение (по просьбе пользователя,
+  // 2026-10-15: случайный клик не должен сразу закрывать проект как
+  // проверенный) — первый клик раскрывает явный вопрос "Подтверждаешь?" с
+  // отдельной кнопкой подтверждения, второй клик уже реально отправляет.
   return `<div class="migration-review-row" data-project="${esc(projectId)}">
     <span class="migration-review-project">${esc(label)}</span>
-    <button type="button" class="btn approve" data-mig-action="ok">Всё норм</button>
+    <button type="button" class="btn approve" data-mig-action="ok-toggle">Всё норм</button>
     <button type="button" class="btn" data-mig-action="issues-toggle">Есть замечания</button>
     <span class="migration-review-state">${stateHtml}</span>
+    <span class="migration-review-ok-confirm" hidden>
+      Подтверждаешь, что план публикаций по проекту «${esc(label)}» переехал корректно?
+      <button type="button" class="btn approve" data-mig-action="ok-submit">Да, подтверждаю</button>
+      <button type="button" class="btn" data-mig-action="ok-cancel">Отмена</button>
+    </span>
     <textarea class="migration-review-note" placeholder="Что именно не так?" hidden></textarea>
     <button type="button" class="btn approve" data-mig-action="issues-submit" hidden>Отправить замечание</button>
   </div>`;
@@ -609,7 +618,12 @@ async function submitMigrationReview(projectId, status, note) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-    migrationReviews.set(projectId, { status, note, reviewedByName: (currentUser && [currentUser.first_name, currentUser.last_name].filter(Boolean).join(' ')) || currentUser?.username || 'вы' });
+    migrationReviews.set(projectId, {
+      status,
+      note,
+      reviewedByName: (currentUser && [currentUser.first_name, currentUser.last_name].filter(Boolean).join(' ')) || currentUser?.username || 'вы',
+      updatedAt: Date.now(),
+    });
     renderMigrationReviewRows();
     // Пересчитываем подсветку карточек этого проекта локально, без
     // перезагрузки списка — issues красит независимо от медиа, ok снимает
@@ -631,7 +645,12 @@ migrationReviewList.addEventListener('click', (e) => {
   const row = btn.closest('.migration-review-row');
   const projectId = row.dataset.project;
   const action = btn.dataset.migAction;
-  if (action === 'ok') {
+  if (action === 'ok-toggle') {
+    const confirmEl = row.querySelector('.migration-review-ok-confirm');
+    confirmEl.hidden = !confirmEl.hidden;
+  } else if (action === 'ok-cancel') {
+    row.querySelector('.migration-review-ok-confirm').hidden = true;
+  } else if (action === 'ok-submit') {
     submitMigrationReview(projectId, 'ok', '');
   } else if (action === 'issues-toggle') {
     const note = row.querySelector('.migration-review-note');

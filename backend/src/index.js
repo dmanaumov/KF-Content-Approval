@@ -722,6 +722,45 @@ app.get('/api/projects', staffAuth, async (req, res) => {
     // директор по производству... её там быть тоже не должно» — см. её
     // комментарий в config.js).
     const facepileExcludedEmails = new Set([...config.ceoEmails, ...config.adminEmails, ...config.facepileExcludeEmails]);
+    // ВРЕМЕННО (2026-10-15, прямой запрос пользователя) — та же подсветка
+    // проверки переноса с Mattermost, что у карточек задач в /team (см.
+    // annotateMigrationStatus выше), но здесь на уровне ПРОЕКТА: нужно,
+    // чтобы в админке (где правятся сами проекты) было сразу видно, какие
+    // проекты ещё не подтверждены командой. 'ok' — ТОЛЬКО после явного
+    // подтверждения «Всё норм» (см. тот же комментарий у
+    // annotateMigrationStatus — раньше 'ok' был ложным дефолтом). null —
+    // подсветку вообще не показываем (перенос ни разу не запускался).
+    let migrationStatusByProject = null;
+    {
+      const runStatus = mattermostMigration.getRunStatus();
+      if (runStatus.report) {
+        const missingTaskIds = new Set([
+          ...(runStatus.report.mediaErrors || []).map((e) => e.taskId),
+          ...mattermostMigration.getPendingMediaTaskIds(),
+        ]);
+        const reviews = await migrationReview.getAll(boardId);
+        const { tasks: allBoardTasks } = await pgTasks.listTasks(boardId, board, { skipProjectFilter: true, includeAllStatuses: true });
+        const projectHasPendingMedia = new Set();
+        for (const t of allBoardTasks) {
+          if (t.projectId && missingTaskIds.has(t.id)) projectHasPendingMedia.add(t.projectId);
+        }
+        migrationStatusByProject = new Map();
+        for (const o of projectProp.options || []) {
+          const review = reviews.get(o.id);
+          const status =
+            review && review.status === 'issues' ? 'issues'
+            : projectHasPendingMedia.has(o.id) ? 'media_pending'
+            : review && review.status === 'ok' ? 'ok'
+            : 'unreviewed';
+          migrationStatusByProject.set(o.id, {
+            status,
+            reviewedByName: review ? review.reviewedByName : '',
+            updatedAt: review ? review.updatedAt : null,
+            note: review ? review.note : '',
+          });
+        }
+      }
+    }
     const options = await Promise.all(
       (projectProp.options || []).map(async (o) => {
         // Rotatable short link + logo URL — see projectSettings.js. Row is
@@ -785,7 +824,10 @@ app.get('/api/projects', staffAuth, async (req, res) => {
         // staffIsProjectManager в index.js), только подписью на карточке.
         const managerUser = managerUsername ? usersByUsername.get(managerUsername) : null;
         const projectManager = managerUser ? { id: managerUser.id, name: managerUser.name } : null;
-        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members, projectManager };
+        const migrationReview = migrationStatusByProject
+          ? migrationStatusByProject.get(o.id) || { status: 'unreviewed', reviewedByName: '', updatedAt: null, note: '' }
+          : null;
+        return { id: o.id, label: o.value, token, logoUrl, aiStatus, isArchived, scheduleStatus, posts, paidThroughDate, configuredNetworks, cerberusProtected, members, projectManager, migrationReview };
       })
     );
     // Project-access scoping (2026-09-20, заменяет старое «Менеджер
@@ -1601,9 +1643,27 @@ app.get('/api/ceo/mattermost-migration/preview', teamAuth.requireCeoAuth, async 
   }
 });
 
+// 2026-10-15, по прямому запросу пользователя: основной перенос карточек
+// («Выполнить перенос») теперь намеренно заблокирован — фаза 3
+// (переподключение роутов на Postgres) уже задеплоена, Mattermost больше
+// не источник правды, и TRUNCATE-пересборка из текущего Mattermost теперь
+// молча уничтожила бы любые Postgres-native данные без Mattermost-аналога
+// (новые карточки/медиа/переписка, созданные после переключения). Если
+// когда-нибудь ДЕЙСТВИТЕЛЬНО понадобится повторный полный перенос — снять
+// флаг здесь осознанно, не просто по случайному клику в интерфейсе.
+// Докатка медиа (startMediaRetry/startBackfillJob) НЕ блокируется —
+// она только дописывает недостающее, TRUNCATE не делает.
+const MIGRATION_RUN_LOCKED = true;
+
 app.post('/api/ceo/mattermost-migration/run', teamAuth.requireCeoAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
+  if (MIGRATION_RUN_LOCKED) {
+    return res.status(423).json({
+      error: 'migration_run_locked',
+      message: 'Повторный полный перенос заблокирован — Mattermost больше не источник правды (фаза 3 задеплоена). Используйте «Докатить медиа» для оставшихся файлов.',
+    });
+  }
   if (!(req.body && req.body.confirm === true)) {
     return res.status(400).json({ error: 'confirm_required', message: 'Нужно подтверждение запуска (confirm: true).' });
   }
@@ -2554,9 +2614,20 @@ async function annotateMigrationStatus(boardId, tasks) {
     ...mattermostMigration.getPendingMediaTaskIds(),
   ]);
   const reviews = await migrationReview.getAll(boardId);
+  // 2026-10-15, по замечанию пользователя: 'ok' раньше был дефолтом для
+  // ЛЮБОЙ задачи без проблем, даже если по её проекту ещё никто не нажал
+  // «Всё норм» — зелёный цвет ложно читался как "команда проверила и
+  // подтвердила", хотя на деле означал только "автоматика не нашла
+  // проблем". Теперь 'ok' — ТОЛЬКО после явного подтверждения ревью; до
+  // этого — 'unreviewed' (нет свечения вообще, см. team.css/.mig-* — для
+  // unreviewed правила нет намеренно).
   for (const t of tasks) {
     const review = reviews.get(t.projectId);
-    t.migrationStatus = review && review.status === 'issues' ? 'issues' : missingTaskIds.has(t.id) ? 'media_pending' : 'ok';
+    t.migrationStatus =
+      review && review.status === 'issues' ? 'issues'
+      : missingTaskIds.has(t.id) ? 'media_pending'
+      : review && review.status === 'ok' ? 'ok'
+      : 'unreviewed';
   }
 }
 

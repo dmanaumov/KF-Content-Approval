@@ -35,6 +35,13 @@ const retryLog = document.getElementById('retryLog');
 let pollTimer = null;
 let retryPollTimer = null;
 
+// 2026-10-15 — см. тот же флаг и комментарий в backend/src/index.js
+// (MIGRATION_RUN_LOCKED): основной перенос заблокирован, только докатка
+// медиа остаётся рабочей. Дублируем блокировку и тут, а не полагаемся
+// только на бэкенд, чтобы кнопка сразу выглядела неактивной, а не падала
+// с ошибкой после клика.
+const MIGRATION_RUN_LOCKED = true;
+
 function showToast(text) {
   toast.textContent = text;
   toast.classList.add('show');
@@ -96,7 +103,7 @@ async function runPreview() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
     previewResult.innerHTML = renderReport(data);
-    runBtn.disabled = false;
+    runBtn.disabled = MIGRATION_RUN_LOCKED;
   } catch (err) {
     previewError.hidden = false;
     previewError.textContent = 'Не удалось получить предпросмотр: ' + err.message;
@@ -297,7 +304,7 @@ retryMediaBtn.addEventListener('click', startMediaRetry);
       runIdle.hidden = true;
       pollStatus();
     } else if (status.state === 'done' || status.state === 'error') {
-      runBtn.disabled = false;
+      runBtn.disabled = MIGRATION_RUN_LOCKED;
       if (status.state === 'done') {
         runResult.innerHTML = renderReport(status.report);
         updateRetryAvailability(status.report);

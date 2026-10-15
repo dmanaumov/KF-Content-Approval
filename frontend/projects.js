@@ -96,6 +96,35 @@ function managerLineHtml(projectManager) {
   return `<div class="proj-manager-line unset">Менеджер не назначен</div>`;
 }
 
+function formatDateTime(value) {
+  if (!value) return '';
+  try {
+    return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  } catch (e) {
+    return '';
+  }
+}
+
+// ВРЕМЕННО (2026-10-15, прямой запрос пользователя: "лог подтверждений" на
+// самой карточке проекта в админке, не только цвет) — та же информация,
+// что в баннере /team (кто подтвердил/оставил замечание и когда), но тут
+// видна сразу на карточке без захода в /team.
+function migrationReviewLineHtml(migrationReview) {
+  if (!migrationReview) return ''; // перенос ни разу не запускался
+  const { status, reviewedByName, updatedAt, note } = migrationReview;
+  const when = formatDateTime(updatedAt);
+  if (status === 'issues') {
+    return `<div class="proj-mig-log issues">⚠️ Замечание от ${esc(reviewedByName || 'кого-то из команды')}${when ? `, ${esc(when)}` : ''}: ${esc(note || '')}</div>`;
+  }
+  if (status === 'ok') {
+    return `<div class="proj-mig-log ok">✅ Перенос подтвердил(а) ${esc(reviewedByName || 'кто-то из команды')}${when ? `, ${esc(when)}` : ''}</div>`;
+  }
+  if (status === 'media_pending') {
+    return `<div class="proj-mig-log pending">⏳ Медиа ещё докатывается — проверка переноса пока не завершена.</div>`;
+  }
+  return `<div class="proj-mig-log unreviewed">Перенос с Mattermost ещё не подтверждён никем.</div>`;
+}
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -258,6 +287,27 @@ function render(filterText) {
         // должен выглядеть "активным ИИ-проектом", даже если флаг ИИ тоже стоит.
         const aiClass = o.aiStatus === 'ai' ? ' ai' : o.aiStatus === 'partial' ? ' attention' : '';
         const archivedClass = o.isArchived ? ' archived' : '';
+        // ВРЕМЕННО (2026-10-15, прямой запрос пользователя) — подсветка
+        // проверки переноса с Mattermost на уровне проекта, тот же цветовой
+        // язык, что у карточек задач в /team (см. .mig-* в team.css):
+        // красный — есть замечание, жёлтый — у проекта есть медиа ещё в
+        // докатке, зелёный — команда явно подтвердила «Всё норм», синий —
+        // ещё НИКТО не подтвердил (намеренно ЗАМЕТНЫЙ, а не приглушённый,
+        // как на карточках задач — здесь это ровно то, что нужно увидеть).
+        // migrationStatus===null — перенос ни разу не запускался, подсветку
+        // не показываем вовсе.
+        const migStatus = o.migrationReview ? o.migrationReview.status : null;
+        const migClass = migStatus ? ` mig-${migStatus}` : '';
+        const migBadgeMeta = {
+          issues: { label: 'ЕСТЬ ЗАМЕЧАНИЯ', tip: 'По переносу с Mattermost есть замечание — см. лог ниже.' },
+          media_pending: { label: 'МЕДИА ДОКАТЫВАЕТСЯ', tip: 'Часть медиа этого проекта ещё докатывается с Mattermost.' },
+          ok: { label: 'ПЕРЕНОС ОК', tip: 'Команда подтвердила: план публикаций переехал корректно.' },
+          unreviewed: { label: 'НЕ ПРОВЕРЕНО', tip: 'Перенос с Mattermost ещё не подтверждён никем.' },
+        }[migStatus];
+        const migBadge = migBadgeMeta
+          ? `<span class="mig-status-badge mig-status-${migStatus}" data-tip="${esc(migBadgeMeta.tip)}">${migBadgeMeta.label}</span>`
+          : '';
+        const migLogRow = migrationReviewLineHtml(o.migrationReview);
         const avatar = !o.isArchived && (o.aiStatus === 'ai' || o.aiStatus === 'partial')
           ? `<span class="proj-ai-avatar-wrap" data-tip="${o.aiStatus === 'ai' ? 'ИИ-проект — промты заполнены полностью' : 'Заполнены не все промты ИИ — требуется внимание'}"><img class="proj-ai-avatar" src="/ai-avatar.png" alt="ИИ"></span>`
           : '';
@@ -312,7 +362,7 @@ function render(filterText) {
         const netRow = netChips ? `<div class="proj-net-row">${netChips}</div>` : '';
         const membersRow = membersHtml(o.members);
         const managerRow = !o.isArchived ? managerLineHtml(o.projectManager) : '';
-        return `<div class="proj-card${aiClass}${archivedClass}" id="proj-${esc(o.id)}">
+        return `<div class="proj-card${aiClass}${archivedClass}${migClass}" id="proj-${esc(o.id)}">
           <div class="proj-card-top">
             <div class="proj-logo">${logo}${kpiDot}</div>
             <div class="proj-info">
@@ -321,6 +371,7 @@ function render(filterText) {
                 ${cerberusBadge}
                 ${paidWarnBadge}
                 ${archivedBadge}
+                ${migBadge}
               </div>
               <div class="proj-row proj-link-row">
                 <span class="proj-row-label">Клиенту:</span>
@@ -328,6 +379,7 @@ function render(filterText) {
               </div>
               ${netRow}
               ${managerRow}
+              ${migLogRow}
               ${membersRow}
             </div>
             <div class="proj-actions-col">

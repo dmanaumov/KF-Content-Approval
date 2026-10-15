@@ -78,6 +78,46 @@
   .proj-list{grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));align-items:start}
 }
 .proj-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 16px;display:grid;gap:9px}
+
+/* ВРЕМЕННО (2026-10-15) — подсветка проверки переноса с Mattermost на
+   уровне проекта, см. комментарий у migClass в projects.js. Тот же язык,
+   что у .mig-* в team.css, плюс mig-unreviewed — тут этот статус нарочно
+   заметный (синий), а не приглушённый, т.к. задача страницы — явно
+   показать, что ещё не подтверждено. */
+.proj-card.mig-ok{box-shadow:0 0 0 2px rgba(46,204,113,.45),0 0 10px rgba(46,204,113,.3)}
+.proj-card.mig-media_pending{box-shadow:0 0 0 2px rgba(240,196,25,.5),0 0 10px rgba(240,196,25,.3)}
+.proj-card.mig-issues{box-shadow:0 0 0 2px rgba(224,60,60,.55),0 0 10px rgba(224,60,60,.32)}
+.proj-card.mig-unreviewed{box-shadow:0 0 0 2px rgba(52,120,246,.45),0 0 10px rgba(52,120,246,.28)}
+
+/* Текстовый бейдж статуса переноса в .proj-name-row — тот же
+   tooltip-паттерн, что у .archived-badge выше, цвет берёт из того же
+   box-shadow-набора, что .proj-card.mig-* (см. выше). */
+.mig-status-badge{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#fff;border-radius:6px;padding:3px 7px;text-transform:uppercase;white-space:nowrap;cursor:default}
+.mig-status-badge.mig-status-ok{background:#2ECC71}
+.mig-status-badge.mig-status-media_pending{background:#D9A913}
+.mig-status-badge.mig-status-issues{background:#E03C3C}
+.mig-status-badge.mig-status-unreviewed{background:#3478F6}
+.mig-status-badge[data-tip]::after{
+  content:attr(data-tip);
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  background:#17201f;
+  color:#fff;
+  font-size:11px;
+  font-weight:650;
+  line-height:1.35;
+  white-space:nowrap;
+  padding:6px 9px;
+  border-radius:8px;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:10;
+  text-transform:none;
+  letter-spacing:normal;
+}
+.mig-status-badge[data-tip]:hover::after{opacity:1}
 /* AI-project cards: driven by the "ИИ-проект" checkbox (project_settings.
    is_ai_project), not by prompt completeness — see aiStatusOf() in
    projectSettings.js. Flagged + all four prompts filled gets the AI accent;
@@ -346,6 +386,14 @@
 .proj-manager-line{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:2px}
 .proj-manager-line b{color:var(--ink);font-weight:800}
 .proj-manager-line.unset{font-style:italic}
+
+/* ВРЕМЕННО (2026-10-15) — лог подтверждения переноса с Mattermost прямо на
+   карточке проекта, см. migrationReviewLineHtml в projects.js. */
+.proj-mig-log{font-size:11.5px;line-height:1.4;margin-top:4px;padding:6px 8px;border-radius:8px;background:#FAFBFB;border:1px solid var(--line)}
+.proj-mig-log.ok{color:#1F7A43;background:#EAFBF1;border-color:#BFEBD2}
+.proj-mig-log.issues{color:#9C2E2E;background:#FDEDED;border-color:#F3C6C6}
+.proj-mig-log.pending{color:#8A6D00;background:#FFF8E1;border-color:#F0DFA0}
+.proj-mig-log.unreviewed{color:#1C4FB0;background:#EAF1FE;border-color:#C7D9F9}
 .proj-net-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .proj-net-chip{position:relative;width:10px;height:10px;border-radius:3px;display:inline-block;cursor:default;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
 .proj-net-chip[data-tip]::after{
