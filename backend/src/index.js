@@ -1688,11 +1688,15 @@ app.get('/api/ceo/mattermost-migration/status', teamAuth.requireCeoAuth, (req, r
 // медиа» на /ceo/migration, решение 2026-10-15) — фон + поллинг статуса,
 // тот же паттерн, что и у /run и /status. Список файлов для докатки берётся
 // из report.mediaErrors последнего ПЕРЕНОСА (см. mattermostMigration.js).
-app.post('/api/ceo/mattermost-migration/retry-media', teamAuth.requireCeoAuth, (req, res) => {
+app.post('/api/ceo/mattermost-migration/retry-media', teamAuth.requireCeoAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
   try {
-    const status = mattermostMigration.startMediaRetry(boardId);
+    // startMediaRetry теперь асинхронная (2026-10-15) — сверяет живой
+    // Mattermost с текущим Postgres напрямую (computeMissingMediaTargets),
+    // вместо того чтобы полагаться на report.mediaErrors в памяти процесса,
+    // которая обнуляется при каждом рестарте бэкенда.
+    const status = await mattermostMigration.startMediaRetry(boardId);
     res.status(202).json(status);
   } catch (err) {
     res.status(409).json({ error: 'media_retry_unavailable', message: err.message });

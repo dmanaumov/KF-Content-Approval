@@ -374,14 +374,12 @@ async function runMigration(boardId, { board, cards, blocks }, onProgress) {
 //     — targets уже полностью разрешены (из того же прохода
 //     gatherMigrationData — data.pendingMedia), повторного чтения
 //     Mattermost не требуется.
-//  2) Вручную кнопкой «Докатить медиа» на /ceo/migration — для того, что
-//     осталось в runState.report.mediaErrors (например, файл не осилил все
-//     попытки даже в фоновом прогоне, или сервер перезапускался и потерял
-//     pendingMedia из пункта 1 — report.mediaErrors в этом случае тоже
-//     пуст, см. предупреждение в claude/kf-mattermost-to-postgres-
-//     migration.md про in-memory состояние) — targets сначала нужно
-//     разрешить (resolveMediaErrorTargets ниже), т.к. в mediaErrors хранится
-//     только {taskId, fileId}, без kind/position/folderName.
+//  2) Вручную кнопкой «Докатить медиа» на /ceo/migration — targets теперь
+//     ВСЕГДА пересчитываются заново сверкой живого Mattermost с текущим
+//     Postgres (computeMissingMediaTargets ниже), а не из report.mediaErrors
+//     в памяти процесса — та память пуста после любого рестарта бэкенда
+//     (см. claude/kf-mattermost-to-postgres-migration.md), а эта сверка от
+//     рестартов не зависит вообще.
 // Каждый файл — reuploadMattermostFileWithBackoff (см. выше). retryState —
 // общий прогресс/лог для поллинга (GET .../retry-media/status), один на
 // оба сценария: кнопка в CEO-интерфейсе показывает и автоматическую, и
@@ -426,7 +424,7 @@ function getPendingMediaTaskIds() {
 
 // targets — уже разрешённые {taskId, position, folderName, mediaItem} (или
 // {..., mediaItem: null, message} для таргетов, которые не удалось
-// разрешить — см. resolveMediaErrorTargets).
+// разрешить — см. computeMissingMediaTargets).
 async function runBackfill(boardId, targets) {
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
@@ -497,66 +495,66 @@ function startBackfillJob(boardId, targets) {
   return retryState;
 }
 
-// Разрешает {taskId, fileId}-записи из runState.report.mediaErrors в
-// полноценные targets — перечитывает Mattermost заново (kind/position/
-// folderName не сохраняются между прогонами). Та же логика, что раньше
-// была прямо внутри ручной докатки.
-async function resolveMediaErrorTargets(boardId) {
-  const errors = (runState.report && runState.report.mediaErrors) || [];
-  if (!errors.length) return [];
+// ВМЕСТО старого resolveMediaErrorTargets (разрешал только то, что было в
+// report.mediaErrors в памяти процесса — ломалось при любом рестарте
+// бэкенда, см. 2026-10-15 в project doc): сверяет ЖИВОЙ список
+// Mattermost-медиа каждой карточки с тем, что уже РЕАЛЬНО лежит в Postgres
+// (app_task_media.url) — источники правды напрямую, без зависимости от
+// памяти процесса. Файл считается уже докатанным, если среди текущих URL
+// задачи есть такой, что содержит `mm_<mediaItem.id>` — reuploadMattermostFile
+// называет файл на диске именно так (`mm_${mediaItem.id}${ext}`), и это имя
+// переживает любое число докаток/рестартов. Так же находит и файлы,
+// которые ещё ни разу не пытались докатить, и те, что упали раньше —
+// разницы для этой сверки нет, важно только "есть ли уже URL на диске".
+async function computeMissingMediaTargets(boardId) {
   const [board, cards, blocks] = await Promise.all([
     mm.getBoard(boardId, config.teamId),
     mm.listCards(boardId),
     mm.listBlocks(boardId),
   ]);
   const { tasks } = buildTasks(board, cards, blocks, { skipProjectFilter: true, includeAllStatuses: true });
-  const tasksById = new Map(tasks.map((t) => [t.id, t]));
-  const mediaOrders = await mediaOrder.getMediaOrders(boardId, [...new Set(errors.map((e) => e.taskId))]);
-  return errors.map((e) => {
-    const task = tasksById.get(e.taskId);
-    const orderedMedia = task ? mediaOrder.applyOrder(task.media, mediaOrders.get(task.id)) : [];
-    const pos = task ? orderedMedia.findIndex((m) => m.source === 'mattermost' && m.fileId === e.fileId) : -1;
-    const item = pos === -1 ? null : orderedMedia[pos];
-    return {
-      taskId: e.taskId,
-      fileId: e.fileId,
-      position: pos,
-      folderName: task ? task.projectLabel || 'Без клиента' : '',
-      mediaItem: item,
-      message: !task
-        ? 'Задача не найдена (удалена с момента последнего переноса).'
-        : !item
-          ? 'Файл не найден среди медиа карточки (состав медиа изменился с момента переноса).'
-          : '',
-    };
-  });
+  const taskIds = tasks.map((t) => t.id);
+  const [mediaOrders, existingUrlsByTask] = await Promise.all([
+    mediaOrder.getMediaOrders(boardId, taskIds),
+    pgTasks.getExistingMediaUrlsByTask(taskIds),
+  ]);
+  const targets = [];
+  for (const task of tasks) {
+    const orderedMedia = mediaOrder.applyOrder(task.media, mediaOrders.get(task.id));
+    const existingUrls = existingUrlsByTask.get(task.id) || [];
+    orderedMedia.forEach((item, pos) => {
+      if (item.source !== 'mattermost') return;
+      const marker = `mm_${item.id}`;
+      if (existingUrls.some((u) => u.includes(marker))) return; // уже на диске
+      targets.push({ taskId: task.id, fileId: item.fileId, position: pos, folderName: task.projectLabel || 'Без клиента', mediaItem: item });
+    });
+  }
+  return targets;
 }
 
-// Ручная кнопка «Докатить медиа» — синхронно проверяет и стартует (как и
-// раньше), сама работа (чтение Mattermost + загрузка) идёт в фоне.
-function startMediaRetry(boardId) {
+// Ручная кнопка «Докатить медиа» — теперь ПОЛНОСТЬЮ асинхронная (раньше
+// синхронно проверяла report.mediaErrors и сразу бросала при пустом
+// списке — больше не можем решить это без похода в Mattermost+Postgres,
+// см. computeMissingMediaTargets выше). index.js awaits на вызове.
+async function startMediaRetry(boardId) {
   if (retryState.state === 'running') {
     throw new Error('Докатка медиа уже выполняется — подождите её завершения.');
   }
   if (runState.state === 'running') {
     throw new Error('Основной перенос ещё выполняется — подождите его завершения.');
   }
-  const pendingErrors = (runState.report && runState.report.mediaErrors) || [];
-  if (!pendingErrors.length) {
-    throw new Error('Нет медиафайлов для докатки — список ошибок последнего переноса пуст.');
+  const targets = await computeMissingMediaTargets(boardId);
+  if (!targets.length) {
+    throw new Error('Нечего докатывать — все Mattermost-медиа уже на диске.');
   }
   retryState.state = 'running';
   retryState.startedAt = Date.now();
   retryState.finishedAt = null;
-  retryState.progress = null;
+  retryState.progress = { processed: 0, total: targets.length };
   retryState.log = [];
   retryState.error = null;
-  resolveMediaErrorTargets(boardId)
-    .then((targets) => {
-      retryState.progress = { processed: 0, total: targets.length };
-      markPendingTasks(targets);
-      return runBackfill(boardId, targets);
-    })
+  markPendingTasks(targets);
+  runBackfill(boardId, targets)
     .then(() => {
       retryState.state = 'done';
       retryState.finishedAt = Date.now();

@@ -94,6 +94,23 @@ function rowToTask(row, mediaRows, feedbackRows, projectProp) {
   };
 }
 
+// Для mattermostMigration.js: какие disk.kontentferma-URL у задачи УЖЕ
+// есть в Postgres прямо сейчас — используется, чтобы сверить "что реально
+// уже докатано" с живым списком Mattermost-медиа карточки, НЕ полагаясь на
+// report.mediaErrors в памяти процесса (который теряется при рестарте
+// бэкенда — см. computeMissingMediaTargets в mattermostMigration.js).
+async function getExistingMediaUrlsByTask(taskIds) {
+  const map = new Map();
+  if (!taskIds.length) return map;
+  const pool = db.requirePool();
+  const { rows } = await pool.query('SELECT task_id, url FROM app_task_media WHERE task_id = ANY($1::text[])', [taskIds]);
+  for (const r of rows) {
+    if (!map.has(r.task_id)) map.set(r.task_id, []);
+    map.get(r.task_id).push(r.url);
+  }
+  return map;
+}
+
 async function rowsToTasks(rows, projectProp) {
   if (!rows.length) return [];
   const pool = db.requirePool();
@@ -330,4 +347,5 @@ module.exports = {
   deleteMedia,
   reorderMedia,
   addFeedback,
+  getExistingMediaUrlsByTask,
 };
