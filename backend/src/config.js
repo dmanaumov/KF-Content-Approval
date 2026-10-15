@@ -262,6 +262,32 @@ module.exports = {
   // Nextcloud at once in the first place).
   diskWebdavTimeoutMs: parseInt(process.env.DISK_WEBDAV_TIMEOUT_MS || '30000', 10),
 
+  // БОЛЬШИЕ ФАЙЛЫ (>30 МБ, 2026-10-15) — чанковая загрузка из командного
+  // кабинета (backend/src/largeUpload.js). Браузер шлёт файл кусками по
+  // largeUploadChunkMb (каждый кусок — отдельный короткий запрос, поэтому
+  // проходит и лимит Cloudflare 100 МБ на запрос, и read-таймауты Traefik),
+  // сервер склеивает их во временный файл на volume /app/cache, потом одним
+  // потоковым PUT кладёт оригинал на disk.kontentferma в
+  // "<клиент>/<largeUploadOriginalsFolder>" и ставит медиа в очередь сжатия
+  // (pending_compression=true) — превью до 10 МБ делает n8n.
+  largeUploadThresholdBytes: parseInt(process.env.LARGE_UPLOAD_THRESHOLD_MB || '30', 10) * 1024 * 1024,
+  largeUploadMaxBytes: parseInt(process.env.LARGE_UPLOAD_MAX_MB || '2048', 10) * 1024 * 1024,
+  largeUploadChunkBytes: parseInt(process.env.LARGE_UPLOAD_CHUNK_MB || '16', 10) * 1024 * 1024,
+  largeUploadTmpDir: process.env.LARGE_UPLOAD_TMP_DIR || '/app/cache/large-uploads',
+  // Брошенная (не завершённая) загрузка удаляется через столько часов.
+  largeUploadStaleHours: parseInt(process.env.LARGE_UPLOAD_STALE_HOURS || '6', 10),
+  largeUploadOriginalsFolder: process.env.LARGE_UPLOAD_ORIGINALS_FOLDER || 'оригиналы',
+  largeUploadPreviewsFolder: process.env.LARGE_UPLOAD_PREVIEWS_FOLDER || 'превью',
+  // Потоковый PUT 350+ МБ на Nextcloud — минуты, а не секунды, поэтому свой
+  // таймаут, отдельный от diskWebdavTimeoutMs (обычные мелкие загрузки).
+  diskLargeUploadTimeoutMs: parseInt(process.env.DISK_LARGE_UPLOAD_TIMEOUT_MS || String(60 * 60 * 1000), 10),
+  // "Семафор" в n8n: после того как оригинал лёг на диск, сервер POST'ит сюда
+  // { event, taskId, mediaId } с заголовком X-KF-Signal: <secret>. Пусто =
+  // не сигналим (n8n всё равно подберёт файл по своему расписанию из
+  // GET /api/automation/media/pending-compression — сигнал только ускоряет).
+  largeMediaWebhookUrl: (process.env.LARGE_MEDIA_WEBHOOK_URL || '').trim(),
+  largeMediaWebhookSecret: process.env.LARGE_MEDIA_WEBHOOK_SECRET || '',
+
   // API version pinned in the "Проверить" (validate) call the /projects edit
   // popup makes against Instagram's own Graph API (POST /api/projects/
   // :projectId/validate-instagram in index.js) — confirms a just-typed

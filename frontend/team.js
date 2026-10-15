@@ -2353,7 +2353,7 @@ function attachBoxHtml() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17a4.5 4.5 0 0 1-.4-8.98A5.5 5.5 0 0 1 17.2 9.5 4 4 0 0 1 17 17H7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 20v-7m0 0-2.6 2.6M12 13l2.6 2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
       <div class="tm-dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</div>
-      <div class="tm-dropzone-hint">Фото или видео, можно сразу несколько — загрузятся на disk.kontentferma по очереди, порядок потом можно поменять</div>
+      <div class="tm-dropzone-hint">Фото или видео, можно сразу несколько — загрузятся на disk.kontentferma по очереди, порядок потом можно поменять. Видео больше 30 МБ (до 2 ГБ): оригинал сохраняется на диске, клиенту показываем сжатую копию</div>
       <input type="file" id="tmFileInput" accept="image/*,video/*" multiple>
     </div>
     <div class="tm-attach-link-row">
@@ -3087,6 +3087,65 @@ tmBody.addEventListener('click', (e) => {
 // фото. Порядок в карточке — как выбрали/перетащили, а разложить по местам
 // потом можно кнопками ↑/↓ в «Изменить порядок / удалить» — это
 // пользователь сам и предложил.
+// БОЛЬШИЕ ФАЙЛЫ (>30 МБ, 2026-10-15) — чанковая загрузка, см.
+// backend/src/largeUpload.js: один запрос на 350 МБ не проходит Cloudflare
+// (100 МБ на запрос) и таймауты Traefik, поэтому init → куски по chunkSize
+// (PUT, сырые байты) → complete. Каждый кусок до 4 попыток с паузой; сервер
+// идемпотентен по индексу куска. Оригинал сервер кладёт на диск в фоне,
+// превью до 10 МБ делает n8n — карточка сразу показывает «Сжимаем…».
+// Возвращает { res, data } в той же форме, что и обычная ветка ниже.
+const LARGE_UPLOAD_THRESHOLD_BYTES = 30 * 1024 * 1024;
+
+async function uploadLargeMediaFile(t, file, onProgress) {
+  const base = `/api/team/tasks/${encodeURIComponent(t.id)}/large-upload`;
+  const initRes = await fetch(`${base}/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, size: file.size, mimeType: file.type || '' }),
+  });
+  const init = await initRes.json().catch(() => ({}));
+  if (!initRes.ok) return { res: initRes, data: init };
+  const { uploadId, chunkSize } = init;
+  let index = 0;
+  let offset = 0;
+  while (offset < file.size) {
+    const blob = file.slice(offset, offset + chunkSize);
+    let lastErr = null;
+    let jumped = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const r = await fetch(`${base}/${uploadId}/chunk?index=${index}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: blob,
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) { lastErr = null; break; }
+        if (d.error === 'chunk_out_of_order' && Number.isInteger(d.nextIndex)) {
+          index = d.nextIndex;
+          offset = index * chunkSize;
+          lastErr = null;
+          jumped = true;
+          break;
+        }
+        lastErr = { res: r, data: d };
+        if (r.status < 500 && r.status !== 429) break; // 4xx не лечится повтором
+      } catch (err) {
+        lastErr = { res: { ok: false, status: 0 }, data: { message: err.message } };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
+    if (lastErr) return lastErr;
+    if (jumped) continue;
+    index++;
+    offset += blob.size;
+    if (onProgress) onProgress(Math.min(99, Math.floor((offset / file.size) * 100)));
+  }
+  const res = await fetch(`${base}/${uploadId}/complete`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  return { res, data };
+}
+
 async function uploadMediaFiles(t, files) {
   if (!files || !files.length) return;
   let ok = 0;
@@ -3103,10 +3162,21 @@ async function uploadMediaFiles(t, files) {
         : `Загружаем «${file.name}»…`;
     }
     try {
-      const form = new FormData();
-      form.append('file', file);
-      const res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/media-upload`, { method: 'POST', body: form });
-      const data = await res.json().catch(() => ({}));
+      let res;
+      let data;
+      if (file.size > LARGE_UPLOAD_THRESHOLD_BYTES) {
+        // Большой файл (>30 МБ) — кусками, с прогрессом в заголовке зоны.
+        const label = files.length > 1 ? `Загружаем ${i + 1} из ${files.length}: «${file.name}»` : `Загружаем «${file.name}»`;
+        ({ res, data } = await uploadLargeMediaFile(t, file, (pct) => {
+          const el = document.querySelector('#tmDropzone .tm-dropzone-title');
+          if (el) el.textContent = `${label} — ${pct}%…`;
+        }));
+      } else {
+        const form = new FormData();
+        form.append('file', file);
+        res = await fetch(`/api/team/tasks/${encodeURIComponent(t.id)}/media-upload`, { method: 'POST', body: form });
+        data = await res.json().catch(() => ({}));
+      }
       if (!res.ok) {
         failed.push({ name: file.name, message: data.message || data.error || 'ошибка' });
         if (data.error === 'disk_upload_not_configured') { stoppedEarly = true; break; } // остальные файлы упрутся в то же самое — не мучаем сервер

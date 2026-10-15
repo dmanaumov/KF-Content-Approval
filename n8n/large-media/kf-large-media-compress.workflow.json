@@ -1,0 +1,555 @@
+{
+  "name": "KF Approval — большие файлы: сжатие превью",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kf-large-media",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "c4a6bf80-5636-44a5-8f25-567f585e464d",
+      "name": "Сигнал от согласователя",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "9abfea0f-7dc2-422a-b0b9-9d35ea319416",
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "KF Signal (X-KF-Signal)"
+        }
+      },
+      "notes": "Согласователь POST'ит сюда сразу после того, как оригинал >30 МБ лёг на disk.kontentferma. Тело {event, taskId, mediaId, fullUrl} — само по себе не используется: дальше всё равно берём очередь целиком."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "138cc3aa-2076-4dd3-8557-302836416403",
+      "name": "Подстраховка: каждый час",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        220
+      ],
+      "notes": "Если сигнал потерялся / n8n был выключен / прошлая попытка упала — подберём здесь. Можно заменить на раз в ночь."
+    },
+    {
+      "parameters": {
+        "url": "https://smm.kontentferma.com/api/automation/media/pending-compression",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f46b76de-a9ad-4771-82ba-e3acdfc2cf7e",
+      "name": "Очередь pending-compression",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        110
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "KF Approval API (X-API-Key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// { items:[{mediaId,taskId,fullUrl,uploadedAt,projectId,taskTitle}], count } → по item на медиа.\n// Пустая очередь → [] → выполнение просто заканчивается.\nconst seen = new Set();\nconst out = [];\nfor (const it of $input.all()) {\n  for (const m of it.json.items || []) {\n    if (!m.fullUrl || seen.has(m.mediaId)) continue;\n    seen.add(m.mediaId);\n    out.push({ json: m });\n  }\n}\nreturn out;"
+      },
+      "id": "9fc12a31-9fe5-4de0-b875-59adab02ab64",
+      "name": "Разложить очередь",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "585d4f0a-ed18-450b-bece-b11f0837ffb2",
+      "name": "По одному",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        740,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=node /opt/kf/kf-compress.mjs --media '{{ String($json.mediaId).replace(/'/g, \"'\\\\''\") }}' --url '{{ String($json.fullUrl).replace(/'/g, \"'\\\\''\") }}'"
+      },
+      "id": "0eb3e98a-81a0-44de-a0f4-17860c9fb55b",
+      "name": "Сжать (ffmpeg)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        980,
+        200
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Качает оригинал, жмёт ffmpeg'ом до ≤10 МБ (видео — 2 прохода H.264, фото — JPEG), печатает одну строку JSON. Одновременно жмётся только один файл (lock), параллельный запуск получит status=busy."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('По одному').item.json;\nconst lines = String($json.stdout || '').trim().split('\\n').filter(Boolean);\nlet r;\ntry {\n  r = JSON.parse(lines[lines.length - 1]);\n} catch (e) {\n  r = { status: 'error', message: 'не разобрал вывод скрипта: ' + String($json.stdout || $json.stderr || '').slice(0, 300) };\n}\nreturn { json: { ...r, mediaId: src.mediaId, taskId: src.taskId, taskTitle: src.taskTitle, fullUrl: src.fullUrl } };"
+      },
+      "id": "575aa760-3079-4642-95a3-992c7d1d5d57",
+      "name": "Разобрать результат",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e80a8281-3700-49fc-9b88-266706c57289",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c720df9f-0137-4d37-8d3a-b7809cdde35c",
+      "name": "Превью готово?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1460,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.outPath }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "id": "a21cc364-c141-4ff8-8f21-06da6d73c829",
+      "name": "Прочитать превью",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        40
+      ],
+      "notes": "Папка /data/kf-compress/out должна быть в N8N_RESTRICT_FILE_ACCESS_TO."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://smm.kontentferma.com/api/automation/tasks/{{ encodeURIComponent($('Разобрать результат').item.json.taskId) }}/media/{{ encodeURIComponent($('Разобрать результат').item.json.mediaId) }}/preview-upload",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "kind",
+              "value": "={{ $('Разобрать результат').item.json.kind }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "1af383a5-7360-4c44-bd32-a6eb4692485a",
+      "name": "Залить превью в согласователь",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "KF Approval API (X-API-Key)"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Кладёт превью на disk.kontentferma (<клиент>/превью), ставит его как url медиа и снимает pending_compression — карточка перестаёт показывать «Сжимаем…»."
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=node /opt/kf/kf-compress.mjs --cleanup --media '{{ String($('Разобрать результат').item.json.mediaId).replace(/'/g, \"'\\\\''\") }}'"
+      },
+      "id": "ee33afe9-3665-472c-9965-a5a8aaf74321",
+      "name": "Убрать временные файлы",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2180,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $('Разобрать результат').item.json;\nreturn { json: { status: 'done', mediaId: r.mediaId, taskId: r.taskId, taskTitle: r.taskTitle, kind: r.kind, srcMb: +(r.srcBytes / 1048576).toFixed(1), outMb: +(r.outBytes / 1048576).toFixed(1), tookSec: r.tookSec } };"
+      },
+      "id": "1bec696d-09bd-4795-a599-ee4e160c07f6",
+      "name": "Готово",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('По одному').item.json;\nreturn { json: { status: 'error', stage: 'compress', mediaId: src.mediaId, taskId: src.taskId, taskTitle: src.taskTitle, message: String($json.error?.message || $json.error || $json.stderr || 'Execute Command упал').slice(0, 500) } };"
+      },
+      "id": "6c01991e-755e-4f7a-96dc-a0ca98fa952a",
+      "name": "Ошибка сжатия",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $('Разобрать результат').item.json;\nreturn { json: { status: 'error', stage: 'preview-upload', mediaId: r.mediaId, taskId: r.taskId, taskTitle: r.taskTitle, message: String($json.error?.message || $json.error || 'preview-upload упал').slice(0, 500) } };"
+      },
+      "id": "6da17bb6-d3c3-4657-9745-18e8c629f5d9",
+      "name": "Ошибка заливки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        200
+      ],
+      "notes": "Готовое превью остаётся в /data/kf-compress/out — следующий запуск (через ≥30 мин) возьмёт его без пересжатия."
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all().map((i) => i.json);\nconst done = all.filter((x) => x.status === 'done');\nconst errors = all.filter((x) => x.status === 'error');\nconst skipped = all.filter((x) => x.status === 'skip' || x.status === 'busy');\nreturn [{ json: {\n  done: done.length,\n  errors: errors.length,\n  skipped: skipped.length,\n  details: all,\n  errorText: errors.map((e) => `• ${e.taskTitle || e.taskId} (media ${e.mediaId}, ${e.stage || 'compress'}${e.gaveUp ? ', больше не пытаемся' : ''}): ${e.message}`).join('\\n'),\n} }];"
+      },
+      "id": "f5ea0d21-0de7-488c-aa23-c8825cb60dd6",
+      "name": "Итог",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "76ce9c06-dcac-4a57-b7e2-4a6c973dc4a8",
+              "leftValue": "={{ $json.errors }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "25ff8007-ab2c-48b4-a702-34724fcc2c58",
+      "name": "Были ошибки?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1220,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=Сжатие больших файлов: ошибок {{ $json.errors }}, готово {{ $json.done }}.\n{{ $json.errorText }}"
+      },
+      "id": "088936d7-86c8-4f2e-8cc9-a2ba681d6afb",
+      "name": "Упасть с отчётом",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1460,
+        -160
+      ],
+      "notes": "Выполнение помечается ошибкой → видно в Executions и уходит в Error Workflow, если он задан в настройках."
+    }
+  ],
+  "connections": {
+    "Сигнал от согласователя": {
+      "main": [
+        [
+          {
+            "node": "Очередь pending-compression",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Подстраховка: каждый час": {
+      "main": [
+        [
+          {
+            "node": "Очередь pending-compression",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Очередь pending-compression": {
+      "main": [
+        [
+          {
+            "node": "Разложить очередь",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Разложить очередь": {
+      "main": [
+        [
+          {
+            "node": "По одному",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "По одному": {
+      "main": [
+        [
+          {
+            "node": "Итог",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Сжать (ffmpeg)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Сжать (ffmpeg)": {
+      "main": [
+        [
+          {
+            "node": "Разобрать результат",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка сжатия",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Разобрать результат": {
+      "main": [
+        [
+          {
+            "node": "Превью готово?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Превью готово?": {
+      "main": [
+        [
+          {
+            "node": "Прочитать превью",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "По одному",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Прочитать превью": {
+      "main": [
+        [
+          {
+            "node": "Залить превью в согласователь",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Залить превью в согласователь": {
+      "main": [
+        [
+          {
+            "node": "Убрать временные файлы",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка заливки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Убрать временные файлы": {
+      "main": [
+        [
+          {
+            "node": "Готово",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Готово": {
+      "main": [
+        [
+          {
+            "node": "По одному",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ошибка сжатия": {
+      "main": [
+        [
+          {
+            "node": "По одному",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ошибка заливки": {
+      "main": [
+        [
+          {
+            "node": "По одному",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Итог": {
+      "main": [
+        [
+          {
+            "node": "Были ошибки?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Были ошибки?": {
+      "main": [
+        [
+          {
+            "node": "Упасть с отчётом",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow"
+  },
+  "pinData": {}
+}

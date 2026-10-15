@@ -14,6 +14,7 @@
 // silently doing nothing. The manual "paste a link" field stays as the
 // fallback either way.
 
+const fs = require('fs');
 const fetch = require('node-fetch');
 const config = require('./config');
 
@@ -214,4 +215,57 @@ async function uploadAndShare(opts) {
   }
 }
 
-module.exports = { uploadAndShare };
+// БОЛЬШИЕ ФАЙЛЫ (2026-10-15) — то же, что uploadAndShare, но тело PUT —
+// поток с диска (fs.createReadStream), а не Buffer в памяти: оригинал на
+// 350+ МБ не должен целиком висеть в RAM контейнера. Своя петля ретраев на
+// 429 (а не fetchWithAuthRetry429): поток читается один раз, поэтому на
+// каждую попытку создаём новый. Content-Length обязателен — без него
+// node-fetch шлёт chunked, а Nextcloud за некоторыми прокси такое не любит.
+async function putFileFromPath(relPath, filePath, mimeType) {
+  const size = fs.statSync(filePath).size;
+  let res;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const headers = { 'Content-Length': String(size) };
+    if (mimeType) headers['Content-Type'] = mimeType;
+    res = await fetchWithTimeout(
+      webdavUrl(relPath),
+      { method: 'PUT', body: fs.createReadStream(filePath), headers: Object.assign(headers, { Authorization: authHeader() }) },
+      config.diskLargeUploadTimeoutMs
+    );
+    if (res.status !== 429) break;
+    const retryAfter = Number(res.headers.get('retry-after'));
+    await new Promise((r) => setTimeout(r, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 8000));
+  }
+  if (res.status !== 201 && res.status !== 204) {
+    throw new Error('Не удалось загрузить большой файл на диск (PUT, статус ' + res.status + ').');
+  }
+}
+
+function assertConfigured() {
+  if (!config.diskWebdavBaseUrl || !config.diskWebdavUser || !config.diskWebdavPassword) {
+    const err = new Error('Загрузка на Диск ещё не настроена — нужны DISK_WEBDAV_URL, DISK_WEBDAV_USER, DISK_WEBDAV_PASSWORD в .env (см. комментарий в config.js).');
+    err.code = 'disk_upload_not_configured';
+    throw err;
+  }
+}
+
+// opts: { folderName, subFolder?, filename, filePath, mimeType } — путь и
+// санитизация ровно как в uploadAndShare. Возвращает публичную share-ссылку.
+async function uploadFileAndShare(opts) {
+  assertConfigured();
+  const root = config.diskUploadRootPath || 'SMM';
+  const relDir = opts.subFolder
+    ? root + '/' + sanitizeSegment(opts.folderName) + '/' + sanitizeSegment(opts.subFolder)
+    : root + '/' + sanitizeSegment(opts.folderName);
+  const relFile = relDir + '/' + sanitizeSegment(opts.filename);
+  await ensureRemoteDir(relDir);
+  await putFileFromPath(relFile, opts.filePath, opts.mimeType);
+  try {
+    return await createPublicShare(relFile);
+  } catch (shareErr) {
+    await deleteFile(relFile);
+    throw shareErr;
+  }
+}
+
+module.exports = { uploadAndShare, uploadFileAndShare };

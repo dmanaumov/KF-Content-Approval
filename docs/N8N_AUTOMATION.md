@@ -951,6 +951,15 @@ apiKeys.js`).
 - Ничего в самом запросе/протоколе не меняется — по-прежнему просто
   `X-Api-Key`/`X-Bot-Key` заголовок с текущим значением.
 
+## 8. Большие файлы (>30 МБ): сжатие превью в n8n
+
+Workflow, образ и инструкция лежат в `n8n/large-media/` (подробности в README.md там).
+
+1. Команда грузит файл в `/team`. Если он больше 30 МБ, загрузка идёт кусками, оригинал уходит в `SMM/<клиент>/оригиналы` на disk.kontentferma, а медиа получает `pending_compression=true` и `fullUrl` (публичная ссылка на оригинал).
+2. Согласователь отправляет `POST` на `LARGE_MEDIA_WEBHOOK_URL` с заголовком `X-KF-Signal: <LARGE_MEDIA_WEBHOOK_SECRET>`, тело `{ event: "large_media_uploaded", taskId, mediaId, fullUrl, projectId }`.
+3. n8n по сигналу (или раз в час, для подстраховки) берёт `GET /api/automation/media/pending-compression`, жмёт каждый файл ffmpeg'ом внутри своего контейнера и отправляет `POST /api/automation/tasks/{taskId}/media/{mediaId}/preview-upload` (multipart: `file` — превью ≤10 МБ, `kind` — `image`|`video`). Ответ: `{ task, previewUrl }`, `pending_compression` снят.
+4. **Публикация в соцсеть**: если `media[].fullUrl` не пуст, публиковать его (оригинал), а не `url` (превью).
+
 ## Что уже есть (не нужно строить заново)
 
 1. **Кабинет согласования** (этот репозиторий) — клиент согласовывает пост

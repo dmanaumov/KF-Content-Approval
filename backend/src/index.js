@@ -10,6 +10,7 @@ const mm = require('./mattermostClient');
 const { buildTasks, findPropertyDef, optionIdByLabel, optionLabelById } = require('./taskMapper');
 const { parseAndValidateShareUrl, resolveKind, streamDiskFile, extractDiskLinks, stripDiskLinks } = require('./diskEmbeds');
 const diskUpload = require('./diskUpload');
+const largeUpload = require('./largeUpload');
 const diskCache = require('./diskCache');
 const sessionJanitor = require('./sessionJanitor');
 const mmFileCache = require('./mattermostFileCache');
@@ -659,6 +660,10 @@ function createLimiter(maxConcurrent) {
   };
 }
 const mediaUploadLimiter = createLimiter(MEDIA_UPLOAD_MAX_CONCURRENT);
+// Отдельная очередь (1 за раз) для потоковой заливки оригиналов >30 МБ на
+// disk.kontentferma (largeUpload.js) — один PUT на 350 МБ занимает минуты, и
+// в общей очереди выше он надолго забирал бы слот у обычных мелких загрузок.
+const largeDiskUploadLimiter = createLimiter(1);
 
 // "Бусинки" on the staff project card — one bead per post planned THIS month
 // (same Moscow-current-month set as computeScheduleStatus above, so the KPI
@@ -3324,6 +3329,142 @@ app.post('/api/team/tasks/:taskId/media-upload', teamAuth.requireTeamAuth, requi
   });
 });
 
+// ---------------------------------------------------------------------------
+// БОЛЬШИЕ ФАЙЛЫ из командного кабинета (>30 МБ, 2026-10-15) — чанковая
+// загрузка, см. backend/src/largeUpload.js (почему кусками) и
+// docs/N8N_AUTOMATION.md («Большие файлы»). Поток:
+//   1) POST .../large-upload/init      { filename, size, mimeType } → { uploadId, chunkSize, chunks }
+//   2) PUT  .../large-upload/:id/chunk?index=N   тело — сырые байты куска
+//   3) POST .../large-upload/:id/complete        → 202 { task }
+// На шаге 3 медиа-запись создаётся СРАЗУ (url='', kind='pending',
+// pending_compression=true — карточка показывает «Сжимаем…»), а сам
+// оригинал льётся на disk.kontentferma в "<клиент>/оригиналы" в фоне: через
+// Cloudflare ответ дольше ~100 с превращается в 524, ждать конца заливки
+// в рамках запроса нельзя. Когда оригинал лёг на диск — full_url
+// проставляется, и n8n получает сигнал (notifyLargeMediaWebhook). Ошибка
+// фоновой заливки → медиа-запись удаляется, в историю карточки пишется
+// системное сообщение.
+// ---------------------------------------------------------------------------
+function largeUploadErrorResponse(res, err) {
+  const payload = { error: err.code || 'large_upload_failed', message: err.message };
+  if (err.nextIndex != null) payload.nextIndex = err.nextIndex;
+  res.status(err.httpStatus || 502).json(payload);
+}
+
+// Fire-and-forget: n8n всё равно опрашивает очередь по расписанию, сигнал
+// только ускоряет обработку — поэтому ошибка тут логируется и не более.
+async function notifyLargeMediaWebhook(payload) {
+  if (!config.largeMediaWebhookUrl) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(config.largeMediaWebhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-KF-Signal': config.largeMediaWebhookSecret || '' },
+      body: JSON.stringify(Object.assign({ event: 'large_media_uploaded' }, payload)),
+      signal: controller.signal,
+    });
+    if (!res.ok) console.warn(`[large-upload] n8n webhook ответил ${res.status}`);
+  } catch (err) {
+    console.warn('[large-upload] n8n webhook недоступен:', err.message);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function finishLargeUploadInBackground(boardId, task, meta, mediaId, actorName) {
+  const sizeMb = Math.round(meta.size / 1024 / 1024);
+  try {
+    const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+    const extMatch = String(meta.filename || '').match(/\.[a-zA-Z0-9]+$/);
+    const base = String(meta.filename || 'file').replace(/\.[a-zA-Z0-9]+$/, '').slice(0, 60);
+    const filename = `${dateStr}_${Date.now().toString(36)}_${base}${extMatch ? extMatch[0].toLowerCase() : ''}`;
+    const shareUrl = await largeDiskUploadLimiter(() =>
+      diskUpload.uploadFileAndShare({
+        folderName: task.projectLabel || 'Без клиента',
+        subFolder: config.largeUploadOriginalsFolder,
+        filename,
+        filePath: meta.filePath,
+        mimeType: meta.mimeType,
+      })
+    );
+    await pgTasks.setMediaFullUrl(task.id, mediaId, shareUrl);
+    await pgTasks.addFeedback(task.id, {
+      kind: 'system',
+      authorKind: 'staff',
+      authorName: actorName,
+      text: `Загружен большой файл «${meta.filename}» (${sizeMb} МБ) — оригинал на диске, превью для согласования готовится автоматически: ${shareUrl}`,
+    });
+    notifyLargeMediaWebhook({ taskId: task.id, mediaId, fullUrl: shareUrl, projectId: task.projectId || '' });
+  } catch (err) {
+    console.error('[large-upload] заливка оригинала на диск не удалась:', err.message);
+    try {
+      await pgTasks.deleteMedia(task.id, mediaId);
+      await pgTasks.addFeedback(task.id, {
+        kind: 'system',
+        authorKind: 'staff',
+        authorName: actorName,
+        text: `Не удалось сохранить большой файл «${meta.filename}» (${sizeMb} МБ) на диск: ${err.message}. Загрузите его ещё раз.`,
+      });
+    } catch (cleanupErr) {
+      console.error('[large-upload] не удалось откатить медиа-запись:', cleanupErr.message);
+    }
+  } finally {
+    await largeUpload.remove(meta.id).catch(() => {});
+  }
+}
+
+app.post('/api/team/tasks/:taskId/large-upload/init', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const out = await largeUpload.init({
+      taskId: req.params.taskId,
+      filename: body.filename,
+      size: body.size,
+      mimeType: body.mimeType,
+      actor: teamActorName(req),
+    });
+    res.json(out);
+  } catch (err) {
+    if (!err.httpStatus) console.error('[api] large-upload init failed:', err.message);
+    largeUploadErrorResponse(res, err);
+  }
+});
+
+app.put(
+  '/api/team/tasks/:taskId/large-upload/:uploadId/chunk',
+  teamAuth.requireTeamAuth,
+  requireTeamCardAccess,
+  express.raw({ type: () => true, limit: config.largeUploadChunkBytes + 1024 * 1024 }),
+  async (req, res) => {
+    try {
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const out = await largeUpload.appendChunk(req.params.uploadId, req.params.taskId, req.query.index, buf);
+      res.json(out);
+    } catch (err) {
+      if (!err.httpStatus) console.error('[api] large-upload chunk failed:', err.message);
+      largeUploadErrorResponse(res, err);
+    }
+  }
+);
+
+app.post('/api/team/tasks/:taskId/large-upload/:uploadId/complete', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const meta = await largeUpload.beginComplete(req.params.uploadId, req.params.taskId);
+    const task = req.teamCard.task;
+    const mediaId = await pgTasks.insertMedia(req.params.taskId, { url: '', kind: 'pending', fullUrl: '', pendingCompression: true });
+    const updated = await refetchTeamTask(boardId, req.params.taskId);
+    res.status(202).json({ task: updated, mediaId });
+    // Ответ уже ушёл — дальше фоновая заливка, см. комментарий над группой.
+    finishLargeUploadInBackground(boardId, task, meta, mediaId, teamActorName(req));
+  } catch (err) {
+    if (!err.httpStatus) console.error('[api] large-upload complete failed:', err.message);
+    largeUploadErrorResponse(res, err);
+  }
+});
+
 // POST /api/team/tasks/:taskId/chat-upload — multipart, field name "file".
 // A photo attached to a CHAT message (either "ЧАТ КОМАНДЫ" or "Чат с
 // клиентом" — not the post's own media). Uploads to disk.kontentferma the
@@ -5921,6 +6062,28 @@ app.post('/api/automation/tasks/:taskId/media-import', requireAutomationAuth, as
 // который и знает реальный размер файла до копирования.
 const LARGE_MEDIA_THRESHOLD_BYTES = 30 * 1024 * 1024;
 
+// GET /api/automation/media/pending-compression — очередь для n8n (прямой
+// запрос пользователя, 2026-10-15: "как нам узнать какие большие файлы
+// пришли за 1 час? или сразу после его загрузки?" — ответ: это не отчёт по
+// времени, а очередь. media-large (ниже) кладёт сюда запись с
+// pending_compression=true; она остаётся в этом списке, пока n8n сам не
+// снимет флаг через PATCH .../preview. Поэтому n8n может опрашивать этот
+// роут с любой частотой (раз в 5 минут — почти "сразу после загрузки", раз
+// в час — как и спрашивали) и ничего не потеряет между опросами, даже если
+// сам был выключен какое-то время — только что обработанные (уже
+// превьюшные) сюда просто не попадут повторно.
+app.get('/api/automation/media/pending-compression', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const items = await pgTasks.listPendingCompressionMedia(boardId);
+    res.json({ items, count: items.length });
+  } catch (err) {
+    console.error('[api] automation pending-compression list failed:', err.message);
+    res.status(502).json({ error: 'pending_compression_list_failed', message: err.message });
+  }
+});
+
 // POST /api/automation/tasks/:taskId/media-large — body: { fullUrl, kind?,
 // position? }. Для файлов 350+ МБ (прямой запрос пользователя, 2026-10-15):
 // хранить оригинал у себя дорого, поэтому ЭТОТ сервер НИКОГДА не скачивает
@@ -5990,7 +6153,8 @@ app.patch('/api/automation/tasks/:taskId/media/:mediaId/preview', requireAutomat
   try {
     const previewUrl = String((req.body && req.body.previewUrl) || '').trim();
     if (!previewUrl) throw badRequest('preview_url_required', 'previewUrl обязателен — ссылка на сжатую (<=10 МБ) версию файла.');
-    const ok = await pgTasks.setMediaPreview(req.params.taskId, req.params.mediaId, previewUrl);
+    const kind = String((req.body && req.body.kind) || '').trim();
+    const ok = await pgTasks.setMediaPreview(req.params.taskId, req.params.mediaId, previewUrl, kind);
     if (!ok) return res.status(404).json({ error: 'media_not_found', message: 'Медиа с таким id не найдено у этой карточки.' });
     const updated = await refetchTeamTask(boardId, req.params.taskId);
     res.json({ task: updated });
@@ -5998,6 +6162,56 @@ app.patch('/api/automation/tasks/:taskId/media/:mediaId/preview', requireAutomat
     console.error('[api] automation media preview update failed:', err.message);
     res.status(err.httpStatus || 502).json({ error: err.code || 'media_preview_failed', message: err.message });
   }
+});
+
+// POST /api/automation/tasks/:taskId/media/:mediaId/preview-upload —
+// multipart, поле "file" (сжатое превью, обычно <=10 МБ), опционально поле
+// "kind" ('image'|'video'). Одним вызовом: кладёт превью на disk.kontentferma
+// в "<клиент>/превью" (те же DISK_WEBDAV_* ключи, что у media-upload) и
+// делает то же, что PATCH .../preview выше — url=превью, снимает
+// pending_compression. Нужен потому, что обычный media-upload добавил бы
+// НОВОЕ медиа в карточку, а не превью к существующему. Так n8n не нужны свои
+// ключи от Nextcloud.
+app.post('/api/automation/tasks/:taskId/media/:mediaId/preview-upload', requireAutomationAuth, (req, res) => {
+  teamMediaUpload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const tooLarge = uploadErr.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'file_too_large' : 'upload_error',
+        message: tooLarge ? 'Превью слишком большое (максимум 80 МБ).' : uploadErr.message,
+      });
+    }
+    const boardId = requireStaffBoardId(res);
+    if (!boardId) return;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    try {
+      const { board } = await loadBoard(boardId);
+      const task = await pgTasks.getTaskById(boardId, board, req.params.taskId);
+      if (!task) return res.status(404).json({ error: 'task_not_found' });
+      const media = (task.media || []).find((m) => String(m.id) === String(req.params.mediaId));
+      if (!media) return res.status(404).json({ error: 'media_not_found', message: 'Медиа с таким id не найдено у этой карточки.' });
+      const dateStr = task.publishDate || new Date().toISOString().slice(0, 10);
+      const extMatch = String(req.file.originalname || '').match(/\.[a-zA-Z0-9]+$/);
+      const filename = `${dateStr}_${Date.now().toString(36)}_preview${extMatch ? extMatch[0].toLowerCase() : ''}`;
+      const shareUrl = await mediaUploadLimiter(() =>
+        diskUpload.uploadAndShare({
+          folderName: task.projectLabel || 'Без клиента',
+          subFolder: config.largeUploadPreviewsFolder,
+          filename,
+          buffer: req.file.buffer,
+          mimeType: req.file.mimetype,
+        })
+      );
+      const kind = String((req.body && req.body.kind) || '').trim();
+      await pgTasks.setMediaPreview(req.params.taskId, req.params.mediaId, shareUrl, kind === 'image' || kind === 'video' ? kind : '');
+      const updated = await refetchTeamTask(boardId, req.params.taskId);
+      res.json({ task: updated, previewUrl: shareUrl });
+    } catch (err) {
+      console.error('[api] automation preview upload failed:', err.message);
+      const status = err.code === 'disk_upload_not_configured' ? 501 : 502;
+      res.status(status).json({ error: err.code || 'preview_upload_failed', message: err.message });
+    }
+  });
 });
 
 // POST /api/automation/tasks/:taskId/media-order — body: { order: string[] }.
@@ -6889,6 +7103,7 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
   }
   diskCache.init(); // cleans leftover .part files, never throws — see diskCache.js
   sessionJanitor.start(); // trims stale Mattermost sessions on our own account — see sessionJanitor.js
+  largeUpload.startJanitor(); // брошенные чанковые загрузки больших файлов — см. largeUpload.js
   mmFileCache.init(); // same, for Mattermost board attachments — see mattermostFileCache.js
   app.listen(config.port, () => {
     console.log(`KF Approval listening on :${config.port}`);

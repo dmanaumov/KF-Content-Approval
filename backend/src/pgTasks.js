@@ -306,13 +306,58 @@ async function insertMedia(taskId, { url, kind = '', position = null, fullUrl = 
 // pending_compression, чтобы approval-кабинет перестал рисовать плейсхолдер.
 // Возвращает false, если media_id не найден (чужая задача/уже удалено) —
 // роут в index.js превращает это в 404, а не в молчаливый no-op.
-async function setMediaPreview(taskId, mediaId, previewUrl) {
+// kind (2026-10-15): медиа из очереди сжатия создаётся с kind='pending' —
+// его надо заменить, иначе фронт не узнает, фото это или видео. По умолчанию
+// '' → rowToTask отдаёт kind:null → resolveDiskMediaKinds() сам прощупает
+// новое превью по shareUrl; n8n может передать 'image'/'video' явно.
+async function setMediaPreview(taskId, mediaId, previewUrl, kind = '') {
   const pool = db.requirePool();
   const { rowCount } = await pool.query(
-    'UPDATE app_task_media SET url = $1, pending_compression = false WHERE id = $2 AND task_id = $3',
-    [previewUrl, mediaId, taskId]
+    'UPDATE app_task_media SET url = $1, kind = $4, pending_compression = false WHERE id = $2 AND task_id = $3',
+    [previewUrl, mediaId, taskId, kind || '']
   );
   return rowCount > 0;
+}
+
+// Чанковая загрузка из командного кабинета (largeUpload.js): медиа-запись
+// создаётся сразу (плейсхолдер «Сжимаем…» на карточке), а ссылка на оригинал
+// проставляется, когда фоновая заливка на disk.kontentferma закончилась.
+async function setMediaFullUrl(taskId, mediaId, fullUrl) {
+  const pool = db.requirePool();
+  const { rowCount } = await pool.query(
+    'UPDATE app_task_media SET full_url = $1 WHERE id = $2 AND task_id = $3',
+    [fullUrl, mediaId, taskId]
+  );
+  return rowCount > 0;
+}
+
+// Очередь для n8n-докатки (2026-10-15): "какие большие файлы ещё ждут
+// сжатого превью" — именно так n8n узнаёт, что появился новый файл (сразу
+// после media-large, или в любой момент, если опрашивать периодически —
+// pending_compression остаётся true, пока сам n8n не снимет его через
+// setMediaPreview, так что ничего не потеряется между опросами, даже если
+// n8n был выключен). См. GET /api/automation/media/pending-compression в
+// index.js.
+// full_url <> '' — запись из чанковой загрузки появляется ДО того, как
+// оригинал долетел до диска; отдавать её n8n раньше времени незачем.
+async function listPendingCompressionMedia(boardId) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    `SELECT m.id, m.task_id, m.full_url, m.uploaded_at, t.project_id, t.title
+     FROM app_task_media m
+     JOIN app_tasks t ON t.id = m.task_id
+     WHERE m.pending_compression = true AND m.full_url <> '' AND t.board_id = $1
+     ORDER BY m.uploaded_at ASC`,
+    [boardId]
+  );
+  return rows.map((r) => ({
+    mediaId: String(r.id),
+    taskId: r.task_id,
+    fullUrl: r.full_url,
+    uploadedAt: new Date(r.uploaded_at).getTime(),
+    projectId: r.project_id,
+    taskTitle: r.title,
+  }));
 }
 
 async function deleteMedia(taskId, mediaId) {
@@ -368,6 +413,8 @@ module.exports = {
   getMedia,
   insertMedia,
   setMediaPreview,
+  setMediaFullUrl,
+  listPendingCompressionMedia,
   deleteMedia,
   reorderMedia,
   addFeedback,
