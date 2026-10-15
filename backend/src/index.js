@@ -6737,6 +6737,14 @@ async function waitForDb(maxAttempts = 15, delayMs = 2000) {
 (async () => {
   try {
     await waitForDb();
+    if (config.mattermostBoardId) {
+      // Восстанавливаем migration report после рестарта контейнера — без
+      // этого баннер в /team и цветная подсветка проектов в /projects
+      // остаются пустыми до следующего ручного действия (см.
+      // hydrateRunStateFromDb/persistReport в mattermostMigration.js,
+      // 2026-10-15). Best-effort — не блокирует остальной старт при ошибке.
+      await mattermostMigration.hydrateRunStateFromDb(config.mattermostBoardId);
+    }
     await teamAuth.restoreSessions();
     await analytics.pruneOldLogs();
     await projectSettings.importLegacyFileTokens();

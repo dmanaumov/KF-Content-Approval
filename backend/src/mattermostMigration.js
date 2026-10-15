@@ -485,12 +485,14 @@ function startBackfillJob(boardId, targets) {
     .then(() => {
       retryState.state = 'done';
       retryState.finishedAt = Date.now();
+      persistReport(boardId);
     })
     .catch((err) => {
       console.error('[mattermostMigration] докатка медиа упала:', err.message);
       retryState.state = 'error';
       retryState.finishedAt = Date.now();
       retryState.error = err.message;
+      persistReport(boardId);
     });
   return retryState;
 }
@@ -558,12 +560,14 @@ async function startMediaRetry(boardId) {
     .then(() => {
       retryState.state = 'done';
       retryState.finishedAt = Date.now();
+      persistReport(boardId);
     })
     .catch((err) => {
       console.error('[mattermostMigration] докатка медиа упала:', err.message);
       retryState.state = 'error';
       retryState.finishedAt = Date.now();
       retryState.error = err.message;
+      persistReport(boardId);
     });
   return retryState;
 }
@@ -576,6 +580,43 @@ async function startMediaRetry(boardId) {
 // без медиа-файлов) — после её commit сразу стартует фоновая докатка
 // media (см. startBackfillJob выше), поэтому runState и retryState почти
 // всегда переходят в 'running' практически одновременно.
+// migration_run_report (Postgres) — переживает рестарт контейнера, в
+// отличие от runState ниже (plain JS variable, память процесса). Пишем
+// сюда report целиком при каждом релевантном изменении (конец переноса,
+// конец докатки медиа — см. вызовы persistReport ниже), читаем один раз на
+// старте процесса (hydrateRunStateFromDb, вызывается из index.js при
+// старте сервера). Best-effort: ошибка записи/чтения не должна ронять
+// сам перенос/докатку — только залогировать.
+async function persistReport(boardId) {
+  if (!runState.report) return;
+  try {
+    const pool = db.requirePool();
+    await pool.query(
+      `INSERT INTO migration_run_report (board_id, report, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (board_id) DO UPDATE SET report = EXCLUDED.report, updated_at = now()`,
+      [boardId, JSON.stringify(runState.report)]
+    );
+  } catch (err) {
+    console.error('[mattermostMigration] не удалось сохранить report в базу (баннер переживёт до следующего успешного сохранения, на саму докатку не влияет):', err.message);
+  }
+}
+
+async function hydrateRunStateFromDb(boardId) {
+  if (!boardId || runState.report) return; // уже есть — либо прогон уже случился в этом процессе
+  try {
+    const pool = db.requirePool();
+    const { rows } = await pool.query('SELECT report, updated_at FROM migration_run_report WHERE board_id = $1', [boardId]);
+    if (rows.length) {
+      runState.report = rows[0].report;
+      runState.state = 'done';
+      runState.finishedAt = new Date(rows[0].updated_at).getTime();
+      console.log('[mattermostMigration] migration report восстановлен из базы после рестарта процесса');
+    }
+  } catch (err) {
+    console.error('[mattermostMigration] не удалось восстановить migration report из базы (баннер в /team будет скрыт, пока не пройдёт новая докатка):', err.message);
+  }
+}
+
 let runState = { state: 'idle', startedAt: null, finishedAt: null, progress: null, report: null, error: null };
 
 function getRunStatus() {
@@ -602,6 +643,7 @@ function startRun(boardId, { board, cards, blocks }) {
       runState.state = 'done';
       runState.finishedAt = Date.now();
       runState.report = report;
+      persistReport(boardId);
       // Карточки уже в базе — сразу фоном поднимаем докатку ВСЕХ
       // Mattermost-медиа этого прогона (решение 2026-10-15). targets уже
       // полностью разрешены (тот же проход gatherMigrationData), повторного
@@ -623,4 +665,4 @@ function startRun(boardId, { board, cards, blocks }) {
   return runState;
 }
 
-module.exports = { previewMigration, startRun, getRunStatus, startMediaRetry, getMediaRetryStatus, getPendingMediaTaskIds };
+module.exports = { previewMigration, startRun, getRunStatus, startMediaRetry, getMediaRetryStatus, getPendingMediaTaskIds, hydrateRunStateFromDb };

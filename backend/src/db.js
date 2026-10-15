@@ -780,6 +780,27 @@ async function initSchema() {
     );
   `);
 
+  // migration_run_report — ВРЕМЕННАЯ таблица (тот же срок жизни, что у
+  // project_migration_review выше), 2026-10-15: runState.report в
+  // mattermostMigration.js живёт только в памяти процесса — Dokploy
+  // пересоздаёт контейнер на каждом деплое (не просто релоад), так что без
+  // этого баннер в /team и цветная подсветка проектов в /projects тухнут
+  // после любого рестарта и, из-за MIGRATION_RUN_LOCKED, НИКОГДА не
+  // появляются снова (перезапустить runMigration, который раньше их
+  // пересоздавал, теперь нельзя). Один ряд на борд — report целиком как
+  // jsonb (mediaErrors и всё остальное из summarize() в
+  // mattermostMigration.js), перезаписывается при каждом релевантном
+  // изменении (конец переноса, конец докатки медиа) и читается один раз на
+  // старте процесса (hydrateRunStateFromDb). Можно удалить вместе с
+  // project_migration_review после закрытия проверки переноса.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS migration_run_report (
+      board_id text PRIMARY KEY,
+      report jsonb NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
   await ensureN8nRole();
 }
 
