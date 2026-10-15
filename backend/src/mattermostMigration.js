@@ -521,17 +521,25 @@ async function computeMissingMediaTargets(boardId) {
     pgTasks.getExistingMediaUrlsByTask(taskIds),
   ]);
   const targets = [];
+  // totalMattermostFiles — ВСЕ Mattermost-медиа на борде (не только ещё не
+  // докатанные) — нужно, чтобы startMediaRetry мог честно пересобрать
+  // report.mattermostFilesCount, если его ещё ни разу не сохраняли в
+  // Postgres (см. комментарий у persistReport ниже: report раньше писал
+  // только полный перенос, которого после MIGRATION_RUN_LOCKED может
+  // больше не быть вовсе в этом процессе).
+  let totalMattermostFiles = 0;
   for (const task of tasks) {
     const orderedMedia = mediaOrder.applyOrder(task.media, mediaOrders.get(task.id));
     const existingUrls = existingUrlsByTask.get(task.id) || [];
     orderedMedia.forEach((item, pos) => {
       if (item.source !== 'mattermost') return;
+      totalMattermostFiles++;
       const marker = `mm_${item.id}`;
       if (existingUrls.some((u) => u.includes(marker))) return; // уже на диске
       targets.push({ taskId: task.id, fileId: item.fileId, position: pos, folderName: task.projectLabel || 'Без клиента', mediaItem: item });
     });
   }
-  return targets;
+  return { targets, totalMattermostFiles };
 }
 
 // Ручная кнопка «Докатить медиа» — теперь ПОЛНОСТЬЮ асинхронная (раньше
@@ -545,9 +553,31 @@ async function startMediaRetry(boardId) {
   if (runState.state === 'running') {
     throw new Error('Основной перенос ещё выполняется — подождите его завершения.');
   }
-  const targets = await computeMissingMediaTargets(boardId);
+  const { targets, totalMattermostFiles } = await computeMissingMediaTargets(boardId);
   if (!targets.length) {
     throw new Error('Нечего докатывать — все Mattermost-медиа уже на диске.');
+  }
+  // Если в этом процессе ни разу не было полного переноса (свежий
+  // контейнер + MIGRATION_RUN_LOCKED не даёт его перезапустить) — report
+  // в памяти пуст, а без него /team-баннер и подсветка на /projects
+  // считают, что переноса вообще не было (visible:false). Пересобираем
+  // минимальный report прямо из того, что только что честно посчитали
+  // (totalMattermostFiles), чтобы баннер снова появился ещё до того, как
+  // эта докатка вообще завершится — и сразу сохраняем в Postgres, чтобы
+  // пережить и следующий рестарт тоже.
+  if (!runState.report) {
+    runState.report = {
+      tasksCount: null,
+      mediaCount: null,
+      mattermostFilesCount: totalMattermostFiles,
+      diskLinksCount: null,
+      feedbackByKind: null,
+      mediaErrors: [],
+      pendingMediaCount: targets.length,
+    };
+    runState.state = 'done';
+    runState.finishedAt = Date.now();
+    persistReport(boardId);
   }
   retryState.state = 'running';
   retryState.startedAt = Date.now();
@@ -611,9 +641,36 @@ async function hydrateRunStateFromDb(boardId) {
       runState.state = 'done';
       runState.finishedAt = new Date(rows[0].updated_at).getTime();
       console.log('[mattermostMigration] migration report восстановлен из базы после рестарта процесса');
+      return;
     }
   } catch (err) {
-    console.error('[mattermostMigration] не удалось восстановить migration report из базы (баннер в /team будет скрыт, пока не пройдёт новая докатка):', err.message);
+    console.error('[mattermostMigration] не удалось восстановить migration report из базы (пробуем пересчитать с нуля ниже):', err.message);
+  }
+  // В таблице ничего нет — это первый запуск этого кода вообще (первый
+  // деплой с persistReport) ИЛИ её ещё никто не успел заполнить (ни одна
+  // докатка не завершилась в НОВОМ коде с момента деплоя). Не ждём, пока
+  // кто-то вручную нажмёт «Докатить медиа» — считаем честный report прямо
+  // сейчас (та же живая сверка Mattermost+Postgres, что у самой докатки),
+  // чтобы баннер/подсветка появились сразу после рестарта, а не зависели
+  // от следующего клика. Один живой поход в Mattermost на старте процесса,
+  // не на каждый запрос — не должно создавать ощутимую нагрузку.
+  try {
+    const { targets, totalMattermostFiles } = await computeMissingMediaTargets(boardId);
+    runState.report = {
+      tasksCount: null,
+      mediaCount: null,
+      mattermostFilesCount: totalMattermostFiles,
+      diskLinksCount: null,
+      feedbackByKind: null,
+      mediaErrors: [],
+      pendingMediaCount: targets.length,
+    };
+    runState.state = 'done';
+    runState.finishedAt = Date.now();
+    await persistReport(boardId);
+    console.log(`[mattermostMigration] migration report пересчитан с нуля при старте процесса (${targets.length} файлов ещё не докатано из ${totalMattermostFiles})`);
+  } catch (err) {
+    console.error('[mattermostMigration] не удалось пересчитать migration report при старте (баннер в /team будет скрыт, пока не пройдёт докатка):', err.message);
   }
 }
 
