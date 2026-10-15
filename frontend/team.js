@@ -659,19 +659,33 @@ async function loadMigrationStatus() {
     migrationBanner.hidden = false;
     migrationReviews = new Map(Object.entries(data.reviews || {}));
     renderMigrationReviewRows();
-    if (data.missingCount > 0) {
-      migrationMediaProgress.hidden = false;
+    // Раньше показывали прогресс только когда missingCount > 0 (т.е. когда
+    // уже есть ПОСТОЯННЫЕ ошибки в report.mediaErrors). После редизайна
+    // переноса (быстрые карточки + автоматическая фоновая докатка всех
+    // Mattermost-медиа) это создавало дыру: сразу после переноса mediaErrors
+    // пуст (ошибки появляются только после всех 6 попыток, то есть минуты
+    // спустя), и баннер врал "все медиафайлы на месте", хотя докатка ещё
+    // активно идёт. Теперь смотрим на retryRunning, а когда докатка
+    // закончена — прямо говорим команде, что миграция завершена и просим
+    // проверить корректность (а не тихое "все на месте").
+    migrationMediaProgress.hidden = false;
+    if (data.retryRunning) {
       const p = data.retryProgress;
-      const done = data.totalMattermostFiles - data.missingCount;
-      const pct = data.totalMattermostFiles ? Math.round((done / data.totalMattermostFiles) * 100) : 0;
-      migrationMediaFill.style.width = pct + '%';
-      migrationMediaText.textContent = p && p.total
-        ? `докатывается… ${p.processed} / ${p.total}`
-        : `докатано ${done} из ${data.totalMattermostFiles}, осталось ${data.missingCount}`;
+      if (p && p.total) {
+        const pct = Math.round((p.processed / p.total) * 100);
+        migrationMediaFill.style.width = pct + '%';
+        migrationMediaText.textContent = `докатывается… ${p.processed} / ${p.total}`;
+      } else {
+        migrationMediaFill.style.width = '0%';
+        migrationMediaText.textContent = 'докатка медиа запускается…';
+      }
     } else {
-      migrationMediaProgress.hidden = false;
-      migrationMediaFill.style.width = '100%';
-      migrationMediaText.textContent = 'все медиафайлы на месте';
+      const done = data.totalMattermostFiles - data.missingCount;
+      const pct = data.totalMattermostFiles ? Math.round((done / data.totalMattermostFiles) * 100) : 100;
+      migrationMediaFill.style.width = pct + '%';
+      migrationMediaText.textContent = data.missingCount > 0
+        ? `Миграция медиа из ММ завершена. Просьба проверить корректность. (докатано ${done} из ${data.totalMattermostFiles}, осталось ${data.missingCount})`
+        : 'Миграция медиа из ММ завершена. Просьба проверить корректность.';
     }
     // currentTasks уже приходят с migrationStatus от сервера (см.
     // annotateMigrationStatus в index.js) — тут только держим в курсе

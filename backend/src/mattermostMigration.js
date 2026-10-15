@@ -392,6 +392,38 @@ function getMediaRetryStatus() {
   return retryState;
 }
 
+// taskId -> сколько медиафайлов этой задачи ещё не разрешено (ни успехом,
+// ни окончательным провалом после всех попыток) в ТЕКУЩЕЙ докатке. Нужно
+// отдельно от retryState.log/progress (те считают файлы, а не задачи, и не
+// рассчитаны на поиск "эта задача ещё ждёт медиа?" annotateMigrationStatus
+// в index.js — см. использование в getPendingMediaTaskIds ниже). Один
+// файл с ошибкой также остаётся в runState.report.mediaErrors навсегда
+// (до следующего прогона/докатки), но этот счётчик — только на время
+// активной докатки, чтобы подсветка карточек не "зеленела" раньше времени.
+let pendingMediaTaskCounts = new Map();
+
+function markPendingTasks(targets) {
+  pendingMediaTaskCounts = new Map();
+  for (const t of targets) {
+    pendingMediaTaskCounts.set(t.taskId, (pendingMediaTaskCounts.get(t.taskId) || 0) + 1);
+  }
+}
+
+function resolvePendingTask(taskId) {
+  const left = (pendingMediaTaskCounts.get(taskId) || 1) - 1;
+  if (left <= 0) pendingMediaTaskCounts.delete(taskId);
+  else pendingMediaTaskCounts.set(taskId, left);
+}
+
+// Используется annotateMigrationStatus() в index.js, чтобы подсвечивать
+// карточку media_pending (жёлтым) пока её медиа ещё в активной докатке —
+// до этого фикса там смотрели только на report.mediaErrors, который сразу
+// после нового быстрого переноса пуст (ошибки пишутся туда только после
+// всех 6 попыток, то есть минуты спустя), и карточки ложно зеленели.
+function getPendingMediaTaskIds() {
+  return Array.from(pendingMediaTaskCounts.keys());
+}
+
 // targets — уже разрешённые {taskId, position, folderName, mediaItem} (или
 // {..., mediaItem: null, message} для таргетов, которые не удалось
 // разрешить — см. resolveMediaErrorTargets).
@@ -429,6 +461,7 @@ async function runBackfill(boardId, targets) {
     }
     retryState.log.push(entry);
     retryState.progress = { processed: i + 1, total: targets.length };
+    resolvePendingTask(t.taskId);
   }
   return { total: targets.length, succeeded: retryState.log.filter((e) => e.ok).length };
 }
@@ -449,6 +482,7 @@ function startBackfillJob(boardId, targets) {
   retryState.progress = { processed: 0, total: targets.length };
   retryState.log = [];
   retryState.error = null;
+  markPendingTasks(targets);
   runBackfill(boardId, targets)
     .then(() => {
       retryState.state = 'done';
@@ -520,6 +554,7 @@ function startMediaRetry(boardId) {
   resolveMediaErrorTargets(boardId)
     .then((targets) => {
       retryState.progress = { processed: 0, total: targets.length };
+      markPendingTasks(targets);
       return runBackfill(boardId, targets);
     })
     .then(() => {
@@ -590,4 +625,4 @@ function startRun(boardId, { board, cards, blocks }) {
   return runState;
 }
 
-module.exports = { previewMigration, startRun, getRunStatus, startMediaRetry, getMediaRetryStatus };
+module.exports = { previewMigration, startRun, getRunStatus, startMediaRetry, getMediaRetryStatus, getPendingMediaTaskIds };

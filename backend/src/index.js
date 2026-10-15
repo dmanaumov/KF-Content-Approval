@@ -2543,7 +2543,16 @@ async function refetchTeamTask(boardId, taskId) {
 async function annotateMigrationStatus(boardId, tasks) {
   const runStatus = mattermostMigration.getRunStatus();
   if (!runStatus.report) return;
-  const missingTaskIds = new Set((runStatus.report.mediaErrors || []).map((e) => e.taskId));
+  // mediaErrors — файлы, не докатавшиеся даже после всех попыток (переживает
+  // перезапуск сервера). getPendingMediaTaskIds() — задачи, чьё медиа СЕЙЧАС
+  // в активной фоновой докатке (см. mattermostMigration.js) и ещё не дошло
+  // ни до успеха, ни до окончательного провала — без этого карточка сразу
+  // после переноса ложно зеленела бы (media_pending никогда не выставлялся
+  // в первые минуты, пока mediaErrors ещё пуст).
+  const missingTaskIds = new Set([
+    ...(runStatus.report.mediaErrors || []).map((e) => e.taskId),
+    ...mattermostMigration.getPendingMediaTaskIds(),
+  ]);
   const reviews = await migrationReview.getAll(boardId);
   for (const t of tasks) {
     const review = reviews.get(t.projectId);
