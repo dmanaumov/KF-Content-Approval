@@ -472,12 +472,22 @@ button{cursor:pointer}
    «CEO-дашборд» на странице /admin (projects.html). app.css грузится на
    всех трёх страницах, поэтому стиль объявлен один раз здесь, а не
    дублируется по файлам. Та же геометрия, что у кнопки выхода (.cal-toggle). */
-.head-icon-link{flex:0 0 auto;display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;color:var(--ink);text-decoration:none;background:#fff}
+.head-icon-link{position:relative;flex:0 0 auto;display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;color:var(--ink);text-decoration:none;background:#fff}
 .head-icon-link:hover{background:#F2F6F5}
 .head-icon-link svg{width:18px;height:18px;display:block}
+.head-icon-emoji{font-size:18px;line-height:1}
+.head-icon-mascot{width:32px;height:16px;object-fit:contain;display:block}
+/* Плашка-ссылка на my.kontentferma.com в кабинете команды (2026-10-16) —
+   счётчик непрочитанного там, та же геометрия, что у .fab-chat-unread, но
+   в размере значка шапки. Скрыт (head-icon-badge[hidden]), пока счётчик не
+   пришёл/равен 0 — ссылка всегда видна, цифра появляется только если есть
+   что показать. */
+.head-icon-badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 4px;border-radius:999px;background:var(--urgent);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;box-shadow:0 0 0 2px #fff}
 @media(max-width:430px){
   .head-icon-link{width:36px;height:36px}
   .head-icon-link svg{width:16px;height:16px}
+  .head-icon-emoji{font-size:16px}
+  .head-icon-mascot{width:28px;height:14px}
 }
 
 @media (prefers-color-scheme: dark){
@@ -553,4 +563,5 @@ button{cursor:pointer}
   .cal-day.drag-over{background:color-mix(in srgb, var(--accent) 16%, #262222)}
   .head-icon-link{background:#262222}
   .head-icon-link:hover{background:#202725}
+  .head-icon-badge{box-shadow:0 0 0 2px #1A1F1D}
 }

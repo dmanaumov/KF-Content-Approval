@@ -67,6 +67,7 @@ let archivedProjectIds = new Set();
 let boardId = null; // only needed to build /api/files/:boardId/:fileId src urls — see loadTasks()
 let currentUser = null;
 let currentAccess = null; // {admin,stat,ceo,staffProjectsPath,canBulkDelete} — from GET/POST /api/team/me|login, see showApp()
+let myPortalPollTimer = null; // setInterval handle — loadMyPortalBadge(), started in showApp(), cleared in showLogin()
 let teamProjects = null; // [{id,label}] — cached lazily, from GET /api/team/projects (see openCreateModal)
 let teamUsers = null; // [{id,name}] — cached lazily, from GET /api/team/users (see populateAssigneeSelect)
 // Массовые операции — «Выбрать» → выделить несколько карточек кликом →
@@ -318,6 +319,10 @@ const loginError = document.getElementById('loginError');
 const teamUserName = document.getElementById('teamUserName');
 const statLink = document.getElementById('statLink');
 const adminLink = document.getElementById('adminLink');
+const myPortalLink = document.getElementById('myPortalLink');
+const myPortalBadge = document.getElementById('myPortalBadge');
+const myPortalEmoji = document.getElementById('myPortalEmoji');
+const myPortalMascotImg = document.getElementById('myPortalMascotImg');
 const teamLoading = document.getElementById('teamLoading');
 const teamEmpty = document.getElementById('teamEmpty');
 const teamList = document.getElementById('teamList');
@@ -405,6 +410,45 @@ const chatSendBtn = document.getElementById('chatSendBtn');
 function showLogin() {
   loginApp.hidden = false;
   teamApp.hidden = true;
+  if (myPortalPollTimer) { clearInterval(myPortalPollTimer); myPortalPollTimer = null; }
+}
+
+// Плашка-ссылка на my.kontentferma.com (2026-10-16, прямой запрос) —
+// счётчик непрочитанного там же приходит через наш собственный
+// GET /api/team/my-portal-notifications (сервер сам ходит за ключом в
+// ingest-API my.kontentferma, ключ фронтенду не виден). unread:null —
+// значит сервер не смог посчитать (ключ не настроен/портал недоступен/
+// не нашли username) — ссылка остаётся, просто без цифры, это не ошибка
+// кабинета команды.
+async function loadMyPortalBadge() {
+  try {
+    const res = await fetch('/api/team/my-portal-notifications');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.url) myPortalLink.href = data.url;
+    if (typeof data.unread === 'number' && data.unread > 0) {
+      myPortalBadge.textContent = data.unread > 99 ? '99+' : String(data.unread);
+      myPortalBadge.hidden = false;
+    } else {
+      myPortalBadge.hidden = true;
+    }
+    // КОТЭ — одна картинка эмоции вместо лапки-плейсхолдера, когда
+    // my.kontentferma её отдала; реплика — во всплывающую подсказку (title),
+    // показать текст целиком негде, значок 40×40. Нет картинки (ключ не
+    // настроен/портал недоступен) — остаётся лапка 🐾, как раньше.
+    if (data.mascot && data.mascot.imageDataUri) {
+      myPortalMascotImg.src = data.mascot.imageDataUri;
+      myPortalMascotImg.hidden = false;
+      myPortalEmoji.hidden = true;
+      myPortalLink.title = data.mascot.line || 'my.kontentferma';
+    } else {
+      myPortalMascotImg.hidden = true;
+      myPortalEmoji.hidden = false;
+      myPortalLink.title = 'my.kontentferma';
+    }
+  } catch (err) {
+    // Тихо — это вспомогательная плашка, не ломаем кабинет из-за сетевой ошибки.
+  }
 }
 
 function showApp(user, access) {
@@ -423,6 +467,9 @@ function showApp(user, access) {
   // проекта).
   adminLink.hidden = !(access && access.staffProjectsPath);
   if (access && access.staffProjectsPath) adminLink.href = access.staffProjectsPath;
+  myPortalLink.hidden = false;
+  loadMyPortalBadge();
+  if (!myPortalPollTimer) myPortalPollTimer = setInterval(loadMyPortalBadge, 60000);
   // «Выбрать» (массовое удаление, календарь И перечень карточек) — ЭТОТ
   // сигнал admin-уровня НЕ расширяли вместе с кнопкой «Админка» выше (по
   // прямому запросу пользователя, 2026-09-25: сперва «в календаре у

@@ -468,4 +468,15 @@ module.exports = {
   // channel lives in) — no separate team slug is stored since the core API
   // resolves channels by teamId, not by team slug.
   smmTeamChannelName: process.env.MM_TEAM_CHAT_CHANNEL_NAME || 'smm-team',
+
+  // Плашка-ссылка на my.kontentferma.com в команде SMM (2026-10-16, см.
+  // GET /api/team/my-portal-notifications в index.js) — читает счётчик
+  // непрочитанных уведомлений сотрудника там через ingest-API my.kontentferma
+  // (GET /api/ingest/notification-count?username=..., отдельный ключ от
+  // AUTOMATION_API_KEY/BOT_API_KEY — по тому же принципу "каждая интеграция
+  // со своим секретом"). Пустой myPortalIngestApiKey = плашка просто не
+  // показывает счётчик (ссылка остаётся), а не 503 — это не критичная для
+  // публикации функция, в отличие от automation/bot API.
+  myPortalUrl: (process.env.MY_PORTAL_URL || 'https://my.kontentferma.com').replace(/\/+$/, ''),
+  myPortalIngestApiKey: process.env.MY_PORTAL_INGEST_API_KEY || '',
 };

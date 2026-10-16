@@ -2443,6 +2443,98 @@ app.get('/api/team/me', teamAuth.requireTeamAuth, async (req, res) => {
   });
 });
 
+// Плашка-ссылка на my.kontentferma.com в команде SMM (2026-10-16, прямой
+// запрос пользователя). Счётчик — через ingest-API my.kontentferma (см.
+// GET /api/ingest/notification-count в её src/index.js), по тому же
+// Mattermost username, которым сотрудник залогинен и здесь — оба сервиса
+// используют один и тот же Mattermost-логин, так что username совпадает
+// без дополнительного маппинга. Короткий in-memory TTL-кэш (как
+// loadBoard() выше) — team.js опрашивает это не чаще раза в минуту на
+// открытую вкладку, лишний раз дёргать соседний сервис незачем.
+//
+// unread:null во ВСЕХ случаях, когда посчитать не получилось (ключ не
+// настроен, сервис недоступен, username не нашёлся на той стороне) —
+// фронтенд в этом случае просто показывает ссылку без цифры, а не ошибку:
+// это вспомогательная плашка, её недоступность не должна выглядеть как
+// сбой самого кабинета.
+const myPortalNotifCache = new Map(); // username -> { at, unread }
+const MY_PORTAL_NOTIF_TTL_MS = 60 * 1000;
+
+async function fetchMyPortalUnread(username) {
+  if (!config.myPortalIngestApiKey || !username) return null;
+  const cached = myPortalNotifCache.get(username);
+  if (cached && Date.now() - cached.at < MY_PORTAL_NOTIF_TTL_MS) return cached.unread;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const url = `${config.myPortalUrl}/api/ingest/notification-count?username=${encodeURIComponent(username)}`;
+    const res = await fetch(url, { headers: { 'X-Api-Key': config.myPortalIngestApiKey }, signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const unread = typeof body.unread === 'number' ? body.unread : null;
+    myPortalNotifCache.set(username, { at: Date.now(), unread });
+    return unread;
+  } catch (err) {
+    console.warn('[my-portal] notification-count недоступен:', err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// КОТЭ (2026-10-16) — через готовый публичный API my.kontentferma
+// (GET /api/v1/users/:id/kote + /kote.svg — см. её CHANGELOG.md, "КОТЭ
+// через API"): он сам собирает полную сцену (фон/огонёк/эффекты/текст) в
+// один самодостаточный SVG. Тот же INGEST_API_KEY работает и для /api/v1/*
+// (её apiV1.authApi даёт X-Api-Key scope users:read автоматически) —
+// отдельный v1-токен не нужен. :id — Mattermost user id, тот же самый
+// req.teamSession.user.id здесь и people.id там (оба читают его из
+// Mattermost, маппинга не требуется).
+//
+// Браузер не может запросить SVG прямо с my.kontentferma.com — туда не
+// уйдёт заголовок X-Api-Key, а палить ключ в query string нельзя. Поэтому
+// сервер сам ходит за байтами SVG и отдаёт фронту уже готовый
+// data:image/svg+xml;base64,... — ключ на клиенте не появляется, браузеру
+// это обычная картинка без дополнительного запроса.
+const myPortalKoteCache = new Map(); // mattermost user id -> { at, kote }
+
+async function fetchMyPortalKote(userId) {
+  if (!config.myPortalIngestApiKey || !userId) return null;
+  const cached = myPortalKoteCache.get(userId);
+  if (cached && Date.now() - cached.at < MY_PORTAL_NOTIF_TTL_MS) return cached.kote;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const headers = { 'X-Api-Key': config.myPortalIngestApiKey };
+    const base = `${config.myPortalUrl}/api/v1/users/${encodeURIComponent(userId)}`;
+    const [infoRes, svgRes] = await Promise.all([
+      fetch(`${base}/kote`, { headers, signal: controller.signal }),
+      fetch(`${base}/kote.svg?size=small&text=0`, { headers, signal: controller.signal }),
+    ]);
+    if (!infoRes.ok || !svgRes.ok) throw new Error(`HTTP ${infoRes.status}/${svgRes.status}`);
+    const info = await infoRes.json();
+    const svg = await svgRes.text();
+    const kote = {
+      state: info.state || '',
+      line: info.line || '',
+      imageDataUri: `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`,
+    };
+    myPortalKoteCache.set(userId, { at: Date.now(), kote });
+    return kote;
+  } catch (err) {
+    console.warn('[my-portal] kote недоступен:', err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+app.get('/api/team/my-portal-notifications', teamAuth.requireTeamAuth, async (req, res) => {
+  const { username, id } = req.teamSession.user;
+  const [unread, mascot] = await Promise.all([fetchMyPortalUnread(username || ''), fetchMyPortalKote(id || '')]);
+  res.json({ url: config.myPortalUrl, unread, mascot });
+});
+
 // Собирает "что этому пользователю доступно" для внутренних страниц: роль
 // (admin/stat/ceo) + path staff-страницы, если пользователь может на неё
 // попасть (admin/ceo — всегда; участник проекта — да, с видимостью только
