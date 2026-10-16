@@ -7,9 +7,9 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/app.css?v=21">
+  <link rel="stylesheet" href="/app.css?v=22">
   <link rel="stylesheet" href="/projects.css?v=15">
-  <link rel="stylesheet" href="/team.css?v=35">
+  <link rel="stylesheet" href="/team.css?v=36">
 </head>
 <body>
 <div class="page">
@@ -320,6 +320,10 @@
   <div class="tm-card">
     <button id="tmClose" class="tm-close" type="button" aria-label="Закрыть">✕</button>
     <div id="tmHead" class="tm-head"></div>
+    <div id="tmLimitBanner" class="tm-limit-banner" hidden>
+      <span id="tmLimitBannerText"></span>
+      <button type="button" id="tmLimitBannerClose" aria-label="Закрыть">✕</button>
+    </div>
     <div id="tmTabbar" class="tm-tabbar"></div>
     <div id="tmBody" class="tm-body"></div>
   </div>
@@ -355,7 +359,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=49"></script>
+<script src="/team.js?v=50"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

@@ -290,12 +290,26 @@
 .tm-chat{display:flex;flex-direction:column;gap:10px}
 .tm-chat-empty{color:var(--muted);font-size:12.5px;text-align:center;padding:18px 0}
 .tm-chat-msg{background:#F7F8F8;border-radius:14px;padding:9px 12px;max-width:88%}
-.tm-chat-msg.mine{background:#EAF3F1;align-self:flex-end}
+/* 2026-10-16, по прямому замечанию пользователя («пропало выделение
+   цветом») — "своё" сообщение (мои/агентство) теперь залито акцентным
+   цветом (как уже было у клиентского чата в app.css's .client-chat-msg.mine),
+   а не едва заметным оттенком того же серого — иначе две стороны диалога
+   не различить на глаз. */
+.tm-chat-msg.mine{background:var(--accent);align-self:flex-end;color:#fff}
 .tm-chat-msg-author{font-size:10.5px;font-weight:800;color:var(--muted);margin-bottom:2px}
+.tm-chat-msg.mine .tm-chat-msg-author{color:rgba(255,255,255,.75)}
 .tm-chat-msg-author.cerberus{color:#7A4D00;background:#FFF1D6;border:1px solid #F3C76A;border-radius:5px;padding:1px 6px;display:inline-block}
 .tm-chat-msg-text{font-size:13px;line-height:1.45;white-space:pre-wrap}
 .tm-chat-msg-time{font-size:9.5px;color:var(--muted);margin-top:3px}
+.tm-chat-msg.mine .tm-chat-msg-time{color:rgba(255,255,255,.72)}
 .tm-chat-msg.system{background:transparent;align-self:center;max-width:100%;text-align:center;color:var(--muted);font-size:11px;padding:2px 0}
+/* Ограничение загрузки (хранилище проекта не настроено / диск не
+   настроен) — акцентный баннер поверх вкладок модалки задачи, не
+   исчезающий самостоятельно (в отличие от toast()), см. showLimitBanner()
+   в team.js. Тот же стиль, что .tech-works-banner в app.css. */
+.tm-limit-banner{margin:0 20px;padding:11px 14px;background:#FFF8E1;border:1px solid #F0C419;border-radius:14px;display:flex;align-items:flex-start;gap:10px;font-size:12.5px;line-height:1.45;color:#5B4A00}
+.tm-limit-banner span{flex:1}
+.tm-limit-banner button{flex:0 0 auto;border:0;background:transparent;color:#5B4A00;font-size:13px;cursor:pointer;padding:2px}
 
 /* Оценка замечания Цербера специалистом («Согласен/Отчасти/Не согласен»,
    см. cerberusFeedbackHtml() в team.js) — показывается только под
@@ -613,8 +627,9 @@
   .tm-mini-btn{background:#262222}
   .tm-mini-btn-danger{background:#2E2020}
   .tm-chat-msg{background:#222626}
-  .tm-chat-msg.mine{background:#1E2927}
   .tm-chat-msg-author.cerberus{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
+  .tm-limit-banner{background:#332A17;border-color:#8A6D2A;color:#F2C45C}
+  .tm-limit-banner button{color:#F2C45C}
   .tm-cerberus-feedback{border-top-color:#8A6D2A}
   .tm-cerberus-feedback-label{color:#F2C45C}
   .tm-cerberus-fb-btn.active.good{background:#1C2E22;border-color:#3FA98F;color:#7FD3AE}

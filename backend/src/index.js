@@ -5618,6 +5618,138 @@ app.get('/api/automation/tasks/:taskId/team-comments', requireAutomationAuth, as
 // posture as the rest of these automation writes — this is a review/
 // замечание channel, not a chat: no images (keep it a clean text audit
 // trail), and empty text is rejected.
+// ---------------------------------------------------------------------------
+// my.kontentferma (KF-my) — портал сотрудников. После переезда задач SMM в
+// Postgres (2026-10) my берёт задачи SMM отсюда, а не из Mattermost, и пишет
+// сюда же: статус, комментарий команды, новая задача. Ключ — как у всего
+// /api/automation (X-API-Key / X-Automation-Api-Key).
+// ---------------------------------------------------------------------------
+
+// GET /api/automation/my/tasks-feed — все задачи доски (лёгкие поля, без медиа
+// и переписки) + опции статусов/проектов + свежие комментарии чата команды.
+app.get('/api/automation/my/tasks-feed', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const { board } = await loadBoard(boardId);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    const approvalProp = findPropertyDef(board, config.approvalPropertyName);
+    const projLabel = new Map(((projectProp && projectProp.options) || []).map((o) => [o.id, o.value]));
+    const pool = db.requirePool();
+    const { rows } = await pool.query(
+      `SELECT id, project_id, title, status, publish_date, assignee_id, created_by, is_archived, created_at, updated_at FROM app_tasks`
+    );
+    const days = Math.min(60, Math.max(1, parseInt(req.query.commentsDays, 10) || 14));
+    const { rows: comments } = await pool.query(
+      `SELECT id, task_id, author_id, author_name, text, created_at FROM task_team_comments
+        WHERE board_id = $1 AND created_at > now() - ($2::int * interval '1 day') ORDER BY created_at`,
+      [boardId, days]
+    );
+    res.json({
+      boardId,
+      statuses: ((approvalProp && approvalProp.options) || []).map((o) => o.value),
+      projects: [...projLabel].map(([id, label]) => ({ id, label })),
+      tasks: rows.map((r) => ({
+        id: r.id,
+        projectId: r.project_id,
+        projectLabel: projLabel.get(r.project_id) || '',
+        title: r.title,
+        status: r.status,
+        publishDate: r.publish_date || null,
+        assigneeId: r.assignee_id || '',
+        createdBy: r.created_by || '',
+        archived: !!r.is_archived,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+      teamComments: comments.map((c) => ({
+        id: String(c.id), taskId: c.task_id, authorId: c.author_id, authorName: c.author_name, text: c.text, createdAt: c.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[api] my tasks-feed failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: 'my_feed_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/my/tasks/:taskId/status — { status (точная метка), actorName }.
+app.post('/api/automation/my/tasks/:taskId/status', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const status = String((req.body && req.body.status) || '').trim();
+  if (!status) return res.status(400).json({ error: 'status_required', message: 'status обязателен.' });
+  const actorName = String((req.body && req.body.actorName) || '').trim().slice(0, 120) || 'my.kontentferma';
+  try {
+    const updated = await setStatusByRawLabel(boardId, req.params.taskId, status, actorName);
+    res.json({ id: req.params.taskId, status: (updated && updated.statusLabel) || status, updatedAt: Date.now() });
+  } catch (err) {
+    console.error('[api] my status update failed:', err.message);
+    res.status(err.httpStatus || 400).json({ error: 'status_update_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/my/tasks/:taskId/team-comment — { text, authorId, authorName }:
+// сообщение в чат команды по задаче от имени сотрудника (не от «Цербера»).
+app.post('/api/automation/my/tasks/:taskId/team-comment', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const b = req.body || {};
+  const text = String(b.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'text_required', message: 'Пустой комментарий.' });
+  try {
+    const { rows: found } = await db.requirePool().query('SELECT 1 FROM app_tasks WHERE id = $1', [req.params.taskId]);
+    if (!found.length) return res.status(404).json({ error: 'task_not_found', message: 'Задача не найдена в SMM.' });
+    const comment = await teamComments.addComment(
+      boardId, req.params.taskId,
+      { id: String(b.authorId || '').slice(0, 64), name: String(b.authorName || 'Сотрудник').slice(0, 120) },
+      text.slice(0, 8000)
+    );
+    res.json({ comment });
+  } catch (err) {
+    console.error('[api] my team-comment failed:', err.message);
+    res.status(502).json({ error: 'team_comment_failed', message: err.message });
+  }
+});
+
+// POST /api/automation/my/tasks — { title, projectId, publishDate?, assigneeId?, createdBy?, description?, status?, actorName? }.
+// Задача, поставленная из my. description → «Ключевые слова/мысли» (внутренний бриф, клиенту не виден).
+app.post('/api/automation/my/tasks', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  const b = req.body || {};
+  try {
+    const { board } = await loadBoard(boardId);
+    const projectProp = findPropertyDef(board, config.projectPropertyName);
+    const approvalProp = findPropertyDef(board, config.approvalPropertyName);
+    const title = String(b.title || '').trim();
+    if (!title) throw badRequest('title_required', 'Название задачи обязательно.');
+    const projectId = String(b.projectId || '').trim();
+    if (!projectProp || !(projectProp.options || []).some((o) => o.id === projectId)) throw badRequest('project_not_found', 'Проект не найден в SMM.');
+    let status = '';
+    const wanted = String(b.status || 'Не начато').trim();
+    if (approvalProp) {
+      const optId = optionIdByLabel(approvalProp, wanted);
+      status = optId ? optionLabelById(approvalProp, optId) : '';
+    }
+    const publishDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.publishDate || '')) ? String(b.publishDate) : '';
+    const taskId = await pgTasks.createTaskRow({
+      project_id: projectId,
+      board_id: boardId,
+      title: title.slice(0, 500),
+      status,
+      publish_date: publishDate,
+      keywords: String(b.description || '').slice(0, 8000),
+      assignee_id: String(b.assigneeId || ''),
+      created_by: String(b.createdBy || ''),
+    });
+    await pgTasks.addFeedback(taskId, { kind: 'system', authorKind: 'staff', authorName: String(b.actorName || 'my.kontentferma'), text: 'Карточка создана в my.kontentferma' }).catch(() => {});
+    res.status(201).json({ id: taskId, status });
+  } catch (err) {
+    console.error('[api] my create task failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'create_task_failed', message: err.message });
+  }
+});
+
 app.post('/api/automation/tasks/:taskId/team-comment', requireAutomationAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;

@@ -108,7 +108,7 @@ const NETWORK_FILTER_KEY = 'kf.team.networkFilter.v1';
 
 // --- Модалка карточки: состояние открытой карточки ---
 let modalTaskId = null;
-let activeTab = 'media';
+let activeTab = 'text';
 let editingTitle = false;
 let reorderMode = false;
 let reorderIds = [];
@@ -191,6 +191,23 @@ function toast(msg) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove('show'), 3200);
 }
+
+// Акцентный баннер поверх вкладок модалки задачи (2026-10-16, прямая
+// жалоба пользователя: toast() на ограничение загрузки — "не успеваю
+// прочитать ошибку", исчезает за 3.2с). В отличие от toast(), остаётся,
+// пока пользователь сам не закроет крестиком или не откроет другую
+// карточку/закроет модалку (см. openTaskModal/closeTaskModal).
+function showLimitBanner(msg) {
+  const el = document.getElementById('tmLimitBanner');
+  if (!el) return;
+  document.getElementById('tmLimitBannerText').textContent = msg;
+  el.hidden = false;
+}
+function hideLimitBanner() {
+  const el = document.getElementById('tmLimitBanner');
+  if (el) el.hidden = true;
+}
+document.getElementById('tmLimitBannerClose').addEventListener('click', hideLimitBanner);
 
 // БАГ (найден 2026-09-24, жалоба «при импорте вышла ошибка», без деталей):
 // раньше эта функция на !res.ok просто бросала `data.message || data.error
@@ -1435,9 +1452,10 @@ function applyUpdatedTask(updated) {
 
 function openTaskModal(taskId) {
   modalTaskId = taskId;
-  activeTab = 'media';
+  activeTab = 'text';
   reorderMode = false;
   editingTitle = false;
+  hideLimitBanner();
   taskModal.hidden = false;
   renderModal();
 }
@@ -1465,6 +1483,7 @@ async function openDeepLinkedTask(taskId) {
 function closeTaskModal() {
   taskModal.hidden = true;
   modalTaskId = null;
+  hideLimitBanner();
 }
 
 // --- «Запланировать публикацию» — создание НОВОЙ карточки с нуля ---
@@ -2271,8 +2290,8 @@ async function onToggleDatePop(t) {
 // --- Вкладки + аватар ИИ-генератора ---
 
 const TABS = [
-  { key: 'media', label: 'Медиа' },
   { key: 'text', label: 'Текст' },
+  { key: 'media', label: 'Медиа' },
   { key: 'team', label: 'ЧАТ КОМАНДЫ' },
   { key: 'client', label: 'Чат с клиентом' },
   { key: 'preview', label: 'Предпросмотр поста' },
@@ -2774,9 +2793,25 @@ tmHead.addEventListener('click', async (e) => {
   if (action === 'toggle-network-pop') { togglePopover(document.getElementById('tmNetworkPop')); return; }
   if (action === 'toggle-date-pop') { await onToggleDatePop(t); return; }
   if (action === 'pick-status') {
-    closeAllPopovers();
+    const targetLabel = btn.dataset.label;
+    // Прямой запрос пользователя (2026-10-16): отправка на согласование
+    // без текста поста — скорее всего забыли написать текст, а не
+    // осознанное решение, поэтому переспрашиваем. "Нет" — не отправляем
+    // статус вовсе, просто переключаем на вкладку «Текст», чтобы его
+    // дописать.
+    if (norm(targetLabel) === norm(STATUS_LABELS.waiting) && !String(t.caption || '').trim()) {
+      closeAllPopovers();
+      const proceed = confirm('Пост без текста! Вы уверены, что хотите отправить на согласование именно так?');
+      if (!proceed) {
+        activeTab = 'text';
+        renderModal();
+        return;
+      }
+    } else {
+      closeAllPopovers();
+    }
     try {
-      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/status`, { method: 'POST', body: { status: btn.dataset.label } });
+      const data = await teamApi(`/tasks/${encodeURIComponent(t.id)}/status`, { method: 'POST', body: { status: targetLabel } });
       applyUpdatedTask(data.task);
       flashSaved(document.querySelector('#tmHead .tm-status-pill'));
     } catch (err) {
@@ -3178,8 +3213,18 @@ async function uploadMediaFiles(t, files) {
         data = await res.json().catch(() => ({}));
       }
       if (!res.ok) {
+        // storage_not_configured/disk_upload_not_configured — не ошибка
+        // ЭТОГО файла, а ограничение проекта/сервера: следующий файл
+        // упрётся в то же самое, поэтому не мучаем сервер остальными
+        // попытками И показываем это акцентным баннером (см.
+        // showLimitBanner — toast() через 3.2с исчезает, жалоба
+        // пользователя 2026-10-16: "не успеваю прочитать ошибку").
+        if (data.error === 'storage_not_configured' || data.error === 'disk_upload_not_configured') {
+          showLimitBanner(data.message || 'Загрузка этого файла сейчас недоступна.');
+          stoppedEarly = true;
+          break;
+        }
         failed.push({ name: file.name, message: data.message || data.error || 'ошибка' });
-        if (data.error === 'disk_upload_not_configured') { stoppedEarly = true; break; } // остальные файлы упрутся в то же самое — не мучаем сервер
         continue;
       }
       // На успехе applyUpdatedTask уже пересоздал #tmDropzone заново (обычным
@@ -3193,7 +3238,8 @@ async function uploadMediaFiles(t, files) {
   }
   if (ok) flashSaved(document.querySelector('#tmBody .tm-media-grid'));
   if (stoppedEarly) {
-    toast('Загрузка ещё не настроена на сервере — вставьте готовую ссылку ниже.');
+    // Баннер уже показан выше (showLimitBanner) — отдельный toast тут был
+    // бы избыточен/противоречил бы ему.
   } else if (failed.length === files.length) {
     toast('Не удалось загрузить ' + (failed.length === 1 ? 'файл' : 'файлы') + ': ' + failed[0].message);
   } else if (failed.length) {
