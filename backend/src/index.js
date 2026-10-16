@@ -518,6 +518,18 @@ const AUTOMATION_ACTOR = 'автоматизация';
 const CERBERUS_AUTHOR_ID = 'cerberus';
 const CERBERUS_AUTHOR_NAME = 'Цербер';
 
+// 2026-10-16: по прямому запросу Дмитрия — в момент каждой сработки Цербера
+// (см. team-comment роут ниже) на доске ТОГО ЖЕ проекта автоматически
+// создаётся отдельная карточка-ревью, чтобы Малика (директор по
+// производству) проверила, корректно ли бот сработал. Исполнитель и текст
+// хардкодятся по этому же решению — это не настраиваемая n8n-automation
+// фича, а фиксированный внутренний процесс.
+const CERBERUS_REVIEW_ASSIGNEE_ID = 'bajzr5d6sjycf841ouiwwwmzie'; // Малика, Mattermost user id
+const CERBERUS_REVIEW_DUE_DAYS = 5;
+const CERBERUS_REVIEW_TITLE = 'Сработка ЦЕРБЕРА. Корректно ли?';
+const CERBERUS_REVIEW_TEXT =
+  'просьба оценить корректно ли сработал ЦЕРБЕР\nПерейти по адресу и сделать соотв отметку\nhttps://my.kontentferma.com/#/cerberus';
+
 // Last-N-chars-only helper for auth debug logging below — never log a full
 // secret, even to server logs (defense in depth in case logs leak
 // elsewhere). 4 chars is enough to eyeball "does the tail match what the
@@ -5750,6 +5762,35 @@ app.post('/api/automation/my/tasks', requireAutomationAuth, async (req, res) => 
   }
 });
 
+// Создаёт карточку-ревью сработки Цербера на доске проекта исходной
+// карточки — см. CERBERUS_REVIEW_* константы выше. Статус/создатель
+// проставляются так же, как в createAutomationTask (config.notStartedLabel +
+// отметка "КАРТОЧКА СОЗДАНА"-эквивалент системным комментарием), но минуя
+// саму createAutomationTask — там обязателен network, а у ревью-карточки
+// его просто нет (это не публикация в соцсеть).
+async function createCerberusReviewTask(boardId, sourceTask) {
+  const dueDate = new Date(Date.now() + CERBERUS_REVIEW_DUE_DAYS * 24 * 3600 * 1000 + 3 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const taskId = await pgTasks.createTaskRow({
+    project_id: sourceTask.projectId,
+    board_id: boardId,
+    title: CERBERUS_REVIEW_TITLE,
+    publish_date: dueDate,
+    caption: CERBERUS_REVIEW_TEXT,
+    assignee_id: CERBERUS_REVIEW_ASSIGNEE_ID,
+    created_by: CERBERUS_AUTHOR_NAME,
+  });
+  await pgTasks.setStatusLabel(taskId, config.notStartedLabel);
+  await pgTasks.addFeedback(taskId, {
+    kind: 'system',
+    authorKind: 'staff',
+    authorName: CERBERUS_AUTHOR_NAME,
+    text: `Карточка создана автоматически по сработке Цербера на задаче «${sourceTask.title || sourceTask.id}».`,
+  });
+  return taskId;
+}
+
 app.post('/api/automation/tasks/:taskId/team-comment', requireAutomationAuth, async (req, res) => {
   const boardId = requireStaffBoardId(res);
   if (!boardId) return;
@@ -5763,6 +5804,23 @@ app.post('/api/automation/tasks/:taskId/team-comment', requireAutomationAuth, as
       text
     );
     res.json({ comment });
+    // Ревью-карточка — побочный эффект сработки, не часть ответа n8n: ответ
+    // уже ушёл выше, а сбой здесь только логируется и не превращает успешный
+    // комментарий Цербера в ошибку (fire-and-forget, как и notifyTaskNeedsAction
+    // в createAutomationTask).
+    (async () => {
+      try {
+        const { board } = await loadBoard(boardId);
+        const sourceTask = await pgTasks.getTaskById(boardId, board, req.params.taskId);
+        if (!sourceTask) {
+          console.error('[api] cerberus review task skipped: source task not found', req.params.taskId);
+          return;
+        }
+        await createCerberusReviewTask(boardId, sourceTask);
+      } catch (err) {
+        console.error('[api] cerberus review task creation failed:', err.message);
+      }
+    })();
   } catch (err) {
     console.error('[api] automation team-comment failed:', err.message);
     res.status(502).json({ error: 'team_comment_failed', message: err.message });
