@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=22">
   <link rel="stylesheet" href="/projects.css?v=15">
-  <link rel="stylesheet" href="/team.css?v=36">
+  <link rel="stylesheet" href="/team.css?v=37">
 </head>
 <body>
 <div class="page">
@@ -76,6 +76,14 @@
         </div>
       </div>
     </section>
+
+    <div class="team-sort-row">
+      <label for="teamSort" class="team-sort-label">Сортировка</label>
+      <select id="teamSort" class="field-input">
+        <option value="deadline">По дедлайну ↑</option>
+        <option value="project">По проекту</option>
+      </select>
+    </div>
 
     <div id="teamProjectFilterRow" class="team-project-filter" hidden>
       <select id="teamProjectFilter" class="field-input">
@@ -359,7 +367,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/team.js?v=50"></script>
+<script src="/team.js?v=51"></script>
 <script src="/welcome.js?v=1" defer data-audience="staff"></script>
 </body>
 </html>

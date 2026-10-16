@@ -96,6 +96,14 @@ let migrationReviews = new Map();
 const PROJECT_FILTER_KEY = 'kf.team.projectFilter.v1';
 try { projectFilterId = localStorage.getItem(PROJECT_FILTER_KEY) || ''; } catch (e) {}
 
+// Сортировка списка: 'deadline' (по умолчанию) — ближайший дедлайн сверху,
+// без даты — в конце; 'project' — по названию проекта А→Я, внутри проекта
+// тоже по дедлайну. Применяется в renderTasks() на каждой отрисовке, так что
+// порядок не зависит от того, в каком порядке задачи пришли/добавились.
+const SORT_KEY = 'kf.team.sort.v1';
+let sortMode = 'deadline';
+try { sortMode = localStorage.getItem(SORT_KEY) === 'project' ? 'project' : 'deadline'; } catch (e) {}
+
 // Мультивыбор по соцсети (задача 2026-09-28: «добавим фильтры и в
 // календарь, и в перечень задач») — та же логика, что и projectFilterId
 // (влияет на список И на календарь), но множественный выбор, как у
@@ -381,6 +389,7 @@ const teamCalSelectCount = document.getElementById('teamCalSelectCount');
 const teamCalDeleteSelected = document.getElementById('teamCalDeleteSelected');
 const teamProjectFilterRow = document.getElementById('teamProjectFilterRow');
 const teamProjectFilter = document.getElementById('teamProjectFilter');
+const teamSort = document.getElementById('teamSort');
 const teamNetworkFilterRow = document.getElementById('teamNetworkFilterRow');
 const teamCommentsToggle = document.getElementById('teamCommentsToggle');
 const teamCommentsView = document.getElementById('teamCommentsView');
@@ -495,9 +504,29 @@ function isUrgentTask(task) {
 // Самые срочные сверху — по мере приближения дедлайна (ближайшая дата первая,
 // задачи без даты — в конец).
 function byDeadline(a, b) {
-  if (!a.publishDate) return b.publishDate ? 1 : 0;
-  if (!b.publishDate) return -1;
-  return a.publishDate.localeCompare(b.publishDate);
+  const da = a.publishDate ? String(a.publishDate).slice(0, 10) : '';
+  const db = b.publishDate ? String(b.publishDate).slice(0, 10) : '';
+  if (da !== db) {
+    if (!da) return 1;
+    if (!db) return -1;
+    return da < db ? -1 : 1;
+  }
+  return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+}
+
+function byProjectThenDeadline(a, b) {
+  const pa = (a.projectLabel || '').trim();
+  const pb = (b.projectLabel || '').trim();
+  if (pa !== pb) {
+    if (!pa) return 1; // без проекта — в конец
+    if (!pb) return -1;
+    return pa.localeCompare(pb, 'ru');
+  }
+  return byDeadline(a, b);
+}
+
+function sortedTasks(tasks) {
+  return tasks.slice().sort(sortMode === 'project' ? byProjectThenDeadline : byDeadline);
 }
 
 // Значок «сработал Цербер» — тот же визуальный язык, что у «Защищено
@@ -854,7 +883,7 @@ function renderTasks() {
     return;
   }
   teamEmpty.hidden = true;
-  teamList.innerHTML = visible.map(taskRowHtml).join('');
+  teamList.innerHTML = sortedTasks(visible).map(taskRowHtml).join('');
 }
 
 async function loadTasks() {
@@ -3411,6 +3440,13 @@ teamFilters.addEventListener('click', (e) => {
   else activeStatuses.add(key);
   btn.classList.toggle('active');
   saveFilters();
+  renderTasks();
+});
+
+teamSort.value = sortMode;
+teamSort.addEventListener('change', () => {
+  sortMode = teamSort.value === 'project' ? 'project' : 'deadline';
+  try { localStorage.setItem(SORT_KEY, sortMode); } catch (e) {}
   renderTasks();
 });
 
