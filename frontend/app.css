@@ -237,7 +237,17 @@ button{cursor:pointer}
 .carousel::-webkit-scrollbar{display:none}
 .slide{position:relative;flex:0 0 100%;width:100%;height:100%;scroll-snap-align:start;scroll-snap-stop:always;display:flex;align-items:center;justify-content:center;background:#EEF1F0;overflow:hidden}
 .slide img{width:100%;height:100%;object-fit:contain;display:block;background:#EEF1F0}
-.video-frame{background:#101313;width:100%;height:100%}
+.video-frame{position:relative;background:#101313;width:100%;height:100%}
+/* Большая кнопка ▶ поверх кадра-обложки (2026-10-16) — вся площадь видео
+   кликабельна, круг по центру; после запуска прячется, дальше нативные controls. */
+.video-play{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,.28));cursor:pointer;-webkit-tap-highlight-color:transparent}
+.video-play-circle{width:76px;height:76px;border-radius:50%;background:rgba(15,25,24,.66);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,.35);transition:transform .15s ease,background .15s ease}
+.video-play-circle svg{width:34px;height:34px;margin-left:4px;fill:#fff}
+.video-play:hover .video-play-circle{background:rgba(15,25,24,.82);transform:scale(1.06)}
+.video-play:active .video-play-circle{transform:scale(.96)}
+.video-play:focus-visible .video-play-circle{outline:3px solid #fff;outline-offset:3px}
+.video-frame.playing .video-play{display:none}
+@media (max-width:420px){.video-play-circle{width:64px;height:64px}.video-play-circle svg{width:28px;height:28px}}
 .video-frame video{width:100%;height:100%;display:block;object-fit:contain;background:#101313;touch-action:manipulation}
 .file-link{min-height:100%;width:100%;padding:26px;display:grid;place-items:center;text-align:center}
 .file-link a{color:var(--accent);font-weight:800;text-decoration:none}

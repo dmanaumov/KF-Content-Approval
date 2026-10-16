@@ -2306,7 +2306,7 @@ function mediaThumbHtml(m, i) {
   if (m.pendingCompression) {
     inner = `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:4px;text-align:center;font-size:10.5px;color:var(--muted)">Сжимаем…</div>`;
   } else if (m.kind === 'image') inner = `<img src="${url}" alt="" loading="lazy">`;
-  else if (m.kind === 'video') inner = `<video muted preload="metadata" data-src="${url}"></video>`;
+  else if (m.kind === 'video') inner = `<video muted preload="metadata" data-src="${url}#t=0.5"></video>`;
   else inner = `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:4px;text-align:center;font-size:10.5px;color:var(--muted)">${esc(m.name || 'Файл')}</div>`;
   const kindBadge = m.kind === 'video' ? '<span class="tm-media-kind">▶ видео</span>' : '';
   const linkBadge = m.source === 'disk' && m.shareUrl
@@ -2327,7 +2327,7 @@ function reorderRowHtml(m, i, total) {
   const thumb = m.kind === 'image'
     ? `<img src="${url}" alt="">`
     : m.kind === 'video'
-    ? `<video muted preload="metadata" data-src="${url}"></video>`
+    ? `<video muted preload="metadata" data-src="${url}#t=0.5"></video>`
     : '';
   return `<div class="tm-reorder-row">
     <div class="tm-reorder-thumb">${thumb}</div>
@@ -2710,7 +2710,7 @@ function renderPreviewPane(t) {
   const socialBadge = social ? `<span class="tm-preview-social" style="background:${esc(social.color)}">${esc(social.label)}</span>` : '';
   const mediaHtml = media
     ? media.kind === 'video'
-      ? `<video muted controls preload="metadata" data-src="${mediaFileUrl(media)}"></video>`
+      ? `<video muted controls playsinline preload="metadata" data-src="${mediaFileUrl(media)}#t=0.5"></video>`
       : `<img src="${mediaFileUrl(media)}" alt="">`
     : `<div class="tm-preview-empty" style="padding:60px 10px">Медиа не выбрано</div>`;
   const captionText = stripAiTag(t.caption || bare || '');
@@ -3437,3 +3437,22 @@ const deepLinkTaskId = new URLSearchParams(location.search).get('task');
 if (deepLinkTaskId) pendingDeepLinkTaskId = deepLinkTaskId;
 
 init();
+
+// Кадр-обложка #t=0.5 у видео (2026-10-16, см. то же в app.js): первый
+// запуск — с самого начала, а не с 0,5 с. 'play' не всплывает — фаза захвата.
+document.addEventListener('play', (e) => {
+  const v = e.target;
+  if (!v || v.tagName !== 'VIDEO' || v.dataset.started) return;
+  v.dataset.started = '1';
+  if (v.currentTime < 1) v.currentTime = 0;
+}, true);
+
+// ⤢ «Полный размер» — всегда в новом окне/вкладке и не пробрасываем клик
+// дальше (миниатюра под значком не должна реагировать).
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a.tm-media-full-badge');
+  if (!a) return;
+  e.preventDefault();
+  e.stopPropagation();
+  window.open(a.href, '_blank', 'noopener');
+}, true);

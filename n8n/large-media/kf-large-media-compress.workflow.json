@@ -11,7 +11,7 @@
           "responseCode": 202
         }
       },
-      "id": "c4a6bf80-5636-44a5-8f25-567f585e464d",
+      "id": "5c87847f-07b0-45be-b796-7287ba833e77",
       "name": "Сигнал от согласователя",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -19,7 +19,7 @@
         0,
         0
       ],
-      "webhookId": "9abfea0f-7dc2-422a-b0b9-9d35ea319416",
+      "webhookId": "8b033df0-22f0-4961-9ad2-1b70d1fa0d56",
       "credentials": {
         "httpHeaderAuth": {
           "name": "KF Signal (X-KF-Signal)"
@@ -38,7 +38,7 @@
           ]
         }
       },
-      "id": "138cc3aa-2076-4dd3-8557-302836416403",
+      "id": "1ef5b39a-e861-488a-9f7b-fe2594607d30",
       "name": "Подстраховка: каждый час",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -57,7 +57,7 @@
           "timeout": 30000
         }
       },
-      "id": "f46b76de-a9ad-4771-82ba-e3acdfc2cf7e",
+      "id": "71df7f5c-037c-42a1-8649-67cfa9691fa4",
       "name": "Очередь pending-compression",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -75,7 +75,7 @@
       "parameters": {
         "jsCode": "// { items:[{mediaId,taskId,fullUrl,uploadedAt,projectId,taskTitle}], count } → по item на медиа.\n// Пустая очередь → [] → выполнение просто заканчивается.\nconst seen = new Set();\nconst out = [];\nfor (const it of $input.all()) {\n  for (const m of it.json.items || []) {\n    if (!m.fullUrl || seen.has(m.mediaId)) continue;\n    seen.add(m.mediaId);\n    out.push({ json: m });\n  }\n}\nreturn out;"
       },
-      "id": "9fc12a31-9fe5-4de0-b875-59adab02ab64",
+      "id": "498e75c9-8021-4d9e-8a6e-c258b951507a",
       "name": "Разложить очередь",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -88,7 +88,7 @@
       "parameters": {
         "options": {}
       },
-      "id": "585d4f0a-ed18-450b-bece-b11f0837ffb2",
+      "id": "4fd88e3c-a4c2-4950-bca7-1d27054cf999",
       "name": "По одному",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -100,9 +100,9 @@
     {
       "parameters": {
         "executeOnce": false,
-        "command": "=node /opt/kf/kf-compress.mjs --media '{{ String($json.mediaId).replace(/'/g, \"'\\\\''\") }}' --url '{{ String($json.fullUrl).replace(/'/g, \"'\\\\''\") }}'"
+        "command": "=S=/opt/kf/kf-compress.mjs; [ -f \"$S\" ] || S=/home/node/.n8n/kf/kf-compress.mjs; KF_MB_PER_MIN=2.5 node \"$S\" --media '{{ String($json.mediaId).replace(/'/g, \"'\\\\''\") }}' --url '{{ String($json.fullUrl).replace(/'/g, \"'\\\\''\") }}'"
       },
-      "id": "0eb3e98a-81a0-44de-a0f4-17860c9fb55b",
+      "id": "68557cf1-2d54-4920-9f32-866ec5764f5d",
       "name": "Сжать (ffmpeg)",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
@@ -118,7 +118,7 @@
         "mode": "runOnceForEachItem",
         "jsCode": "const src = $('По одному').item.json;\nconst lines = String($json.stdout || '').trim().split('\\n').filter(Boolean);\nlet r;\ntry {\n  r = JSON.parse(lines[lines.length - 1]);\n} catch (e) {\n  r = { status: 'error', message: 'не разобрал вывод скрипта: ' + String($json.stdout || $json.stderr || '').slice(0, 300) };\n}\nreturn { json: { ...r, mediaId: src.mediaId, taskId: src.taskId, taskTitle: src.taskTitle, fullUrl: src.fullUrl } };"
       },
-      "id": "575aa760-3079-4642-95a3-992c7d1d5d57",
+      "id": "f7115313-04fa-40b2-bbbb-5d7fe5b649de",
       "name": "Разобрать результат",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -138,7 +138,7 @@
           },
           "conditions": [
             {
-              "id": "e80a8281-3700-49fc-9b88-266706c57289",
+              "id": "9705d535-2cbb-4326-bc38-7d20db82a270",
               "leftValue": "={{ $json.status }}",
               "rightValue": "ok",
               "operator": {
@@ -151,7 +151,7 @@
         },
         "options": {}
       },
-      "id": "c720df9f-0137-4d37-8d3a-b7809cdde35c",
+      "id": "02398e72-3ea9-4fe1-bd65-fb3d4360dccb",
       "name": "Превью готово?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -162,20 +162,168 @@
     },
     {
       "parameters": {
-        "fileSelector": "={{ $json.outPath }}",
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Оригинал переносим в Google-папку проекта (storageUrl из настроек проекта,\n// открытая ссылка на папку) и удаляем с disk.kontentferma.\nconst r = $json;\nconst src = $('По одному').item.json;\nconst url = String(src.storageUrl || '');\nconst m = url.match(/drive\\.google\\.com\\/(?:drive\\/(?:u\\/\\d+\\/)?folders\\/|open\\?id=)([A-Za-z0-9_-]{10,})/);\nconst folderId = m ? m[1] : '';\nconst needMove = !!src.fullOnOurDisk;\nlet warning = '';\nif (needMove && !folderId) warning = url ? 'ссылка на хранилище — не папка Google Диска (' + url + '), оригинал остался на disk.kontentferma' : 'у проекта не задано хранилище — оригинал остался на disk.kontentferma';\nelse if (needMove && !r.origPath) warning = 'оригинала уже нет в рабочей папке n8n — перенос пропущен, оригинал остался на disk.kontentferma';\nreturn { json: { ...r, folderId, moveToGoogle: needMove && !!folderId && !!r.origPath, warning } };"
+      },
+      "id": "21191c83-fd6c-49c9-8516-5a017568b9c7",
+      "name": "В Google?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b968d646-cfbf-4231-84bd-23bc4575cbb7",
+              "leftValue": "={{ $json.moveToGoogle }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7de7cb5a-64ea-4983-b35e-dae93ae1b800",
+      "name": "Переносим?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1940,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.origPath }}",
         "options": {
           "dataPropertyName": "data"
         }
       },
-      "id": "a21cc364-c141-4ff8-8f21-06da6d73c829",
+      "id": "97535c43-9377-4691-94d5-05c048f16f79",
+      "name": "Прочитать оригинал",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        2180,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "name": "={{ $('В Google?').item.json.origName }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('В Google?').item.json.folderId }}",
+          "mode": "id"
+        },
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "998b0920-1e97-4014-ad9a-08375d1d028b",
+      "name": "Оригинал → Google Диск",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2420,
+        -40
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "KF Google Drive"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 10000,
+      "notes": "Аккаунт Google КФ (OAuth). Папка клиента открыта по ссылке на редактирование — аккаунт может в неё писать. Место файл занимает у ВЛАДЕЛЬЦА файла, т.е. у аккаунта КФ."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://smm.kontentferma.com/api/automation/tasks/{{ encodeURIComponent($('В Google?').item.json.taskId) }}/media/{{ encodeURIComponent($('В Google?').item.json.mediaId) }}/full-moved",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fullUrl: 'https://drive.google.com/file/d/' + $json.id + '/view' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "f4bd5031-e5cf-412e-926a-623a273be7b8",
+      "name": "Ссылку на Google, у нас удалить",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        -40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "KF Approval API (X-API-Key)"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Согласователь переключает «Полный размер» на Google и удаляет оригинал с disk.kontentferma."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $('В Google?').item.json;\nreturn { json: { status: 'error', stage: 'google-move', mediaId: r.mediaId, taskId: r.taskId, taskTitle: r.taskTitle, message: String($json.error?.message || $json.error || 'перенос в Google упал').slice(0, 500) } };"
+      },
+      "id": "339952d1-8ed6-4456-8032-a40677df0214",
+      "name": "Ошибка переноса",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        160
+      ],
+      "notes": "Превью не заливаем — медиа остаётся в очереди, следующий запуск повторит перенос (сжатое превью и оригинал берутся из рабочей папки без пересжатия)."
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Разобрать результат').item.json.outPath }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "id": "85ed2f5c-e675-4128-8fea-c97bf970862d",
       "name": "Прочитать превью",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1700,
+        2900,
         40
       ],
-      "notes": "Папка /data/kf-compress/out должна быть в N8N_RESTRICT_FILE_ACCESS_TO."
+      "notes": "Без пересборки образа превью лежит в ~/.n8n-files/kf-compress/out — читается без настроек. Со своим образом — /data/kf-compress/out (прописан в Dockerfile)."
     },
     {
       "parameters": {
@@ -202,12 +350,12 @@
           "timeout": 300000
         }
       },
-      "id": "1af383a5-7360-4c44-bd32-a6eb4692485a",
+      "id": "9d75fd0a-0a47-4033-8702-9e44e3b848ae",
       "name": "Залить превью в согласователь",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1940,
+        3140,
         40
       ],
       "credentials": {
@@ -224,14 +372,14 @@
     {
       "parameters": {
         "executeOnce": false,
-        "command": "=node /opt/kf/kf-compress.mjs --cleanup --media '{{ String($('Разобрать результат').item.json.mediaId).replace(/'/g, \"'\\\\''\") }}'"
+        "command": "=S=/opt/kf/kf-compress.mjs; [ -f \"$S\" ] || S=/home/node/.n8n/kf/kf-compress.mjs; node \"$S\" --cleanup --media '{{ String($('Разобрать результат').item.json.mediaId).replace(/'/g, \"'\\\\''\") }}'"
       },
-      "id": "ee33afe9-3665-472c-9965-a5a8aaf74321",
+      "id": "55c47451-7a78-4f81-8b9a-065cc9d9ac47",
       "name": "Убрать временные файлы",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        2180,
+        3380,
         0
       ],
       "onError": "continueRegularOutput"
@@ -239,14 +387,14 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const r = $('Разобрать результат').item.json;\nreturn { json: { status: 'done', mediaId: r.mediaId, taskId: r.taskId, taskTitle: r.taskTitle, kind: r.kind, srcMb: +(r.srcBytes / 1048576).toFixed(1), outMb: +(r.outBytes / 1048576).toFixed(1), tookSec: r.tookSec } };"
+        "jsCode": "const r = $('Разобрать результат').item.json;\nconst g = $('В Google?').item.json;\nreturn { json: { status: 'done', mediaId: r.mediaId, taskId: r.taskId, taskTitle: r.taskTitle, kind: r.kind, srcMb: +(r.srcBytes / 1048576).toFixed(1), outMb: +(r.outBytes / 1048576).toFixed(1), tookSec: r.tookSec, movedToGoogle: g.moveToGoogle, warning: g.warning } };"
       },
-      "id": "1bec696d-09bd-4795-a599-ee4e160c07f6",
+      "id": "b52b33e4-2933-4299-a913-5033b17b7290",
       "name": "Готово",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2420,
+        3620,
         0
       ]
     },
@@ -255,7 +403,7 @@
         "mode": "runOnceForEachItem",
         "jsCode": "const src = $('По одному').item.json;\nreturn { json: { status: 'error', stage: 'compress', mediaId: src.mediaId, taskId: src.taskId, taskTitle: src.taskTitle, message: String($json.error?.message || $json.error || $json.stderr || 'Execute Command упал').slice(0, 500) } };"
       },
-      "id": "6c01991e-755e-4f7a-96dc-a0ca98fa952a",
+      "id": "3ffb6bf3-bca9-4b99-967e-d94c8267e709",
       "name": "Ошибка сжатия",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -269,21 +417,21 @@
         "mode": "runOnceForEachItem",
         "jsCode": "const r = $('Разобрать результат').item.json;\nreturn { json: { status: 'error', stage: 'preview-upload', mediaId: r.mediaId, taskId: r.taskId, taskTitle: r.taskTitle, message: String($json.error?.message || $json.error || 'preview-upload упал').slice(0, 500) } };"
       },
-      "id": "6da17bb6-d3c3-4657-9745-18e8c629f5d9",
+      "id": "8cfd3c52-3add-41d6-b7c5-ace3ede05d17",
       "name": "Ошибка заливки",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2180,
+        3380,
         200
       ],
       "notes": "Готовое превью остаётся в /data/kf-compress/out — следующий запуск (через ≥30 мин) возьмёт его без пересжатия."
     },
     {
       "parameters": {
-        "jsCode": "const all = $input.all().map((i) => i.json);\nconst done = all.filter((x) => x.status === 'done');\nconst errors = all.filter((x) => x.status === 'error');\nconst skipped = all.filter((x) => x.status === 'skip' || x.status === 'busy');\nreturn [{ json: {\n  done: done.length,\n  errors: errors.length,\n  skipped: skipped.length,\n  details: all,\n  errorText: errors.map((e) => `• ${e.taskTitle || e.taskId} (media ${e.mediaId}, ${e.stage || 'compress'}${e.gaveUp ? ', больше не пытаемся' : ''}): ${e.message}`).join('\\n'),\n} }];"
+        "jsCode": "const all = $input.all().map((i) => i.json);\nconst done = all.filter((x) => x.status === 'done');\nconst errors = all.filter((x) => x.status === 'error');\nconst skipped = all.filter((x) => x.status === 'skip' || x.status === 'busy');\nconst warned = done.filter((x) => x.warning);\nreturn [{ json: {\n  done: done.length,\n  errors: errors.length,\n  skipped: skipped.length,\n  details: all,\n  warnings: warned.length,\n  errorText: [...errors, ...warned.map((w) => ({ ...w, stage: 'google-move', message: w.warning }))].map((e) => `• ${e.taskTitle || e.taskId} (media ${e.mediaId}, ${e.stage || 'compress'}${e.gaveUp ? ', больше не пытаемся' : ''}): ${e.message}`).join('\\n'),\n} }];"
       },
-      "id": "f5ea0d21-0de7-488c-aa23-c8825cb60dd6",
+      "id": "880a44f3-3452-49a2-904b-5f7094ed320b",
       "name": "Итог",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -303,8 +451,8 @@
           },
           "conditions": [
             {
-              "id": "76ce9c06-dcac-4a57-b7e2-4a6c973dc4a8",
-              "leftValue": "={{ $json.errors }}",
+              "id": "c40cd4a4-c939-4b86-a70a-147d7a78cdd9",
+              "leftValue": "={{ $json.errors + $json.warnings }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -316,7 +464,7 @@
         },
         "options": {}
       },
-      "id": "25ff8007-ab2c-48b4-a702-34724fcc2c58",
+      "id": "ae6e3f27-faa2-4b21-847e-afb47fb75eff",
       "name": "Были ошибки?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -327,9 +475,9 @@
     },
     {
       "parameters": {
-        "errorMessage": "=Сжатие больших файлов: ошибок {{ $json.errors }}, готово {{ $json.done }}.\n{{ $json.errorText }}"
+        "errorMessage": "=Сжатие больших файлов: ошибок {{ $json.errors }}, предупреждений {{ $json.warnings }}, готово {{ $json.done }}.\n{{ $json.errorText }}"
       },
-      "id": "088936d7-86c8-4f2e-8cc9-a2ba681d6afb",
+      "id": "2a097981-4d06-4d56-8465-68c1e1e6fba2",
       "name": "Упасть с отчётом",
       "type": "n8n-nodes-base.stopAndError",
       "typeVersion": 1,
@@ -436,11 +584,98 @@
       "main": [
         [
           {
+            "node": "В Google?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "По одному",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "В Google?": {
+      "main": [
+        [
+          {
+            "node": "Переносим?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Переносим?": {
+      "main": [
+        [
+          {
+            "node": "Прочитать оригинал",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Прочитать превью",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Прочитать оригинал": {
+      "main": [
+        [
+          {
+            "node": "Оригинал → Google Диск",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Оригинал → Google Диск": {
+      "main": [
+        [
+          {
+            "node": "Ссылку на Google, у нас удалить",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка переноса",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ссылку на Google, у нас удалить": {
+      "main": [
+        [
+          {
             "node": "Прочитать превью",
             "type": "main",
             "index": 0
           }
         ],
+        [
+          {
+            "node": "Ошибка переноса",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ошибка переноса": {
+      "main": [
         [
           {
             "node": "По одному",

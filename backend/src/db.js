@@ -759,6 +759,15 @@ async function initSchema() {
       ADD COLUMN IF NOT EXISTS full_url text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS pending_compression boolean NOT NULL DEFAULT false;
   `);
+  // full_disk_path (2026-10-16) — путь оригинала на disk.kontentferma
+  // (относительно WebDAV-корня), пока он лежит там после чанковой загрузки.
+  // n8n переносит оригинал в хранилище проекта (Google Диск, storage_url) и
+  // зовёт POST .../media/:mediaId/full-moved — сервер по этому пути удаляет
+  // файл с нашего диска и очищает поле. Пусто = на нашем диске оригинала нет.
+  await pool.query(`
+    ALTER TABLE app_task_media
+      ADD COLUMN IF NOT EXISTS full_disk_path text NOT NULL DEFAULT '';
+  `);
   // app_task_feedback — переписка по согласованию (approve/правки/сообщения
   // клиенту/системные пометки). Сейчас это один общий поток комментариев
   // карточки от сервисного бот-аккаунта Mattermost, размеченный текстовыми

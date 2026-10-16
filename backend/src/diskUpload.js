@@ -250,7 +250,8 @@ function assertConfigured() {
 }
 
 // opts: { folderName, subFolder?, filename, filePath, mimeType } — путь и
-// санитизация ровно как в uploadAndShare. Возвращает публичную share-ссылку.
+// санитизация ровно как в uploadAndShare. Возвращает { shareUrl, relPath }
+// (relPath — для удаления оригинала, когда n8n перенесёт его в хранилище проекта).
 async function uploadFileAndShare(opts) {
   assertConfigured();
   const root = config.diskUploadRootPath || 'SMM';
@@ -261,11 +262,24 @@ async function uploadFileAndShare(opts) {
   await ensureRemoteDir(relDir);
   await putFileFromPath(relFile, opts.filePath, opts.mimeType);
   try {
-    return await createPublicShare(relFile);
+    const shareUrl = await createPublicShare(relFile);
+    return { shareUrl, relPath: relFile };
   } catch (shareErr) {
     await deleteFile(relFile);
     throw shareErr;
   }
 }
 
-module.exports = { uploadAndShare, uploadFileAndShare };
+// Удаление оригинала с disk.kontentferma после переноса в хранилище проекта.
+// В отличие от deleteFile выше — НЕ глотает ошибку: вызывающий должен знать,
+// освободилось ли место. 404 = файла уже нет, это тоже успех.
+async function deleteRemotePath(relPath) {
+  assertConfigured();
+  const res = await fetchWithAuthRetry429(webdavUrl(relPath), { method: 'DELETE' }, undefined, 'DELETE');
+  if (res.status !== 204 && res.status !== 200 && res.status !== 404) {
+    throw new Error('Не удалось удалить оригинал с диска (DELETE, статус ' + res.status + ').');
+  }
+  return res.status !== 404;
+}
+
+module.exports = { uploadAndShare, uploadFileAndShare, deleteRemotePath };

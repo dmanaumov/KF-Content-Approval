@@ -322,13 +322,24 @@ async function setMediaPreview(taskId, mediaId, previewUrl, kind = '') {
 // Чанковая загрузка из командного кабинета (largeUpload.js): медиа-запись
 // создаётся сразу (плейсхолдер «Сжимаем…» на карточке), а ссылка на оригинал
 // проставляется, когда фоновая заливка на disk.kontentferma закончилась.
-async function setMediaFullUrl(taskId, mediaId, fullUrl) {
+// diskPath — где оригинал лежит на disk.kontentferma (для последующего
+// удаления, когда n8n перенесёт его в хранилище проекта); '' = не на нашем диске.
+async function setMediaFullUrl(taskId, mediaId, fullUrl, diskPath = '') {
   const pool = db.requirePool();
   const { rowCount } = await pool.query(
-    'UPDATE app_task_media SET full_url = $1 WHERE id = $2 AND task_id = $3',
-    [fullUrl, mediaId, taskId]
+    'UPDATE app_task_media SET full_url = $1, full_disk_path = $4 WHERE id = $2 AND task_id = $3',
+    [fullUrl, mediaId, taskId, diskPath || '']
   );
   return rowCount > 0;
+}
+
+async function getMediaRow(taskId, mediaId) {
+  const pool = db.requirePool();
+  const { rows } = await pool.query(
+    'SELECT id, url, full_url, full_disk_path, pending_compression FROM app_task_media WHERE id = $1 AND task_id = $2',
+    [mediaId, taskId]
+  );
+  return rows[0] || null;
 }
 
 // Очередь для n8n-докатки (2026-10-15): "какие большие файлы ещё ждут
@@ -343,9 +354,11 @@ async function setMediaFullUrl(taskId, mediaId, fullUrl) {
 async function listPendingCompressionMedia(boardId) {
   const pool = db.requirePool();
   const { rows } = await pool.query(
-    `SELECT m.id, m.task_id, m.full_url, m.uploaded_at, t.project_id, t.title
+    `SELECT m.id, m.task_id, m.full_url, m.full_disk_path, m.uploaded_at, t.project_id, t.title,
+            COALESCE(ps.storage_url, '') AS storage_url
      FROM app_task_media m
      JOIN app_tasks t ON t.id = m.task_id
+     LEFT JOIN project_settings ps ON ps.board_id = t.board_id AND ps.project_id = t.project_id
      WHERE m.pending_compression = true AND m.full_url <> '' AND t.board_id = $1
      ORDER BY m.uploaded_at ASC`,
     [boardId]
@@ -357,6 +370,10 @@ async function listPendingCompressionMedia(boardId) {
     uploadedAt: new Date(r.uploaded_at).getTime(),
     projectId: r.project_id,
     taskTitle: r.title,
+    // storageUrl — куда n8n переносит оригинал (Google-папка проекта);
+    // fullOnOurDisk — оригинал ещё на disk.kontentferma (переносить надо).
+    storageUrl: r.storage_url,
+    fullOnOurDisk: !!r.full_disk_path,
   }));
 }
 
@@ -414,6 +431,7 @@ module.exports = {
   insertMedia,
   setMediaPreview,
   setMediaFullUrl,
+  getMediaRow,
   listPendingCompressionMedia,
   deleteMedia,
   reorderMedia,

@@ -3383,7 +3383,7 @@ async function finishLargeUploadInBackground(boardId, task, meta, mediaId, actor
     const extMatch = String(meta.filename || '').match(/\.[a-zA-Z0-9]+$/);
     const base = String(meta.filename || 'file').replace(/\.[a-zA-Z0-9]+$/, '').slice(0, 60);
     const filename = `${dateStr}_${Date.now().toString(36)}_${base}${extMatch ? extMatch[0].toLowerCase() : ''}`;
-    const shareUrl = await largeDiskUploadLimiter(() =>
+    const { shareUrl, relPath } = await largeDiskUploadLimiter(() =>
       diskUpload.uploadFileAndShare({
         folderName: task.projectLabel || 'Без клиента',
         subFolder: config.largeUploadOriginalsFolder,
@@ -3392,12 +3392,12 @@ async function finishLargeUploadInBackground(boardId, task, meta, mediaId, actor
         mimeType: meta.mimeType,
       })
     );
-    await pgTasks.setMediaFullUrl(task.id, mediaId, shareUrl);
+    await pgTasks.setMediaFullUrl(task.id, mediaId, shareUrl, relPath);
     await pgTasks.addFeedback(task.id, {
       kind: 'system',
       authorKind: 'staff',
       authorName: actorName,
-      text: `Загружен большой файл «${meta.filename}» (${sizeMb} МБ) — оригинал на диске, превью для согласования готовится автоматически: ${shareUrl}`,
+      text: `Загружен большой файл «${meta.filename}» (${sizeMb} МБ) — превью для согласования готовится автоматически, оригинал будет перенесён в хранилище проекта: ${shareUrl}`,
     });
     notifyLargeMediaWebhook({ taskId: task.id, mediaId, fullUrl: shareUrl, projectId: task.projectId || '' });
   } catch (err) {
@@ -3419,7 +3419,19 @@ async function finishLargeUploadInBackground(boardId, task, meta, mediaId, actor
 }
 
 app.post('/api/team/tasks/:taskId/large-upload/init', teamAuth.requireTeamAuth, requireTeamCardAccess, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
   try {
+    // Решение пользователя (2026-10-15/16): оригинал большого файла хранится
+    // в хранилище ПРОЕКТА (ссылка в настройках проекта), а не у нас — без
+    // неё большой файл не принимаем, понятной ошибкой ДО загрузки 350 МБ.
+    const settings = await projectSettings.getSettings(boardId, req.teamCard.task.projectId);
+    if (!settings.storageUrl) {
+      return res.status(409).json({
+        error: 'storage_not_configured',
+        message: 'Для проекта не задана ссылка на хранилище (Google Диск) — добавьте её в настройках проекта, потом загрузите файл больше 30 МБ.',
+      });
+    }
     const body = req.body || {};
     const out = await largeUpload.init({
       taskId: req.params.taskId,
@@ -6216,6 +6228,47 @@ app.post('/api/automation/tasks/:taskId/media/:mediaId/preview-upload', requireA
       res.status(status).json({ error: err.code || 'preview_upload_failed', message: err.message });
     }
   });
+});
+
+// POST /api/automation/tasks/:taskId/media/:mediaId/full-moved — body:
+// { fullUrl }. n8n зовёт это ПОСЛЕ того, как скопировал оригинал в хранилище
+// проекта (Google-папка из storage_url): full_url переключается на новую
+// ссылку («Полный размер» и автопубликация смотрят уже туда), а копия на
+// disk.kontentferma удаляется — ради этого всё и затевалось (хранить
+// 350+ МБ у себя дорого). Ответ: { task, diskDeleted }.
+app.post('/api/automation/tasks/:taskId/media/:mediaId/full-moved', requireAutomationAuth, async (req, res) => {
+  const boardId = requireStaffBoardId(res);
+  if (!boardId) return;
+  try {
+    const fullUrl = String((req.body && req.body.fullUrl) || '').trim();
+    try {
+      const u = new URL(fullUrl);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('bad protocol');
+    } catch {
+      throw badRequest('invalid_full_url', 'fullUrl должен быть http(s)-ссылкой на оригинал в хранилище проекта.');
+    }
+    const row = await pgTasks.getMediaRow(req.params.taskId, req.params.mediaId);
+    if (!row) return res.status(404).json({ error: 'media_not_found', message: 'Медиа с таким id не найдено у этой карточки.' });
+    let diskDeleted = false;
+    if (row.full_disk_path) {
+      // Сначала удаляем, потом переключаем ссылку: если DELETE упал, n8n
+      // получит ошибку и повторит — а full_disk_path останется, чтобы
+      // повторная попытка знала, что удалять.
+      diskDeleted = await diskUpload.deleteRemotePath(row.full_disk_path);
+    }
+    await pgTasks.setMediaFullUrl(req.params.taskId, req.params.mediaId, fullUrl, '');
+    await pgTasks.addFeedback(req.params.taskId, {
+      kind: 'system',
+      authorKind: 'staff',
+      authorName: AUTOMATION_ACTOR,
+      text: `Оригинал перенесён в хранилище проекта${row.full_disk_path ? ' и удалён с disk.kontentferma' : ''}: ${fullUrl}`,
+    });
+    const updated = await refetchTeamTask(boardId, req.params.taskId);
+    res.json({ task: updated, diskDeleted });
+  } catch (err) {
+    console.error('[api] automation full-moved failed:', err.message);
+    res.status(err.httpStatus || 502).json({ error: err.code || 'full_moved_failed', message: err.message });
+  }
 });
 
 // POST /api/automation/tasks/:taskId/media-order — body: { order: string[] }.

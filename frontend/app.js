@@ -382,6 +382,27 @@ function clientDialogHtml(task) {
   return `<div class="client-dialog${expanded ? ' expanded' : ''}">${bubbles}${toggle}</div>`;
 }
 
+// --- Видео: обложка-кадр + большая кнопка воспроизведения (2026-10-16) ---
+const VIDEO_FIRST_FRAME = '#t=0.5';
+function videoPlayButtonHtml() {
+  return `<button type="button" class="video-play" data-action="play-video" aria-label="Воспроизвести видео"><span class="video-play-circle"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></span></button>`;
+}
+function startVideoFromOverlay(btn) {
+  const frame = btn.closest('.video-frame');
+  const video = frame && frame.querySelector('video');
+  if (!video) return;
+  // Очередь загрузки (primeMediaQueue) могла ещё не дойти до этого видео —
+  // ставим src сами; очередь потом пропустит элемент без data-src.
+  if (!video.getAttribute('src') && video.dataset.src) {
+    video.src = video.dataset.src;
+    video.removeAttribute('data-src');
+  }
+  frame.classList.add('playing');
+  video.controls = true;
+  const p = video.play();
+  if (p && p.catch) p.catch(() => {}); // автоплей запрещён — остаются нативные controls
+}
+
 function mediaHtml(task, canReorder) {
   if (!task.media.length) {
     return '<div class="media"><div class="carousel"><div class="slide file-link"><div><b>Без вложений</b></div></div></div></div>';
@@ -394,7 +415,7 @@ function mediaHtml(task, canReorder) {
       // Показываем явный плейсхолдер вместо попытки отрисовать пустой url
       // как картинку/видео — иначе выглядело бы как сломанное медиа.
       if (m.pendingCompression) {
-        return `<div class="slide file-link media-pending"><div><b>Готовим превью…</b><br><span>Файл принят, сжатая версия для согласования появится в течение ночи.</span></div></div>`;
+        return `<div class="slide file-link media-pending"><div><b>Готовим превью…</b><br><span>Файл принят, сжатая версия для согласования появится в течение нескольких минут.</span></div></div>`;
       }
       const fileUrl = mediaFileUrl(m);
       // Кнопка «Полный размер» — ссылка на оригинал во внешнем хранилище
@@ -411,7 +432,13 @@ function mediaHtml(task, canReorder) {
         return `<div class="slide"><img data-src="${fileUrl}" data-media-index="${i}" alt="">${fullSizeBtn}</div>`;
       }
       if (m.kind === 'video') {
-        return `<div class="slide"><div class="video-frame"><video controls playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}" data-media-index="${i}"></video></div>${fullSizeBtn}</div>`;
+        // Кадр-обложка и большая кнопка ▶ (2026-10-16): без controls и src
+        // видео до первого нажатия выглядело чёрным прямоугольником. Фрагмент
+        // #t=0.5 заставляет браузер (включая iOS Safari) отрисовать кадр с
+        // 0,5 с вместо чёрного экрана; при первом запуске перематываем в 0
+        // (см. VIDEO_FIRST_FRAME ниже). Нативные controls включаются после
+        // нажатия на большую кнопку.
+        return `<div class="slide"><div class="video-frame"><video playsinline webkit-playsinline preload="metadata" data-src="${fileUrl}${VIDEO_FIRST_FRAME}" data-media-index="${i}"></video>${videoPlayButtonHtml()}</div>${fullSizeBtn}</div>`;
       }
       // Unknown/generic file: for a disk link, send the client to the
       // original share page (Nextcloud's own preview UI) rather than our
@@ -1580,6 +1607,7 @@ document.getElementById('stack').addEventListener('click', (e) => {
     else expandedDialogIds.add(id);
     render();
   }
+  if (btn.dataset.action === 'play-video') startVideoFromOverlay(btn);
   if (btn.dataset.action === 'open-lightbox') {
     openLightbox(btn.dataset.src);
   }
@@ -1742,3 +1770,23 @@ async function init() {
 }
 
 init();
+
+// Первый запуск видео — с самого начала, а не с кадра-обложки #t=0.5
+// (VIDEO_FIRST_FRAME). 'play' не всплывает — ловим в фазе захвата.
+document.addEventListener('play', (e) => {
+  const v = e.target;
+  if (!v || v.tagName !== 'VIDEO' || v.dataset.started) return;
+  v.dataset.started = '1';
+  if (v.currentTime < 1) v.currentTime = 0;
+}, true);
+
+// «Полный размер» — всегда в новом окне/вкладке (2026-10-16). target=_blank
+// в разметке есть, но в установленном на экран «Домой» кабинете и во
+// встроенных браузерах (Telegram и т.п.) ссылка открывалась поверх кабинета.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a.media-full-link');
+  if (!a) return;
+  e.preventDefault();
+  e.stopPropagation();
+  window.open(a.href, '_blank', 'noopener');
+}, true);

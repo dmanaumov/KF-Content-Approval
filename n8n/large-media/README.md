@@ -16,7 +16,29 @@ n8n: [Webhook] или [каждый час] → GET /api/automation/media/pendin
 
 Для автопубликации в соцсеть брать `media[].fullUrl`, когда он не пуст (это оригинал), а не `url` (превью).
 
-## 1. Образ n8n с ffmpeg (Dokploy)
+## 1а. Быстро, без пересборки образа
+
+Всё кладётся в volume n8n (`/home/node/.n8n`), поэтому переживает редеплой. Нода Execute Command уже должна быть включена.
+
+На Mac:
+```
+scp ~/Documents/GitHub/KF-Content-Approval/n8n/large-media/kf-compress.mjs root@<сервер n8n>:/root/
+```
+На сервере n8n:
+```
+C=$(docker ps --format '{{.Names}}' | grep -i n8n | head -1); echo "$C"
+docker inspect "$C" --format '{{range .Mounts}}{{.Destination}} {{end}}'   # должен быть /home/node/.n8n
+docker exec "$C" mkdir -p /home/node/.n8n/kf
+docker cp /root/kf-compress.mjs "$C":/home/node/.n8n/kf/
+docker create --name kf-ffm mwader/static-ffmpeg:7.1 >/dev/null
+docker cp kf-ffm:/ffmpeg /root/ffmpeg && docker cp kf-ffm:/ffprobe /root/ffprobe && docker rm kf-ffm
+docker cp /root/ffmpeg "$C":/home/node/.n8n/kf/ && docker cp /root/ffprobe "$C":/home/node/.n8n/kf/
+docker exec -u root "$C" chown -R node:node /home/node/.n8n/kf
+docker exec "$C" /home/node/.n8n/kf/ffmpeg -version | head -1
+```
+Скрипт сам находит ffmpeg рядом с собой и работает в `~/.n8n-files/kf-compress`: эту папку нода Read/Write Files читает без дополнительных настроек. Workflow сначала ищет скрипт в `/opt/kf`, затем в `/home/node/.n8n/kf`.
+
+## 1б. Правильно: свой образ n8n с ffmpeg (Dokploy)
 
 В Dokploy-сервисе n8n сменить образ `n8nio/n8n` на сборку из `n8n/large-media/Dockerfile` (Build Type → Dockerfile, context — эта папка). Перед сборкой поставить в `ARG N8N_VERSION` текущую версию n8n.
 
@@ -62,12 +84,12 @@ LARGE_MEDIA_WEBHOOK_SECRET=<та же строка, что в KF Signal>
 
 | | |
 |---|---|
-| Видео | H.264 в 2 прохода + AAC, битрейт = 9 МиБ / длительность (максимум 2.5 Мбит/с). Длинная сторона 1280 при ≥1 Мбит/с, 854 при ≥500 кбит/с, иначе 640. Не больше 30 к/с. Перебрал 10 МБ — второй заход с пересчитанным битрейтом. |
+| Видео | H.264 в 2 прохода + AAC. Потолок превью = max(10 МБ, 2.5 МБ × минуты): ролики до 4 мин укладываются в 10 МБ, 10-минутный — в 25 МБ. Битрейт = 90% потолка / длительность (максимум 2.5 Мбит/с). Длинная сторона 1280 при ≥1 Мбит/с, 854 при ≥500 кбит/с, иначе 640. Не больше 30 к/с. Перебрал 10 МБ — второй заход с пересчитанным битрейтом. |
 | Фото | JPEG, длинная сторона 2560 (q3), при перевесе 2048 (q5), затем 1600 (q7). |
 | Скорость | Тест на 2 vCPU: 90 с 1080p60 (69 МБ) → 9.1 МБ за 89 с, то есть примерно реальное время. Процесс ffmpeg запускается с пониженным приоритетом, одновременно жмётся только один файл. |
 | Ошибки | 3 неудачи подряд по одному медиа — скрипт сдаётся (`/data/kf-compress/fails/<mediaId>`; удалить файл, чтобы попробовать снова). |
 
-Переменные скрипта (необязательные): `KF_TARGET_MB` (9), `KF_HARD_LIMIT_MB` (10), `KF_X264_PRESET` (veryfast), `KF_THREADS` (2), `KF_MAX_FAILS` (3).
+Переменные скрипта (необязательные): `KF_MB_PER_MIN` (2.5), `KF_TARGET_MB` (9), `KF_HARD_LIMIT_MB` (10), `KF_X264_PRESET` (veryfast), `KF_THREADS` (2), `KF_MAX_FAILS` (3).
 
 ## Инфраструктура: проверить до первого 350-мегабайтного файла
 
