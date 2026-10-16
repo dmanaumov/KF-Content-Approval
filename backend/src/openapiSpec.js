@@ -38,7 +38,7 @@ function buildOpenApiSpec() {
           type: 'apiKey',
           in: 'header',
           name: 'X-Api-Key',
-          description: 'Значение AUTOMATION_API_KEY, заданное в Dokploy. См. комментарий в backend/src/config.js.',
+          description: 'Значение AUTOMATION_API_KEY, заданное в Dokploy. См. комментарий в backend/src/config.js. Принимается и под именем X-Automation-Api-Key (как у pr.kontentferma.com).',
         },
         googleDocsApiKey: {
           type: 'apiKey',

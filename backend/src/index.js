@@ -553,7 +553,11 @@ function requireAutomationAuth(req, res, next) {
       message: 'AUTOMATION_API_KEY не задан — см. комментарий в config.js.',
     });
   }
-  const provided = String(req.headers['x-api-key'] || '');
+  // Два имени заголовка (2026-10-16): исторически X-API-Key, но соседние
+  // приложения Контент Фермы (pr.kontentferma.com и др.) принимают
+  // X-Automation-Api-Key — n8n использует один credential на все, поэтому
+  // принимаем оба. Значение сравнивается с тем же AUTOMATION_API_KEY.
+  const provided = String(req.headers['x-api-key'] || req.headers['x-automation-api-key'] || '');
   // Constant-time comparison so a wrong guess can't be narrowed down via
   // response-time differences. Buffers must match in length for
   // timingSafeEqual — a length mismatch is itself decisive, so short-
