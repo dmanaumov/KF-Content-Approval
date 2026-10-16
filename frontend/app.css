@@ -476,7 +476,6 @@ button{cursor:pointer}
 .head-icon-link:hover{background:#F2F6F5}
 .head-icon-link svg{width:18px;height:18px;display:block}
 .head-icon-emoji{font-size:18px;line-height:1}
-.head-icon-mascot{width:32px;height:16px;object-fit:contain;display:block}
 /* Плашка-ссылка на my.kontentferma.com в кабинете команды (2026-10-16) —
    счётчик непрочитанного там, та же геометрия, что у .fab-chat-unread, но
    в размере значка шапки. Скрыт (head-icon-badge[hidden]), пока счётчик не
@@ -487,7 +486,6 @@ button{cursor:pointer}
   .head-icon-link{width:36px;height:36px}
   .head-icon-link svg{width:16px;height:16px}
   .head-icon-emoji{font-size:16px}
-  .head-icon-mascot{width:28px;height:14px}
 }
 
 @media (prefers-color-scheme: dark){

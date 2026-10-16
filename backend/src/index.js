@@ -2509,7 +2509,7 @@ async function fetchMyPortalKote(userId) {
     const base = `${config.myPortalUrl}/api/v1/users/${encodeURIComponent(userId)}`;
     const [infoRes, svgRes] = await Promise.all([
       fetch(`${base}/kote`, { headers, signal: controller.signal }),
-      fetch(`${base}/kote.svg?size=small&text=0`, { headers, signal: controller.signal }),
+      fetch(`${base}/kote.svg?size=medium&text=1`, { headers, signal: controller.signal }),
     ]);
     if (!infoRes.ok || !svgRes.ok) throw new Error(`HTTP ${infoRes.status}/${svgRes.status}`);
     const info = await infoRes.json();

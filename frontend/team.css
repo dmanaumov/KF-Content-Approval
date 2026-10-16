@@ -588,6 +588,32 @@
 .migration-media-progress{margin-top:12px}
 .migration-media-label{font-size:11.5px;color:#6B5A10;font-weight:750;text-transform:uppercase;letter-spacing:.02em;margin-bottom:4px}
 
+/* Плавающий КОТЭ (2026-10-16, прямой запрос — "лапку сверху оставь, а
+   самого котэ сделай как в my, масштабно и в углу") — левый нижний угол,
+   чтобы не конкурировать с .fab-create/.fab-chat в правом. Картинка —
+   готовый composited SVG с my.kontentferma (фон+огонёк+эффекты+реплика
+   внутри, см. fetchMyPortalKote в backend), крупно. Виден только когда
+   картинка реально пришла (team.js снимает [hidden] сам) — пустого места
+   без кота в углу не остаётся. */
+.kf-mascot-widget{
+  position:fixed;
+  left:16px;
+  bottom:calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index:39;
+  display:block;
+  border-radius:18px;
+  box-shadow:0 14px 30px rgba(20,30,28,.22), 0 3px 8px rgba(20,30,28,.14);
+  transition:transform .15s ease, box-shadow .15s ease;
+  overflow:hidden;
+  line-height:0;
+}
+.kf-mascot-widget:hover{transform:translateY(-3px);box-shadow:0 18px 38px rgba(20,30,28,.28), 0 4px 10px rgba(20,30,28,.18)}
+.kf-mascot-img{display:block;width:260px;height:130px;object-fit:contain;background:#fff}
+@media(max-width:600px){
+  .kf-mascot-widget{left:10px}
+  .kf-mascot-img{width:180px;height:90px}
+}
+
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#12181A;
